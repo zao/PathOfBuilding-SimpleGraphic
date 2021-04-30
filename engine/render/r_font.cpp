@@ -6,6 +6,11 @@
 
 #include "r_local.h"
 
+#include <fmt/format.h>
+#include <iostream>
+#include <sstream>
+#include <string>
+
 // =======
 // Classes
 // =======
@@ -39,14 +44,12 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 	numFontHeight = 0;
 	fontHeightMap = NULL;
 
-	char fileNameBase[260];
-	sprintf_s(fileNameBase, 260, CFG_DATAPATH "fonts/%s", fontName);
+	std::string fileNameBase = fmt::format(CFG_DATAPATH "fonts/{}", fontName);
 
 	// Open info file
-	char tgfName[260];
-	sprintf_s(tgfName, 260, "%s.tgf", fileNameBase);
+	std::string tgfName = fileNameBase + ".tgf";
 	fileInputStream_c tgf;
-	if (tgf.FileOpen(tgfName, false)) {
+	if (tgf.FileOpen(tgfName.c_str(), false)) {
 		renderer->sys->con->Warning("font \"%s\" not found", fontName);
 		return;
 	}
@@ -56,28 +59,28 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 	char* tgfDat = AllocStringLen(tgfLen);
 	tgf.Read(tgfDat, tgfLen);
 	tgf.FileClose();
+	std::istringstream iss(tgfDat);
+	FreeString(tgfDat);
 
 	maxHeight = 0;
 	f_fontHeight_s* fh = NULL;
 
 	// Parse info file
-	char* tk_context;
-	char* sub = strtok_s(tgfDat, "\n", &tk_context);
-	do {
+	std::string sub;
+	while (std::getline(iss, sub)) {
 		int h, x, y, w, sl, sr;
-		if (sscanf_s(sub, "HEIGHT %u;", &h) == 1) {
+		if (sscanf(sub.c_str(), "HEIGHT %u;", &h) == 1) {
 			// New height
 			fh = new f_fontHeight_s;
 			fontHeights[numFontHeight++] = fh;
-			char tgaName[260];
-			sprintf_s(tgaName, 260, "%s.%d.tga", fileNameBase, h);
-			fh->tex = new r_tex_c(renderer->texMan, tgaName, TF_NOMIPMAP);
+			std::string tgaName = fmt::format("{}.{}.tga", fileNameBase, h);
+			fh->tex = new r_tex_c(renderer->texMan, tgaName.c_str(), TF_NOMIPMAP);
 			fh->height = h;
 			if (h > maxHeight) {
 				maxHeight = h;
 			}
 			fh->numGlyph = 0;
-		} else if (fh && sscanf_s(sub, "GLYPH %u %u %u %d %d;", &x, &y, &w, &sl, &sr) == 5) {
+		} else if (fh && sscanf(sub.c_str(), "GLYPH %u %u %u %d %d;", &x, &y, &w, &sl, &sr) == 5) {
 			// Add glyph
 			if (fh->numGlyph >= 128) continue;
 			f_glyph_s* glyph = &fh->glyphs[fh->numGlyph++];
@@ -89,9 +92,7 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 			glyph->spLeft = sl;
 			glyph->spRight = sr;
 		}
-	} while (sub = strtok_s(NULL, "\n", &tk_context));
-
-	FreeString(tgfDat);
+	}
 
 	// Generate mapping of text height to font height
 	fontHeightMap = new int[maxHeight + 1];
