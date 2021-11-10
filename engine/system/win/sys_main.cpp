@@ -147,13 +147,15 @@ bool GlobMatch(const std::filesystem::path& glob, const std::filesystem::path& f
 
 bool find_c::FindFirst(const char* fileSpec)
 {
-	std::filesystem::path p(fileSpec);
+	wchar_t* wideSpec = WidenUTF8String(fileSpec);
+	std::filesystem::path p(wideSpec);
+	FreeWideString(wideSpec);
 	glob = p.filename();
 
 	std::error_code ec;
 	for (iter = std::filesystem::directory_iterator(p.parent_path(), ec); iter != std::filesystem::directory_iterator{}; ++iter) {
 		if (GlobMatch(glob, *iter)) {
-			fileName = iter->path().filename().string();
+			fileName = iter->path().filename().u8string();
 			isDirectory = iter->is_directory();
 			fileSize = iter->file_size();
 			auto mod = iter->last_write_time();
@@ -172,7 +174,7 @@ bool find_c::FindNext()
 
 	for (++iter; iter != std::filesystem::directory_iterator{}; ++iter) {
 		if (GlobMatch(glob, *iter)) {
-			fileName = iter->path().filename().string();
+			fileName = iter->path().filename().u8string();
 			isDirectory = iter->is_directory();
 			fileSize = iter->file_size();
 			auto mod = iter->last_write_time();
