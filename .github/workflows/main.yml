@@ -9,15 +9,13 @@ jobs:
                     with:
                       submodules: 'recursive'
                   - name: run-vcpkg
-                    uses: lukka/run-vcpkg@v6.0
+                    uses: lukka/run-vcpkg@v10
                     with:
-                        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-                        vcpkgArguments: '@${{ github.workspace }}/vcpkg.txt'
-                        cleanAfterBuild: false
+                        runVcpkgInstall: true
                   - name: Setup MSBuild
                     uses: microsoft/setup-msbuild@v1
                   - name: Check dependencies
-                    run: 'ls ${{ github.workspace }}/vcpkg/installed/x86-windows'
+                    run: 'ls ${{ github.workspace }}/vcpkg_installed/x86-windows'
                   - name: Build DLL
                     run: 'msbuild SimpleGraphic.vcxproj /p:configuration=release /p:platform=win32'
                   - name: Archive DLL
