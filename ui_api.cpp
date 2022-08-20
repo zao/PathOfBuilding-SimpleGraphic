@@ -326,6 +326,7 @@ static int l_meshHandleBuild(lua_State* L)
 	int const posCount = lua_objlen(L, 1);
 	int const tcCount = lua_objlen(L, 2);
 	ui->LAssert(L, posCount == tcCount, "meshHandle::Build() argument 2: length mismatch %d with argument 1 of length %d", tcCount, posCount);
+	ui->LAssert(L, posCount % 2 == 0, "meshHandle::Build() argument 1: component count %d not a multiple of two", posCount); // also validates argument 2
 	int const indexCount = hasIndices ? lua_objlen(L, 3) : posCount;
 	ui->LAssert(L, indexCount % 3 == 0, "meshHandle::Build() argument 3: index count %d not a multiple of three", indexCount);
 
@@ -334,29 +335,12 @@ static int l_meshHandleBuild(lua_State* L)
 		meshHandle->mesh = nullptr;
 	}
 
-	auto GetVec2 = [L, ui](char const* fun, char const* label, int tblIdx, int elemIdx) -> r_vec2_s
-	{
-		r_vec2_s ret;
-		lua_rawgeti(L, tblIdx, elemIdx);
-		ui->LAssert(L, lua_istable(L, -1), "%s: %s %d: expected table, got %t", fun, label, elemIdx, -1);
-		ui->LAssert(L, lua_objlen(L, -1) == 2, "%s: %s %d: table does not have two elements", fun, label, elemIdx);
-		int subTbl = lua_gettop(L);
-		for (int compIdx = 1; compIdx <= 2; ++compIdx) {
-			lua_rawgeti(L, subTbl, compIdx);
-			ui->LAssert(L, lua_isnumber(L, -1), "%s: %s %d: element %d: expected number, got %t", fun, label, elemIdx, compIdx, -1);
-			ret[compIdx-1] = (float)lua_tonumber(L, -1);
-			lua_pop(L, 1);
-		}
-		lua_pop(L, 1);
-		return ret;
-	};
-
 	r_mesh_c* m{};
 	for (int pass = 0; pass < 2; ++pass) {
 		if (pass == 1) {
 			m = meshHandle->mesh = new r_mesh_c{};
-			m->positions.resize(posCount);
-			m->texcoords.resize(tcCount);
+			m->positions.resize(posCount / 2);
+			m->texcoords.resize(tcCount / 2);
 			if (hasIndices) {
 				m->indices.resize(indexCount);
 			} else {
@@ -365,17 +349,23 @@ static int l_meshHandleBuild(lua_State* L)
 			}
 		}
 		for (int i = 1; i <= posCount; ++i) {
-			// position table is {{x1, y1}, {x2, y2}, ..}
-			r_vec2_s pos = GetVec2("meshHandle:Build()", "position", 1, i);
+			const int vtxIdx = (i - 1) / 2;
+			const int compIdx = (i - 1) % 2;
+
+			// position table is {x1, y1, x2, y2, ..}
+			lua_rawgeti(L, 1, i);
+			ui->LAssert(L, lua_isnumber(L, -1), "meshHandle:Build(): position %d: expected number, got %t", vtxIdx + 1, -1);
 			if (pass == 1) {
-				m->positions[i-1] = pos;
+				m->positions[vtxIdx][compIdx] = (float)lua_tonumber(L, -1);
 			}
 
 			// texcoord table is {{s1, t1}, {s2, t2}, ..}
-			r_vec2_s tc = GetVec2("meshHandle:Build()", "texcoord", 2, i);
+			lua_rawgeti(L, 2, i);
+			ui->LAssert(L, lua_isnumber(L, -1), "meshHandle:Build(): texcoord %d: expected number, got %t", vtxIdx + 1, -1);
 			if (pass == 1) {
-				m->texcoords[i-1] = tc;
+				m->texcoords[vtxIdx][compIdx] = (float)lua_tonumber(L, -1);
 			}
+			lua_pop(L, 2);
 		}
 		
 		if (hasIndices) {
