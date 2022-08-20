@@ -40,6 +40,7 @@ public:
 	void	Bind(r_tex_c* tex);
 	void	Color(col4_t col);
 	void	Quad(double s0, double t0, double x0, double y0, double s1, double t1, double x1, double y1, double s2, double t2, double x2, double y2, double s3, double t3, double x3, double y3);
+	void	Mesh(r_mesh_c* mesh, r_mat23_s mtx);
 	void	Render();
 
 private:
@@ -75,6 +76,7 @@ public:
 	void	DrawColor(dword col);
 	void	DrawImage(r_shaderHnd_c* hnd, float x, float y, float w, float h, float s1 = 0.0f, float t1 = 0.0f, float s2 = 1.0f, float t2 = 1.0f);
 	void	DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, float s0 = 0, float t0 = 0, float s1 = 1, float t1 = 0, float s2 = 1, float t2 = 1, float s3 = 0, float t3 = 1);
+	void	DrawImageMesh(r_shaderHnd_c* hnd, r_mesh_c* mesh, const r_mat23_s &mtx);
 	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str);
 	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...);
 	int		DrawStringWidth(int height, int font, const char* str);

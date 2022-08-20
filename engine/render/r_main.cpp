@@ -97,6 +97,7 @@ struct r_layerCmd_s {
 		BIND,
 		COLOR,
 		QUAD,
+		MESH,
 	} cmd;
 	union {
 		r_viewport_s viewport;
@@ -109,6 +110,10 @@ struct r_layerCmd_s {
 			double x[4];
 			double y[4];
 		} quad;
+		struct {
+			r_mesh_c* mesh;
+			r_mat23_s mtx;
+		} mesh;
 	};
 };
 
@@ -182,6 +187,14 @@ void r_layer_c::Quad(double s0, double t0, double x0, double y0, double s1, doub
 	cmd->quad.y[0] = y0; cmd->quad.y[1] = y1; cmd->quad.y[2] = y2; cmd->quad.y[3] = y3;
 }
 
+void r_layer_c::Mesh(r_mesh_c* mesh, r_mat23_s mtx) {
+	r_layerCmd_s* cmd = NewCommand();
+	cmd->cmd = r_layerCmd_s::MESH;
+	mesh->IncRef();
+	cmd->mesh.mesh = mesh;
+	cmd->mesh.mtx = mtx;
+}
+
 void r_layer_c::Render()
 {
 	r_viewport_s curViewPort = {-1, -1, -1, -1};
@@ -229,6 +242,26 @@ void r_layer_c::Render()
 			}
 			glEnd();
 			break;
+		case r_layerCmd_s::MESH: {
+			auto* mesh = cmd->mesh.mesh;
+			auto mtx = cmd->mesh.mtx;
+			glBegin(GL_TRIANGLES);
+			for (size_t idxIdx = 0; idxIdx < mesh->indices.size(); idxIdx += 3) {
+				for (int i = 0; i < 3; ++i) {
+					auto idx = mesh->indices[idxIdx + i];
+					auto pos = mesh->positions[idx];
+					r_vec2_s tPos;
+					r_vec2_s tTc;
+					tPos[0] = mtx[0] * pos[0] + mtx[2] * pos[1] + mtx[4];
+					tPos[1] = mtx[1] * pos[0] + mtx[3] * pos[1] + mtx[5];
+					tTc = mesh->texcoords[idx];
+					glTexCoord2fv(tTc.data());
+					glVertex2fv(tPos.data());
+				}
+			}
+			glEnd();
+			cmd->mesh.mesh->DecRef();
+		} break;
 		case r_layerCmd_s::COLOR:
 			glColor4fv(cmd->col);
 			break;
@@ -675,6 +708,17 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x
 	}
 	curLayer->Color(drawColor);
 	curLayer->Quad(s0, t0, x0, y0, s1, t1, x1, y1, s2, t2, x2, y2, s3, t3, x3, y3);
+}
+
+void r_renderer_c::DrawImageMesh(r_shaderHnd_c* hnd, r_mesh_c* mesh, const r_mat23_s &mtx)
+{
+	if (hnd) {
+		curLayer->Bind(hnd->sh->tex);
+	} else {
+		curLayer->Bind(whiteImage->sh->tex);
+	}
+	curLayer->Color(drawColor);
+	curLayer->Mesh(mesh, mtx);
 }
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)

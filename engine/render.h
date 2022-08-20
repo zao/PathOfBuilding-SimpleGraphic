@@ -8,6 +8,10 @@
 // Classes
 // =======
 
+#include <array>
+#include <atomic>
+#include <vector>
+
 // Font alignment
 enum r_fontAlign_e {
 	F_LEFT,
@@ -50,6 +54,25 @@ private:
 	r_shader_c* sh;
 };
 
+// Mesh handle
+struct r_mesh_c {
+	void IncRef() { ++refCount; }
+	void DecRef() { if (!--refCount)
+	{
+		delete this;
+	}}
+
+	std::atomic<uint32_t> refCount{1};
+	using vec2 = std::array<float, 2>;
+	using index = uint32_t;
+	std::vector<vec2> positions;
+	std::vector<vec2> texcoords;
+	std::vector<uint32_t> indices;
+};
+
+using r_vec2_s = std::array<float, 2>;
+using r_mat23_s = std::array<float, 2*3>;
+
 // ==========
 // Interfaces
 // ==========
@@ -83,6 +106,7 @@ public:
 	virtual void	DrawColor(dword col) = 0;
 	virtual void	DrawImage(r_shaderHnd_c* hnd, float x, float y, float w, float h, float s1 = 0.0f, float t1 = 0.0f, float s2 = 1.0f, float t2 = 1.0f) = 0;
 	virtual void	DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, float s0 = 0, float t0 = 0, float s1 = 1, float t1 = 0, float s2 = 1, float t2 = 1, float s3 = 0, float t3 = 1) = 0;
+	virtual void	DrawImageMesh(r_shaderHnd_c* imgHnd, r_mesh_c* meshHnd, const r_mat23_s &mtx) = 0;
 	virtual void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str) = 0;
 	virtual void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...) = 0;
 	virtual int		DrawStringWidth(int height, int font, const char* str) = 0;

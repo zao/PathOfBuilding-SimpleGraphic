@@ -7,6 +7,10 @@
 #include "ui_local.h"
 
 #include <zlib.h>
+#include <array>
+#include <memory>
+#include <numeric>
+#include <vector>
 
 /* OnFrame()
 ** OnChar("<char>")
@@ -30,6 +34,9 @@
 ** imgHandle:SetLoadingPriority(pri)
 ** width, height = imgHandle:ImageSize()
 **
+** meshHandle = NewMeshHandle()
+** meshHandle:Build(positions, texcoords[, indices])  pos: {{x1, y1}}, tc: {{s1, t1}}, indices: {0, 1, 2}
+**
 ** RenderInit()
 ** width, height = GetScreenSize()
 ** SetClearColor(red, green, blue[, alpha])
@@ -39,6 +46,8 @@
 ** SetDrawColor(red, green, blue[, alpha]) / SetDrawColor("<escapeStr>")
 ** DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom])
 ** DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4])
+** xform = {1, 0, 0, 1, tx, ty} -- column major matrix
+** DrawImageMesh({imgHandle|nil|, meshHandle, xform) -- transforms coordinates like v' = M*v
 ** DrawString(left, top, align{"LEFT"|"CENTER"|"RIGHT"|"CENTER_X"|"RIGHT_X"}, height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>")
 ** width = DrawStringWidth(height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>")
 ** index = DrawStringCursorIndex(height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>", cursorX, cursorY)
@@ -261,6 +270,133 @@ static int l_imgHandleImageSize(lua_State* L)
 	return 2;
 }
 
+// ============
+// Mesh Handles
+// ============
+
+struct meshHandle_s {
+	r_mesh_c* mesh;
+};
+
+static int l_NewMeshHandle(lua_State* L)
+{
+	meshHandle_s* meshHandle = (meshHandle_s*)lua_newuserdata(L, sizeof(meshHandle_s));
+	meshHandle->mesh = NULL;
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_setmetatable(L, -2);
+	return 1;
+}
+
+static meshHandle_s* GetMeshHandle(lua_State* L, ui_main_c* ui, const char* method, bool built)
+{
+	ui->LAssert(L, ui->IsUserData(L, 1, "uimeshhandlemeta"), "meshHandle:%s() must be used on an mesh handle", method);
+	meshHandle_s* meshHandle = (meshHandle_s*)lua_touserdata(L, 1);
+	lua_remove(L, 1);
+	if (built) {
+		ui->LAssert(L, meshHandle->mesh != NULL, "meshHandle:%s(): mesh handle has no geometry built", method);
+	}
+	return meshHandle;
+}
+
+static int l_meshHandleGC(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	meshHandle_s* meshHandle = GetMeshHandle(L, ui, "__gc", false);
+	if (meshHandle->mesh) {
+		meshHandle->mesh->DecRef();
+		meshHandle->mesh = nullptr;
+	}
+	return 0;
+}
+
+static int l_meshHandleBuild(lua_State* L) 
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	meshHandle_s* meshHandle = GetMeshHandle(L, ui, "Build", false);
+	int n = lua_gettop(L);
+	ui->LAssert(L, n >= 2 && n <= 3, "Usage: meshHandle:Build(xys, uvs[, indices])");
+	ui->LAssert(L, lua_istable(L, 1), "meshHandle:Build() argument 1: expected table, got %t", 1);
+	ui->LAssert(L, lua_istable(L, 2), "meshHandle:Build() argument 2: expected table, got %t", 2);
+	if (n == 3) {
+		ui->LAssert(L, lua_istable(L, 3), "meshHandle:Build() argument 3: expected table, got %t", 3);
+	}
+
+	bool const hasIndices = n == 3;
+	int const posCount = lua_objlen(L, 1);
+	int const tcCount = lua_objlen(L, 2);
+	ui->LAssert(L, posCount == tcCount, "meshHandle::Build() argument 2: length mismatch %d with argument 1 of length %d", tcCount, posCount);
+	int const indexCount = hasIndices ? lua_objlen(L, 3) : posCount;
+	ui->LAssert(L, indexCount % 3 == 0, "meshHandle::Build() argument 3: index count %d not a multiple of three", indexCount);
+
+	if (meshHandle->mesh) {
+		meshHandle->mesh->DecRef();
+		meshHandle->mesh = nullptr;
+	}
+
+	auto GetVec2 = [L, ui](char const* fun, char const* label, int tblIdx, int elemIdx) -> r_vec2_s
+	{
+		r_vec2_s ret;
+		lua_rawgeti(L, tblIdx, elemIdx);
+		ui->LAssert(L, lua_istable(L, -1), "%s: %s %d: expected table, got %t", fun, label, elemIdx, -1);
+		ui->LAssert(L, lua_objlen(L, -1) == 2, "%s: %s %d: table does not have two elements", fun, label, elemIdx);
+		int subTbl = lua_gettop(L);
+		for (int compIdx = 1; compIdx <= 2; ++compIdx) {
+			lua_rawgeti(L, subTbl, compIdx);
+			ui->LAssert(L, lua_isnumber(L, -1), "%s: %s %d: element %d: expected number, got %t", fun, label, elemIdx, compIdx, -1);
+			ret[compIdx-1] = (float)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+		return ret;
+	};
+
+	r_mesh_c* m{};
+	for (int pass = 0; pass < 2; ++pass) {
+		if (pass == 1) {
+			m = meshHandle->mesh = new r_mesh_c{};
+			m->positions.resize(posCount);
+			m->texcoords.resize(tcCount);
+			if (hasIndices) {
+				m->indices.resize(indexCount);
+			} else {
+				m->indices.resize(posCount);
+				std::iota(m->indices.begin(), m->indices.end(), 0);
+			}
+		}
+		for (int i = 1; i <= posCount; ++i) {
+			// position table is {{x1, y1}, {x2, y2}, ..}
+			r_vec2_s pos = GetVec2("meshHandle:Build()", "position", 1, i);
+			if (pass == 1) {
+				m->positions[i-1] = pos;
+			}
+
+			// texcoord table is {{s1, t1}, {s2, t2}, ..}
+			r_vec2_s tc = GetVec2("meshHandle:Build()", "texcoord", 2, i);
+			if (pass == 1) {
+				m->texcoords[i-1] = tc;
+			}
+		}
+		
+		if (hasIndices) {
+			for (int i = 1; i <= indexCount; ++i) {
+				lua_rawgeti(L, 3, i);
+				ui->LAssert(L, lua_isnumber(L, -1), "meshHandle:Build(): index %d: expected number, got %t", i, -1);
+				double num = lua_tonumber(L, -1);
+				auto index = (int)num;
+				ui->LAssert(L, num == (double)index, "meshHandle:Build(): index %d: expected integer, got %f", i, num);
+				lua_pop(L, 1);
+
+				if (pass == 1) {
+					m->indices[i-1] = index - 1;
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
 // =========
 // Rendering
 // =========
@@ -450,6 +586,45 @@ static int l_DrawImageQuad(lua_State* L)
 		}
 		ui->renderer->DrawImageQuad(hnd, arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
 	}
+	return 0;
+}
+
+static int l_DrawImageMesh(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LAssert(L, ui->renderEnable, "DrawImageMesh() called outside of OnFrame");
+	int n = lua_gettop(L);
+	ui->LAssert(L, n == 3, "Usage: DrawImageMesh({imgHandle|nil}, meshHandle, xform)");
+	ui->LAssert(L, lua_isnil(L, 1) || ui->IsUserData(L, 1, "uiimghandlemeta"), "DrawImageMesh() argument 1: expected image handle or nil, got %t", 1);
+	ui->LAssert(L, ui->IsUserData(L, 2, "uimeshhandlemeta"), "DrawImageMesh() argument 2: expected mesh handle, got %t", 2);
+	ui->LAssert(L, lua_istable(L, 3), "DrawImageMesh() argument 3: expected table, got %t", 3);
+	int mtxSize = lua_objlen(L, 3);
+	ui->LAssert(L, mtxSize == 6, "DrawImageMesh() argument 3: expected 6 elements, got %d", mtxSize);
+	r_shaderHnd_c* hnd = NULL;
+	if ( !lua_isnil(L, 1) ) {
+		imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, 1);
+		ui->LAssert(L, imgHandle->hnd != NULL, "DrawImageMesh(): image handle has no image loaded");
+		hnd = imgHandle->hnd;
+	}
+	r_mesh_c* mesh = NULL;
+	{
+		meshHandle_s* meshHandle = (meshHandle_s*)lua_touserdata(L, 2);
+		ui->LAssert(L, meshHandle->mesh != NULL, "DrawImageMesh(): mesh handle has no geometry built");
+		mesh = meshHandle->mesh;
+	}
+	r_mat23_s mtx{};
+	{
+		for (int i = 1; i <= 6; ++i)
+		{
+			lua_rawgeti(L, 3, i);
+			ui->LAssert(L, lua_isnumber(L, -1), "DrawImageMesh() argument 3: element %d: expected number, got %t", i, -1);
+			mtx[i-1] = (float)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+	}
+
+	ui->renderer->DrawImageMesh(hnd, mesh, mtx);
 	return 0;
 }
 
@@ -1207,6 +1382,18 @@ int ui_main_c::InitAPI(lua_State* L)
 	lua_setfield(L, -2, "ImageSize");
 	lua_setfield(L, LUA_REGISTRYINDEX, "uiimghandlemeta");
 
+	// Mesh handles
+	lua_newtable(L);		// Mesh handle metatable
+	lua_pushvalue(L, -1);	// Push mesh handle metatable
+	ADDFUNCCL(NewMeshHandle, 1);
+	lua_pushvalue(L, -1);	// Push mesh handle metatable
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, l_meshHandleGC);
+	lua_setfield(L, -2, "__gc");
+	lua_pushcfunction(L, l_meshHandleBuild);
+	lua_setfield(L, -2, "Build");
+	lua_setfield(L, LUA_REGISTRYINDEX, "uimeshhandlemeta");
+
 	// Rendering
 	ADDFUNC(RenderInit);
 	ADDFUNC(GetScreenSize);
@@ -1218,6 +1405,7 @@ int ui_main_c::InitAPI(lua_State* L)
 	ADDFUNC(SetDrawColor);
 	ADDFUNC(DrawImage);
 	ADDFUNC(DrawImageQuad);
+	ADDFUNC(DrawImageMesh);
 	ADDFUNC(DrawString);
 	ADDFUNC(DrawStringWidth);
 	ADDFUNC(DrawStringCursorIndex);
