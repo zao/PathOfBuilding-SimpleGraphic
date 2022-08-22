@@ -8,9 +8,9 @@ jobs:
           - platform: win32
             os: windows-latest
             triplet: x86-windows
-          - platform: x64
-            os: windows-latest
-            triplet: x64-windows
+          # - platform: x64
+          #   os: windows-latest
+          #   triplet: x64-windows
     runs-on: ${{ matrix.os }}
     env:
       VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
