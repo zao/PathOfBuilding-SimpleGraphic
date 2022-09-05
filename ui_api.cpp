@@ -325,10 +325,11 @@ static int l_meshHandleBuild(lua_State* L)
 	bool const hasIndices = n == 3;
 	int const posCount = lua_objlen(L, 1);
 	int const tcCount = lua_objlen(L, 2);
-	ui->LAssert(L, posCount == tcCount, "meshHandle::Build() argument 2: length mismatch %d with argument 1 of length %d", tcCount, posCount);
-	ui->LAssert(L, posCount % 2 == 0, "meshHandle::Build() argument 1: component count %d not a multiple of two", posCount); // also validates argument 2
-	int const indexCount = hasIndices ? lua_objlen(L, 3) : posCount;
-	ui->LAssert(L, indexCount % 3 == 0, "meshHandle::Build() argument 3: index count %d not a multiple of three", indexCount);
+	int const vtxCount = posCount / 2;
+	ui->LAssert(L, posCount == tcCount, "meshHandle:Build() argument 2: length mismatch %d with argument 1 of length %d", tcCount, posCount);
+	ui->LAssert(L, posCount % 2 == 0, "meshHandle:Build() argument 1: component count %d not a multiple of two", posCount); // also validates argument 2
+	int const indexCount = hasIndices ? lua_objlen(L, 3) : (posCount / 2);
+	ui->LAssert(L, indexCount % 3 == 0, "meshHandle:Build() argument 3: index count %d not a multiple of three", indexCount);
 
 	if (meshHandle->mesh) {
 		meshHandle->mesh->DecRef();
@@ -341,10 +342,8 @@ static int l_meshHandleBuild(lua_State* L)
 			m = meshHandle->mesh = new r_mesh_c{};
 			m->positions.resize(posCount / 2);
 			m->texcoords.resize(tcCount / 2);
-			if (hasIndices) {
-				m->indices.resize(indexCount);
-			} else {
-				m->indices.resize(posCount);
+			m->indices.resize(indexCount);
+			if (!hasIndices) {
 				std::iota(m->indices.begin(), m->indices.end(), 0);
 			}
 		}
@@ -359,7 +358,7 @@ static int l_meshHandleBuild(lua_State* L)
 				m->positions[vtxIdx][compIdx] = (float)lua_tonumber(L, -1);
 			}
 
-			// texcoord table is {{s1, t1}, {s2, t2}, ..}
+			// texcoord table is {s1, t1, s2, t2, ..}
 			lua_rawgeti(L, 2, i);
 			ui->LAssert(L, lua_isnumber(L, -1), "meshHandle:Build(): texcoord %d: expected number, got %t", vtxIdx + 1, -1);
 			if (pass == 1) {
@@ -375,6 +374,7 @@ static int l_meshHandleBuild(lua_State* L)
 				double num = lua_tonumber(L, -1);
 				auto index = (int)num;
 				ui->LAssert(L, num == (double)index, "meshHandle:Build(): index %d: expected integer, got %f", i, num);
+				ui->LAssert(L, index >= 1 && index <= vtxCount, "meshHandle:Build(): index %d: value %d out of bounds for %d vertices", i, index, vtxCount);
 				lua_pop(L, 1);
 
 				if (pass == 1) {
