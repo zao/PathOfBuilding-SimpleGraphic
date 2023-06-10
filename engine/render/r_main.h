@@ -4,6 +4,8 @@
 // Render Main Header
 //
 
+#include <unordered_map>
+
 // =============
 // Configuration
 // =============
@@ -109,6 +111,7 @@ public:
 	r_shaderHnd_c* whiteImage = nullptr;	// White image
 
 	r_font_c* fonts[F_NUMFONTS] = {}; // Font objects
+	std::string fontSpec[F_NUMFONTS] = {};
 
 	col4_t	drawColor = {};		// Current draw color
 

@@ -22,6 +22,8 @@
 #include <errno.h>
 #include <stdbool.h>
 
+#include <string_view>
+
 #ifdef _DEBUG
 #include "common/memtrak3.h"
 #endif
@@ -476,7 +478,9 @@ T clamp(T &v, T l, T u)
 // ================
 
 int		IsColorEscape(const char* str);
+int		IsColorEscape(std::u32string_view str);
 void	ReadColorEscape(const char* str, col3_t out);
+void	ReadColorEscape(std::u32string_view str, col3_t out);
 
 char*	_AllocString(const char* str, const char* file, int line);
 #define AllocString(s) _AllocString(s, __FILE__, __LINE__)

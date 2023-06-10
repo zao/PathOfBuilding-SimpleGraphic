@@ -4,9 +4,15 @@
 // Render Font Header
 //
 
+#include <deque>
+#include <memory>
+#include <unordered_map>
+
 // =======
 // Classes
 // =======
+
+class f_dynamicFont_c;
 
 // Font
 class r_font_c {
@@ -21,7 +27,7 @@ public:
 	void	VDraw(scp_t pos, int align, int height, col4_t col, const char* fmt, va_list va);
 
 private:
-	int		StringWidthInternal(struct f_fontHeight_s* fh, const char* str);
+	int		StringWidthInternal(class f_dynamicFontHeight_c* fh, std::u32string_view str);
 	const char*	StringCursorInternal(struct f_fontHeight_s* fh, const char* str, int curX);
 	void	DrawTextLine(scp_t pos, int align, int height, col4_t col, const char* str);
 
@@ -30,4 +36,6 @@ private:
 	struct f_fontHeight_s *fontHeights[32] = {};
 	int		maxHeight = 0;
 	int*	fontHeightMap = nullptr;
+	struct f_fontData_s* fontData = nullptr;
+	std::shared_ptr<f_dynamicFont_c> dynFont;
 };

@@ -276,9 +276,18 @@ static int l_RenderInit(lua_State* L)
 static int l_GetScreenSize(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	lua_pushinteger(L, ui->sys->video->vid.size[0]);
-	lua_pushinteger(L, ui->sys->video->vid.size[1]);
+	auto& vid = ui->sys->video->vid;
+	lua_pushinteger(L, (lua_Integer)vid.size[0]);
+	lua_pushinteger(L, (lua_Integer)vid.size[1]);
 	return 2;
+}
+
+static int l_GetScreenScale(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	auto& vid = ui->sys->video->vid;
+	lua_pushnumber(L, (lua_Number)vid.contentScale[0]);
+	return 1;
 }
 
 static int l_SetClearColor(lua_State* L)
@@ -443,13 +452,16 @@ static int l_DrawImageQuad(lua_State* L)
 			ui->LAssert(L, lua_isnumber(L, i), "DrawImageQuad() argument %d: expected number, got %s", i, luaL_typename(L, i));
 			arg[i-2] = (float)lua_tonumber(L, i);
 		}
-		ui->renderer->DrawImageQuad(hnd, arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], arg[8], arg[9], arg[10], arg[11], arg[12], arg[13], arg[14], arg[15]);
+		ui->renderer->DrawImageQuad(hnd,
+			arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7],
+			arg[8], arg[9], arg[10], arg[11], arg[12], arg[13], arg[14], arg[15]);
 	} else {
 		for (int i = 2; i <= 9; i++) {
 			ui->LAssert(L, lua_isnumber(L, i), "DrawImageQuad() argument %d: expected number, got %s", i, luaL_typename(L, i));
 			arg[i-2] = (float)lua_tonumber(L, i);
 		}
-		ui->renderer->DrawImageQuad(hnd, arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
+		ui->renderer->DrawImageQuad(hnd,
+			arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
 	}
 	return 0;
 }
@@ -470,7 +482,7 @@ static int l_DrawString(lua_State* L)
 	static const char* alignMap[6] = { "LEFT", "CENTER", "RIGHT", "CENTER_X", "RIGHT_X", NULL };
 	static const char* fontMap[4] = { "FIXED", "VAR", "VAR BOLD", NULL };
 	ui->renderer->DrawString(
-		(float)lua_tonumber(L, 1), (float)lua_tonumber(L, 2), luaL_checkoption(L, 3, "LEFT", alignMap), 
+		(float)lua_tonumber(L, 1), (float)lua_tonumber(L, 2), luaL_checkoption(L, 3, "LEFT", alignMap),
 		(int)lua_tointeger(L, 4), NULL, luaL_checkoption(L, 5, "FIXED", fontMap), lua_tostring(L, 6)
 	);
 	return 0;
@@ -486,7 +498,8 @@ static int l_DrawStringWidth(lua_State* L)
 	ui->LAssert(L, lua_isstring(L, 2), "DrawStringWidth() argument 2: expected string, got %s", luaL_typename(L, 2));
 	ui->LAssert(L, lua_isstring(L, 3), "DrawStringWidth() argument 3: expected string, got %s", luaL_typename(L, 3));
 	static const char* fontMap[4] = { "FIXED", "VAR", "VAR BOLD", NULL };
-	lua_pushinteger(L, ui->renderer->DrawStringWidth((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3)));
+	auto width = ui->renderer->DrawStringWidth((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3));
+	lua_pushinteger(L, (int)width);
 	return 1;
 }
 
@@ -502,7 +515,8 @@ static int l_DrawStringCursorIndex(lua_State* L)
 	ui->LAssert(L, lua_isnumber(L, 4), "DrawStringCursorIndex() argument 4: expected number, got %s", luaL_typename(L, 4));
 	ui->LAssert(L, lua_isnumber(L, 5), "DrawStringCursorIndex() argument 5: expected number, got %s", luaL_typename(L, 5));
 	static const char* fontMap[4] = { "FIXED", "VAR", "VAR BOLD", NULL };
-	lua_pushinteger(L, ui->renderer->DrawStringCursorIndex((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3), (int)lua_tointeger(L, 4), (int)lua_tointeger(L, 5)) + 1);
+	lua_pushinteger(L, ui->renderer->DrawStringCursorIndex((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3),
+		(int)lua_tointeger(L, 4), (int)lua_tointeger(L, 5)) + 1);
 	return 1;
 }
 
@@ -1225,6 +1239,7 @@ int ui_main_c::InitAPI(lua_State* L)
 	// Rendering
 	ADDFUNC(RenderInit);
 	ADDFUNC(GetScreenSize);
+	ADDFUNC(GetScreenScale);
 	ADDFUNC(SetClearColor);
 	ADDFUNC(SetDrawLayer);
 	ADDFUNC(GetDrawLayer);

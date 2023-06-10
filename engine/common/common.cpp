@@ -5,6 +5,7 @@
 //
 
 #include "common.h"
+#include <ztd/text.hpp>
 
 // ===================
 // Argument List Class
@@ -216,6 +217,25 @@ int IsColorEscape(const char* str)
 	return 0;
 }
 
+int IsColorEscape(std::u32string_view str)
+{
+	if (str.empty() || str[0] != U'^') {
+		return 0;
+	}
+	if (str.size() >= 2 && isdigit(str[1])) {
+		return 2;
+	}
+	else if (str.size() >= 6 && (str[1] == 'x' || str[1] == 'X')) {
+		for (int c = 0; c < 6; c++) {
+			if (!isxdigit(str[c + 2])) {
+				return 0;
+			}
+		}
+		return 8;
+	}
+	return 0;
+}
+
 void ReadColorEscape(const char* str, col3_t out)
 {
 	int len = IsColorEscape(str);
@@ -232,6 +252,26 @@ void ReadColorEscape(const char* str, col3_t out)
 			out[2] = xb / 255.0f;
 		}
 		break;
+	}
+}
+
+void ReadColorEscape(std::u32string_view str, col3_t out)
+{
+	int len = IsColorEscape(str);
+	switch (len) {
+	case 2:
+		VectorCopy(colorEscape[str[1] - L'0'], out);
+		break;
+	case 8:
+	{
+		int xr, xg, xb;
+		auto buf = ztd::text::transcode(str.substr(2, 6), ztd::text::utf8);
+		sscanf((const char*)buf.c_str(), "%2x%2x%2x", &xr, &xg, &xb);
+		out[0] = xr / 255.0f;
+		out[1] = xg / 255.0f;
+		out[2] = xb / 255.0f;
+	}
+	break;
 	}
 }
 

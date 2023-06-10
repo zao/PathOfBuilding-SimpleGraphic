@@ -88,6 +88,7 @@ target_include_directories(SimpleGraphic
 
 find_package(unofficial-angle CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(Freetype REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(LuaJit REQUIRED)
 find_package(re2 CONFIG REQUIRED)
@@ -109,6 +110,13 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
 endif ()
 
 if (WIN32)
+    target_compile_definitions(SimpleGraphic
+        PRIVATE
+        "_CRT_SECURE_NO_DEPRECATE=1",
+        "_CRT_SECURE_NO_WARNINGS=1",
+        "_SCL_SECURE_NO_DEPRECATE=1",
+        "_SCL_SECURE_NO_WARNINGS=1",
+    )
     target_link_libraries(SimpleGraphic
         PRIVATE
         "winmm.lib"
@@ -130,6 +138,7 @@ target_link_libraries(SimpleGraphic
     unofficial::angle::libEGL
     unofficial::angle::libGLESv2
     fmt::fmt
+    Freetype::Freetype
     glfw
     ${LUAJIT_LIBRARIES}
     re2::re2

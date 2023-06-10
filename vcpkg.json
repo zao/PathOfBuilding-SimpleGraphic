@@ -4,6 +4,7 @@
   "dependencies": [
     "angle",
     "fmt",
+    "freetype",
     "giflib",
     "glfw3",
     "libjpeg-turbo",
@@ -12,6 +13,7 @@
     "luajit",
     "pkgconf",
     "re2",
-    "zlib"
+    "zlib",
+    "ztd-text"
   ]
 }
