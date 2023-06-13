@@ -6,6 +6,7 @@
 
 #include <deque>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 // =======
@@ -13,6 +14,70 @@
 // =======
 
 class f_dynamicFont_c;
+class f_dynamicFontHeight_c;
+
+struct f_glyphAllocation_s {
+	int sheetIndex;
+	float tcX0, tcX1, tcY0, tcY1;
+};
+
+// Dynamic atlas for fonts
+class r_fontAtlas_c {
+public:
+	r_fontAtlas_c(class r_renderer_c* renderer);
+	~r_fontAtlas_c();
+	r_fontAtlas_c(const r_fontAtlas_c&) = delete;
+	r_fontAtlas_c& operator = (const r_fontAtlas_c&) = delete;
+
+	using RectHandle = size_t;
+	using SheetHandle = size_t;
+
+	RectHandle AllocateGlyphRect(const uint8_t* sourceBitmapData, int bitmapWidth, int bitmapHeight);
+	void PackNewRects();
+	const f_glyphAllocation_s* LookupRect(RectHandle rh);
+	r_tex_c* LookupSheet(SheetHandle sh);
+
+private:
+	void UpdateTexture();
+	void PushBlankTexture();
+	bool NeedPacking() const;
+	r_renderer_c* renderer{};
+
+	struct Request {
+		uintptr_t stageOffset;
+		int width, height;
+	};
+	std::vector<Request> requestedRects;
+	size_t requestBaseIndex{};
+	std::vector<uint8_t> stagedBitmapStorage;
+
+	std::shared_ptr<class f_rectPackState_c> packState;
+
+	std::vector<f_glyphAllocation_s> allocatedRects;
+
+	std::vector<uint8_t> cpuTex;
+	std::vector<std::shared_ptr<r_tex_c>> textures;
+};
+
+class f_fontStack_c {
+public:
+	explicit f_fontStack_c(std::vector<f_dynamicFontHeight_c*> heights);
+
+	struct f_glyphMapping_s GlyphMappingFromChar(char32_t ch) const;
+
+	double Baseline() const;
+	f_dynamicFontHeight_c* Font(size_t fontIdx) const;
+	
+	struct f_dynMetrics_s MetricsForChar(char32_t ch) const;
+	struct f_dynMetrics_s MetricsForGlyphMapping(const f_glyphMapping_s& gm) const;
+	struct f_dynKerning_s KerningForChars(char32_t ch0, char32_t ch1) const;
+	struct f_dynKerning_s KerningForGlyphMapping(const f_glyphMapping_s& gm0, const f_glyphMapping_s& gm1) const;
+
+	struct f_glyphSprite_s SpriteForChar(char32_t ch) const;
+private:
+
+	std::vector<f_dynamicFontHeight_c*> heights;
+};
 
 // Font
 class r_font_c {
@@ -27,15 +92,23 @@ public:
 	void	VDraw(scp_t pos, int align, int height, col4_t col, const char* fmt, va_list va);
 
 private:
-	int		StringWidthInternal(class f_dynamicFontHeight_c* fh, std::u32string_view str);
+	friend f_fontStack_c;
+	int		StringWidthInternal(int height, std::u32string_view str);
 	const char*	StringCursorInternal(struct f_fontHeight_s* fh, const char* str, int curX);
 	void	DrawTextLine(scp_t pos, int align, int height, col4_t col, const char* str);
+	
+	f_fontStack_c* FetchFontStack(int height);
+	std::vector<class f_dynamicFontHeight_c*> FetchFontHeights(int height);
+	struct f_glyphMapping_s GlyphMappingFromChar(char32_t ch);
+	struct f_dynMetrics_s MetricsForChar(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch);
+	struct f_dynKerning_s KerningForChars(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch0, char32_t ch1);
 
 	class r_renderer_c* renderer = nullptr;
 	int		numFontHeight = 0;
 	struct f_fontHeight_s *fontHeights[32] = {};
 	int		maxHeight = 0;
 	int*	fontHeightMap = nullptr;
-	struct f_fontData_s* fontData = nullptr;
-	std::shared_ptr<f_dynamicFont_c> dynFont;
+	std::vector<std::shared_ptr<struct f_fontData_s>> perFontData;
+	std::vector<std::shared_ptr<f_dynamicFont_c>> dynFonts;
+	std::unordered_map<int, std::shared_ptr<f_fontStack_c>> fontStackForHeight;
 };

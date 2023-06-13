@@ -20,6 +20,9 @@
 
 #include "stb_image_write.h"
 
+#define STB_RECT_PACK_IMPLEMENTATION 1
+#include <stb_rect_pack.h>
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MODULE_H
@@ -43,7 +46,7 @@ struct f_glyph_s {
 };
 
 struct f_fontData_s {
-	std::unique_ptr<unsigned char[]> ttData;
+	std::vector<uint8_t> ttData;
 };
 
 struct f_subpixelGlyph_s {
@@ -74,67 +77,177 @@ struct f_rangeSheet_s {
 	std::unordered_map<size_t, glyphInfo> glyphs;
 };
 
-struct f_sheet_s {
-	f_sheet_s() : width(1024), height(64), backingData(width* height), skyline(width) {}
+class f_rectPackState_c {
+public:
+	explicit f_rectPackState_c(int textureWidth = 1024, int textureHeight = 1024);
+	~f_rectPackState_c() = default;
+	f_rectPackState_c(const f_rectPackState_c&) = delete;
+	f_rectPackState_c& operator = (const f_rectPackState_c&) = delete;
 
-	void Grow(int addedHeight) {
-		int toAdd = (addedHeight + 63) & -64;
-		height += toAdd;
-		backingData.resize(width * height);
+	void InitTarget();
+
+	int texWidth, texHeight;
+	stbrp_context ctx;
+	std::vector<stbrp_node> nodes;
+	std::vector<stbrp_rect> rects;
+};
+
+struct f_dynMetrics_s {
+	float advanceX;
+};
+
+struct f_dynKerning_s {
+	float x;
+};
+
+f_rectPackState_c::f_rectPackState_c(int textureWidth, int textureHeight)
+	: texWidth(textureWidth), texHeight(textureHeight), nodes(textureWidth) {
+	InitTarget();
+}
+
+void f_rectPackState_c::InitTarget() {
+	stbrp_init_target(&ctx, texWidth, texHeight, nodes.data(), (int)nodes.size());
+	stbrp_setup_allow_out_of_mem(&ctx, 1);
+}
+
+r_fontAtlas_c::r_fontAtlas_c(class r_renderer_c* renderer)
+	: renderer(renderer)
+{
+	packState = std::make_shared<f_rectPackState_c>();
+	cpuTex.resize(packState->texWidth * packState->texHeight * 4);
+	PushBlankTexture();
+}
+
+r_fontAtlas_c::~r_fontAtlas_c() {}
+
+r_fontAtlas_c::RectHandle r_fontAtlas_c::AllocateGlyphRect(const uint8_t* sourceBitmapData, int bitmapWidth, int bitmapHeight) {
+	RectHandle ret = allocatedRects.size();
+
+	Request req{};
+	req.width = bitmapWidth;
+	req.height = bitmapHeight;
+	req.stageOffset = stagedBitmapStorage.size();
+	requestedRects.push_back(req);
+	size_t bitmapSize = bitmapWidth * bitmapHeight * 4;
+	stagedBitmapStorage.resize(stagedBitmapStorage.size() + bitmapSize);
+	memcpy(stagedBitmapStorage.data() + req.stageOffset, sourceBitmapData, bitmapSize);
+
+	stbrp_rect r{};
+	r.id = -(int)ret - 1;
+	// +2 is to accommodate padding
+	r.w = bitmapWidth + 2;
+	r.h = bitmapHeight + 2;
+	r.x = 0;
+	r.y = 0;
+	r.was_packed = 0;
+	packState->rects.push_back(r);
+
+	f_glyphAllocation_s alloc{};
+	alloc.sheetIndex = -1;
+	allocatedRects.push_back(alloc);
+	return ret;
+}
+
+void r_fontAtlas_c::PackNewRects() {
+	if (requestedRects.empty()) {
+		return;
 	}
+	while (true) {
+		int allPacked = stbrp_pack_rects(&packState->ctx, packState->rects.data(), (int)packState->rects.size());
+		for (int rectIdx = 0; rectIdx < packState->rects.size(); ++rectIdx) {
+			auto& rect = packState->rects[rectIdx];
+			if (rect.id < 0 && rect.was_packed) {
+				size_t allocIdx = (size_t)-(rect.id + 1);
+				rect.id = (int)textures.size() - 1;
+				// Stage updates to texture
+				auto& req = requestedRects[allocIdx - requestBaseIndex];
+				uintptr_t storageOffset = req.stageOffset;
+				size_t comp = 4;
+				size_t srcStride = req.width * 4;
+				const uint8_t* srcData = stagedBitmapStorage.data() + storageOffset;
+				size_t dstStride = packState->texWidth * comp;
+				uint8_t* dstData = cpuTex.data() + (rect.y + 1) * dstStride + (rect.x + 1) * comp;
+				for (int row = 0; row < req.height; ++row) {
+					memcpy(dstData, srcData, srcStride);
+					srcData += srcStride;
+					dstData += dstStride;
+				}
 
-	std::pair<int, int> AllocateRect(int w, int h) {
-		// Sweep line by line to find a row where there's enough of a horizontal gap to
-		// fit the desired rectangle.
-		// If not enough vertical space exists, grow the storage by the required amount.
-		int skylineBase = *std::min_element(skyline.begin(), skyline.end()); // naive but hey
-		int retX = -1, retY = -1;
-		bool found = false;
-		for (int row = skylineBase; row < height && !found; ++row) {
-			for (int col = 0; col < width; ++col) {
-				int needed = w;
-				for (int scan = col; scan < width && needed; ++scan) {
-					if (skyline[scan] <= row) {
-						--needed;
-					}
-					else {
-						break;
-					}
-				}
-				if (!needed) {
-					retX = col;
-					retY = row;
-					found = true;
-					break;
-				}
+				// Initialize allocated rect
+				f_glyphAllocation_s& alloc = allocatedRects[allocIdx];
+				alloc.sheetIndex = (int)textures.size() - 1;
+				// +1 and -1 are to compensate for padding requested when packing
+				alloc.tcX0 = (rect.x + 1.0f) / packState->texWidth;
+				alloc.tcX1 = (rect.x + rect.w - 1.0f) / packState->texWidth;
+				alloc.tcY0 = (rect.y + 1.0f) / packState->texHeight;
+				alloc.tcY1 = (rect.y + rect.h - 1.0f) / packState->texHeight;
 			}
 		}
+		// Update texture
+		UpdateTexture();
 
-		if (!found) {
-			retX = 0;
-			retY = height;
+		// Bail if done
+		if (allPacked) {
+			break;
 		}
-
-		int availY = height - retY;
-		if (availY < h) {
-			Grow(h - availY);
+		// Move on to next texture as the current one is considered full enough to not fit everything.
+		// We lose a bit at the bottom for thin rects but that's fine.
+		packState->InitTarget();
+		{
+			auto& rects = packState->rects;
+			auto I = std::remove_if(rects.begin(), rects.end(), [&](auto& r) -> bool {
+				return r.id >= 0;
+			});
+			rects.erase(I, rects.end());
 		}
-
-		std::fill_n(skyline.begin() + retX, w, retY + h);
-
-		return { retX, retY };
+		PushBlankTexture();
 	}
+	requestedRects.clear();
+	requestBaseIndex = allocatedRects.size();
+	stagedBitmapStorage.clear();
+}
 
-	int width, height;
-	std::vector<uint32_t> backingData;
-	std::vector<int> skyline;
-};
+const f_glyphAllocation_s* r_fontAtlas_c::LookupRect(r_fontAtlas_c::RectHandle rh) {
+	if (rh < 0 || rh >= allocatedRects.size() || allocatedRects[rh].sheetIndex < 0) {
+		return nullptr;
+	}
+	return &allocatedRects[rh];
+}
+
+r_tex_c* r_fontAtlas_c::LookupSheet(r_fontAtlas_c::SheetHandle sh) {
+	if (sh < 0 || sh >= textures.size()) {
+		return nullptr;
+	}
+	return textures[sh].get();
+}
+
+void r_fontAtlas_c::PushBlankTexture() {
+	std::fill(cpuTex.begin(), cpuTex.end(), 0u);
+	textures.push_back({});
+	UpdateTexture();
+}
+
+bool r_fontAtlas_c::NeedPacking() const {
+	return allocatedRects.size() < packState->rects.size();
+}
+
+void r_fontAtlas_c::UpdateTexture() {
+	image_c img{};
+	img.dat = cpuTex.data();
+	img.width = packState->texWidth;
+	img.height = packState->texHeight;
+	img.comp = 4;
+	img.type = IMGTYPE_RGBA;
+	std::shared_ptr<r_tex_c> tex(new r_tex_c(renderer->texMan, &img, TF_NEAREST | TF_NOMIPMAP));
+	textures.back() = tex;
+	tex->status = r_tex_c::DONE;
+	img.dat = nullptr;
+}
 
 // Font height info
 struct f_fontHeight_s {
 	r_tex_c* tex{};
 	r_tex_c* genTex{};
-	f_sheet_s sheet;
 	int		height{};
 	int		numGlyph{};
 	f_glyph_s glyphs[128];
@@ -160,20 +273,28 @@ public:
 
 class f_dynamicFontHeight_c {
 public:
-	f_dynamicFontHeight_c(r_renderer_c* renderer, FT_Library ftLib, const uint8_t* ttfDataPtr, size_t ttfDataSize, int height);
+	f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFont_c* parent, FT_Library ftLib, const uint8_t* ttfDataPtr, size_t ttfDataSize, int height);
 	~f_dynamicFontHeight_c();
 	f_dynamicFontHeight_c(const f_dynamicFontHeight_c&) = delete;
 	f_dynamicFontHeight_c& operator = (const f_dynamicFontHeight_c&) = delete;
 
+	void ScheduleGlyphLoad(uint32_t glyphIdx);
+
 	class r_renderer_c* renderer{};
+	class f_dynamicFont_c* parent{};
 	int height{};
 	FT_Face ftFace{};
 	FT_Size_Metrics ftMetrics{};
 	std::deque<std::shared_ptr<f_dynamicFontSheet_c>> sheets;
 	std::shared_ptr<r_tex_c> dummyTex;
-	std::unordered_map<uint32_t, std::shared_ptr<r_tex_c>> glyphTextures;
+	//std::unordered_map<uint32_t, std::shared_ptr<r_tex_c>> glyphTextures;
+	std::unordered_map<uint32_t, r_fontAtlas_c::RectHandle> glyphSlots;
 };
 
+struct f_glyphMapping_s {
+	size_t font;
+	uint32_t glyphIdx;
+};
 
 class f_dynamicFont_c {
 public:
@@ -183,21 +304,105 @@ public:
 	f_dynamicFont_c& operator = (const f_dynamicFont_c&) = delete;
 
 	f_dynamicFontHeight_c* GetHeightInstance(int height);
+	uint32_t GlyphFromChar(char32_t ch);
 
 	class r_renderer_c* renderer{};
 	std::vector<uint8_t> ttfData;
 	FT_MemoryRec_ ftMem{};
 	FT_Library ftLib{};
 	std::unordered_map<int, std::shared_ptr<f_dynamicFontHeight_c>> heights;
+	std::unordered_map<char32_t, uint32_t> glyphFromChar;
 };
+
+f_glyphMapping_s r_font_c::GlyphMappingFromChar(char32_t ch) {
+	for (size_t fontIdx = 0; fontIdx < dynFonts.size(); ++fontIdx) {
+		if (auto glyphIdx = dynFonts[fontIdx]->GlyphFromChar(ch)) {
+			return { fontIdx, glyphIdx };
+		}
+	}
+	return { 0, 0 };
+}
+
+f_glyphMapping_s f_fontStack_c::GlyphMappingFromChar(char32_t ch) const {
+	for (size_t fontIdx = 0; fontIdx < heights.size(); ++fontIdx) {
+		auto dfh = heights[fontIdx];
+		if (auto glyphIdx = dfh->parent->GlyphFromChar(ch)) {
+			return { fontIdx, glyphIdx };
+		}
+	}
+	return { 0, 0 };
+}
+
+std::vector<f_dynamicFontHeight_c*> r_font_c::FetchFontHeights(int height) {
+	std::vector<f_dynamicFontHeight_c*> ret;
+	for (auto& dynFont : dynFonts) {
+		ret.push_back(dynFont->GetHeightInstance(height));
+	}
+	return ret;
+}
 
 // ===========
 // Font Loader
 // ===========
 
-f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, FT_Library ftLib,
+void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
+	if (glyphSlots.count(glyphIdx)) {
+		return;
+	}
+	std::vector<uint8_t> bitmapData;
+	FT_Error ftErr{};
+	ftErr = FT_Load_Glyph(ftFace, glyphIdx, FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT);
+	assert(!ftErr);
+	ftErr = FT_Render_Glyph(ftFace->glyph, FT_RENDER_MODE_LIGHT);
+	assert(!ftErr);
+
+	auto& bitmap = ftFace->glyph->bitmap;
+	//image_c img;
+	//img.width = bitmap.width;
+	//img.height = bitmap.rows;
+	switch (bitmap.pixel_mode) {
+	case FT_PIXEL_MODE_GRAY: {
+		//img.comp = 4;
+		//img.type = IMGTYPE_RGBA;
+		bitmapData.resize(bitmap.width * bitmap.rows * 4);
+		uint8_t* src = bitmap.buffer;
+		uint8_t* dst = bitmapData.data();
+		size_t n = (size_t)bitmap.width * (size_t)bitmap.rows;
+		while (n--) {
+			memset(dst, 0xFF, 3);
+			dst[3] = *src;
+			src += 1;
+			dst += 4;
+		}
+	} break;
+	case FT_PIXEL_MODE_BGRA: {
+		//img.comp = 4;
+		//img.type = IMGTYPE_RGBA;
+		bitmapData.resize(bitmap.width * bitmap.rows * 4);
+		uint8_t* src = bitmap.buffer;
+		uint8_t* dst = bitmapData.data();
+		size_t n = bitmap.width * bitmap.rows;
+		while (n--) {
+			dst[0] = src[2];
+			dst[1] = src[1];
+			dst[2] = src[0];
+			dst[3] = src[3];
+			src += 4;
+			dst += 4;
+		}
+	} break;
+	}
+	//img.dat = bitmapData.data();
+	//auto tex = std::make_shared<r_tex_c>(renderer->texMan, &img, TF_NOMIPMAP);
+	//tex->status = r_tex_c::DONE;
+	//img.dat = nullptr;
+	//glyphTextures[glyphIdx] = tex;
+	glyphSlots[glyphIdx] = renderer->fontAtlas->AllocateGlyphRect(bitmapData.data(), bitmap.width, bitmap.rows);
+}
+
+f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFont_c* parent, FT_Library ftLib,
 	const uint8_t* ttfDataPtr, size_t ttfDataSize, int height)
-	: renderer(renderer), height(height)
+	: renderer(renderer), parent(parent), height(height)
 {
 	FT_Error ftErr{};
 	ftErr = FT_New_Memory_Face(ftLib, ttfDataPtr, (FT_Long)ttfDataSize, 0, &ftFace);
@@ -231,53 +436,9 @@ f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, FT_Library 
 	img.dat = nullptr;
 
 	std::vector<uint8_t> bitmapData;
-	for (FT_Long glyphIdx = 0; glyphIdx < ftFace->num_glyphs; ++glyphIdx) {
-		ftErr = FT_Load_Glyph(ftFace, glyphIdx, FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT);
-		assert(!ftErr);
-		ftErr = FT_Render_Glyph(ftFace->glyph, FT_RENDER_MODE_LIGHT);
-		assert(!ftErr);
-
-		auto& bitmap = ftFace->glyph->bitmap;
-		image_c img;
-		img.width = bitmap.width;
-		img.height = bitmap.rows;
-		switch (bitmap.pixel_mode) {
-		case FT_PIXEL_MODE_GRAY: {
-			img.comp = 4;
-			img.type = IMGTYPE_RGBA;
-			bitmapData.resize(bitmap.width * bitmap.rows * 4);
-			uint8_t* src = bitmap.buffer;
-			uint8_t* dst = bitmapData.data();
-			size_t n = (size_t)bitmap.width * (size_t)bitmap.rows;
-			while (n--) {
-				memset(dst, 0xFF, 3);
-				dst[3] = *src;
-				src += 1;
-				dst += 4;
-			}
-		} break;
-		case FT_PIXEL_MODE_BGRA: {
-			img.comp = 4;
-			img.type = IMGTYPE_RGBA;
-			bitmapData.resize(bitmap.width * bitmap.rows * 4);
-			uint8_t* src = bitmap.buffer;
-			uint8_t* dst = bitmapData.data();
-			size_t n = bitmap.width * bitmap.rows;
-			while (n--) {
-				dst[0] = src[2];
-				dst[1] = src[1];
-				dst[2] = src[0];
-				dst[3] = src[3];
-				src += 4;
-				dst += 4;
-			}
-		} break;
-		}
-		img.dat = bitmapData.data();
-		auto tex = std::make_shared<r_tex_c>(renderer->texMan, &img, TF_NOMIPMAP);
-		tex->status = r_tex_c::DONE;
-		img.dat = nullptr;
-		glyphTextures[glyphIdx] = tex;
+	for (char32_t ch = 0; ch < 128; ++ch) {
+		uint32_t glyphIdx = parent->GlyphFromChar(ch);
+		ScheduleGlyphLoad(glyphIdx);
 	}
 }
 
@@ -300,20 +461,44 @@ f_dynamicFont_c::f_dynamicFont_c(r_renderer_c* renderer, const uint8_t* ttfDataP
 	assert(ftErr == 0);
 
 	FT_Add_Default_Modules(ftLib);
+
+	// Init font only to gather supported characters and glyphs.
+	FT_Face face{};
+	ftErr = FT_New_Memory_Face(ftLib, ttfDataPtr, (FT_Long)ttfDataSize, 0, &face);
+	assert(ftErr == 0);
+	ftErr = FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+	assert(ftErr == 0);
+
+	FT_ULong ch;
+	FT_UInt glyphIdx{};
+	ch = FT_Get_First_Char(face, &glyphIdx);
+	while (glyphIdx != 0) {
+		glyphFromChar.insert({ ch, glyphIdx });
+		ch = FT_Get_Next_Char(face, ch, &glyphIdx);
+	}
+
+	FT_Done_Face(face);
 }
 
 f_dynamicFont_c::~f_dynamicFont_c() {
-	heights.clear();
+	heights.clear(); // Resources inside rely on ftLib, must be destroyed before the following library.
 	FT_Done_Library(ftLib);
 }
 
 f_dynamicFontHeight_c* f_dynamicFont_c::GetHeightInstance(int height) {
 	auto I = heights.find(height);
 	if (I == heights.end()) {
-		auto dfh = std::make_shared<f_dynamicFontHeight_c>(renderer, ftLib, ttfData.data(), ttfData.size(), height);
+		auto dfh = std::make_shared<f_dynamicFontHeight_c>(renderer, this, ftLib, ttfData.data(), ttfData.size(), height);
 		I = heights.insert_or_assign(height, dfh).first;
 	}
 	return I->second.get();
+}
+
+uint32_t f_dynamicFont_c::GlyphFromChar(char32_t ch) {
+	if (auto I = glyphFromChar.find(ch); I != glyphFromChar.end()) {
+		return I->second;
+	}
+	return 0;
 }
 
 r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
@@ -341,10 +526,6 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 		std::string_view subv = sub;
 		int h, x, y, w, sl, sr;
 		if (subv.substr(0, 5) == "TTF \"" && subv.substr(subv.size() - 2) == "\";") {
-			if (fontData) {
-				continue;
-			}
-
 			std::string_view ttfName = std::string_view(sub).substr(5);
 			ttfName = ttfName.substr(0, ttfName.size() - 2);
 			OutputDebugStringA(fmt::format("{}\n", ttfName).c_str());
@@ -352,10 +533,10 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 			std::ifstream is(ttfPath, std::ios::binary);
 			auto ttfDataSize = file_size(ttfPath);
 
-			fontData = new f_fontData_s();
-			fontData->ttData = std::make_unique<unsigned char[]>(ttfDataSize);
-			is.read((char*)fontData->ttData.get(), ttfDataSize);
-			dynFont = std::make_shared<f_dynamicFont_c>(renderer, fontData->ttData.get(), ttfDataSize);
+			auto fontData = std::make_shared<f_fontData_s>();
+			fontData->ttData.resize(ttfDataSize);
+			is.read((char*)fontData->ttData.data(), ttfDataSize);
+			perFontData.push_back(fontData);
 		}
 		else if (sscanf(sub.c_str(), "HEIGHT %u;", &h) == 1) {
 			// New height
@@ -386,78 +567,12 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 		}
 	}
 
-#if 0
-	std::filesystem::path glyphRoot(R"(C:\Temp\pob\glyphs)");
-	for (int i = 0; i < numFontHeight; ++i) {
-		f_fontHeight_s* fh = fontHeights[i];
-
-		if (fontData) {
-			const auto* info = &fontData->ttInfo;
-			f_metrics_s& metrics = fh->metrics;
-			metrics.scale = stbtt_ScaleForPixelHeight(info, (float)fh->height + 2);
-			//metrics.scale = stbtt_ScaleForMappingEmToPixels(info, (float)fh->height);
-			stbtt_GetFontVMetrics(info, &metrics.ascent, &metrics.descent, &metrics.lineGap);
-			metrics.baseline = metrics.ascent * metrics.scale;
-
-			int oversampleH = 3;
-			int oversampleV = 1;
-			metrics.oversampleH = oversampleH;
-			metrics.oversampleV = oversampleV;
-
-			for (int glyphIdx = 0; glyphIdx < info->numGlyphs; ++glyphIdx) {
-				f_subpixelGlyph_s g;
-				stbtt_GetGlyphBitmapBoxSubpixel(info, glyphIdx, metrics.scale * oversampleH, metrics.scale * oversampleV, 0, 0, &g.x0, &g.y0, &g.x1, &g.y1);
-				g.dx = g.x1 - g.x0;
-				g.dy = g.y1 - g.y0;
-
-				int rgbaStride = g.dx * 4;
-				std::vector<uint8_t> glyphBuf(g.dy * g.dx);
-				std::vector<uint8_t> rgbaBuf(g.dy * rgbaStride);
-				{
-					stbtt_MakeGlyphBitmapSubpixel(info, glyphBuf.data(), g.dx, g.dy, g.dx, metrics.scale * oversampleH, metrics.scale * oversampleV, 0, 0, glyphIdx);
-					for (int row = 0; row < g.dy; ++row) {
-						for (int col = 0; col < g.dx; ++col) {
-							uint8_t* dst = &rgbaBuf[row * rgbaStride + col * 4];
-							std::fill_n(dst, 3, 0xFF);
-							dst[3] = glyphBuf[row * g.dx + col];
-						}
-					}
-				}
-
-				auto pos = fh->sheet.AllocateRect(g.dx + 2, g.dy + 2);
-				{
-					auto [dstX, dstY] = pos;
-					dstX += 1; // shift by border
-					dstY += 1; // -"-
-					for (int row = 0; row < g.dy; ++row) {
-						auto dstRow = dstY + row;
-						uint32_t* dstSpan = &fh->sheet.backingData[dstX + dstRow * fh->sheet.width];
-						uint8_t* srcSpan = &rgbaBuf[row * rgbaStride];
-						memcpy(dstSpan, srcSpan, g.dx * 4);
-					}
-					auto& spg = fh->spGlyphs[glyphIdx];
-					spg.sub = g;
-					spg.sheetPos = { dstX, dstY };
-					stbtt_GetGlyphHMetrics(info, glyphIdx, &spg.advance, &spg.lsb);
-				}
-			}
-		}
-
-		auto glyphPath = glyphRoot / fmt::format("{}-{}.png", fontName, fh->height);
-		auto& sheet = fh->sheet;
-		//stbi_write_png(glyphPath.generic_string().c_str(), sheet.width, sheet.height, 4, sheet.backingData.data(), sheet.width * 4);
-
-		image_c img;
-		img.dat = (byte*)sheet.backingData.data();
-		img.width = sheet.width;
-		img.height = sheet.height;
-		img.comp = 4;
-		img.type = IMGTYPE_RGBA;
-		fh->genTex = new r_tex_c(renderer->texMan, &img, TF_NOMIPMAP);
-		fh->genTex->status = r_tex_c::DONE;
-		img.dat = nullptr;
+	for (auto fontData : perFontData) {
+		auto dynFont = std::make_shared<f_dynamicFont_c>(renderer, fontData->ttData.data(), fontData->ttData.size());
+		dynFonts.push_back(dynFont);
 	}
-#endif
+
+	// TODO(LV): Initialize atlas with codepoint ranges, record information and metrics in stacked fonts somewhere.
 
 	// Generate mapping of text height to font height
 	fontHeightMap = new int[maxHeight + 1];
@@ -486,7 +601,63 @@ r_font_c::~r_font_c()
 		delete fontHeights[i];
 	}
 	delete fontHeightMap;
-	delete fontData;
+	perFontData.clear();
+}
+
+f_dynMetrics_s r_font_c::MetricsForChar(const std::vector<f_dynamicFontHeight_c*> &dynHeights, char32_t ch) {
+	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
+	auto [fontIdx, glyphIdx] = GlyphMappingFromChar(ch);
+	auto dfh = dynHeights[fontIdx];
+	FT_Load_Glyph(dfh->ftFace, glyphIdx, loadFlags);
+	f_dynMetrics_s ret{};
+	ret.advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
+	return ret;
+}
+
+f_dynMetrics_s f_fontStack_c::MetricsForChar(char32_t ch) const {
+	auto gm = GlyphMappingFromChar(ch);
+	return MetricsForGlyphMapping(gm);
+}
+
+f_dynMetrics_s f_fontStack_c::MetricsForGlyphMapping(const f_glyphMapping_s& gm) const {
+	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
+	auto dfh = heights[gm.font];
+	FT_Load_Glyph(dfh->ftFace, gm.glyphIdx, loadFlags);
+	f_dynMetrics_s ret{};
+	ret.advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
+	return ret;
+}
+
+f_dynKerning_s r_font_c::KerningForChars(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch0, char32_t ch1) {
+	auto [fontIdx, glyphIdx] = GlyphMappingFromChar(ch0);
+	auto [nextFontIdx, nextGlyphIdx] = GlyphMappingFromChar(ch1);
+	if (fontIdx == nextFontIdx && nextGlyphIdx) {
+		auto* dfh = dynHeights[fontIdx];
+		FT_Vector kerning{};
+		FT_Get_Kerning(dfh->ftFace, glyphIdx, nextGlyphIdx, FT_KERNING_DEFAULT, &kerning);
+		f_dynKerning_s ret{};
+		ret.x = kerning.x / 64.0f;
+		return ret;
+	}
+	return {};
+}
+
+f_dynKerning_s f_fontStack_c::KerningForChars(char32_t ch0, char32_t ch1) const {
+	auto gm0 = GlyphMappingFromChar(ch0);
+	auto gm1 = GlyphMappingFromChar(ch1);
+	return KerningForGlyphMapping(gm0, gm1);
+}
+
+f_dynKerning_s f_fontStack_c::KerningForGlyphMapping(const f_glyphMapping_s& gm0, const f_glyphMapping_s& gm1) const {
+	if (gm0.font == gm1.font && gm1.glyphIdx) {
+		auto dfh = heights[gm0.font];
+		FT_Vector kerning{};
+		FT_Get_Kerning(dfh->ftFace, gm0.glyphIdx, gm1.glyphIdx, FT_KERNING_DEFAULT, &kerning);
+		f_dynKerning_s ret{};
+		ret.x = kerning.x / 64.0f;
+		return ret;
+	}
+	return {};
 }
 
 // =============
@@ -506,34 +677,32 @@ static std::string StripColorEscapes(const char* str) {
 	return ret;
 }
 
-int r_font_c::StringWidthInternal(f_dynamicFontHeight_c* dfh, std::u32string_view str)
+int r_font_c::StringWidthInternal(int height, std::u32string_view str)
 {
-	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
+	auto dynHeights = FetchFontHeights(height);
+
 	double width = 0;
 	while (!str.empty() && str[0] != U'\n') {
+		char32_t ch = str[0];
 		int escLen = IsColorEscape(str);
 		if (escLen) {
 			str = str.substr(escLen);
 		}
-		else if (str[0] == U'\t') {
-			FT_Load_Char(dfh->ftFace, U' ', loadFlags);
-			auto spWidth = FT_CEIL(dfh->ftFace->glyph->advance.x);
+		else if (ch == U'\t') {
+			auto metrics = MetricsForChar(dynHeights, U' ');
+			auto spWidth = metrics.advanceX;
 			width += spWidth * 4;
 			str = str.substr(1);
 		}
 		else {
-			FT_Load_Char(dfh->ftFace, str[0], loadFlags);
-			auto glyph = dfh->ftFace->glyph;
-			auto advance = FT_CEIL(glyph->advance.x);
-			width += advance;
+			auto metrics = MetricsForChar(dynHeights, ch);
+			width += metrics.advanceX;
 			str = str.substr(1);
+
+			// Kern to next glyph if any
 			if (!str.empty()) {
-				// Kern to next glyph if any
-				auto glyphIdx = glyph->glyph_index;
-				auto nextGlyphIdx = FT_Get_Char_Index(dfh->ftFace, str[0]);
-				FT_Vector kerning{};
-				FT_Get_Kerning(dfh->ftFace, glyphIdx, nextGlyphIdx, FT_KERNING_DEFAULT, &kerning);
-				width += FT_CEIL(kerning.x);
+				auto kerning = KerningForChars(dynHeights, ch, str[0]);
+				width += kerning.x;
 			}
 		}
 	}
@@ -544,12 +713,10 @@ int r_font_c::StringWidth(int height, const char* str)
 {
 	auto codepoints = ztd::text::transcode(std::string_view(str), ztd::text::utf8, ztd::text::utf32);
 	std::u32string_view tail = codepoints;
-	f_fontHeight_s* fh = fontHeights[height > maxHeight ? (numFontHeight - 1) : fontHeightMap[height]];
-	f_dynamicFontHeight_c* dfh = dynFont->GetHeightInstance(height);
 	int max = 0;
 	while (!tail.empty()) {
 		if (tail[0] != U'\n') {
-			int lw = (int)(StringWidthInternal(dfh, tail));
+			int lw = (int)(StringWidthInternal(height, tail));
 			if (lw > max) max = lw;
 		}
 		size_t np = tail.find(L'\n');
@@ -615,6 +782,61 @@ int	r_font_c::StringCursorIndex(int height, const char* str, int curX, int curY)
 	return lastIndex;
 }
 
+f_fontStack_c::f_fontStack_c(std::vector<f_dynamicFontHeight_c*> heights)
+	: heights(heights) {}
+
+f_fontStack_c* r_font_c::FetchFontStack(int height) {
+	auto I = fontStackForHeight.find(height);
+	if (I == fontStackForHeight.end()) {
+		auto heights = FetchFontHeights(height);
+		auto fs = std::make_shared<f_fontStack_c>(FetchFontHeights(height));
+		I = fontStackForHeight.insert({ height, fs }).first;
+	}
+	return I->second.get();
+}
+
+double f_fontStack_c::Baseline() const {
+	return FT_CEIL(heights.front()->ftMetrics.ascender);
+}
+
+f_dynamicFontHeight_c* f_fontStack_c::Font(size_t fontIdx) const {
+	return heights[fontIdx];
+}
+
+struct f_glyphSprite_s {
+	r_tex_c* tex;
+	double tcLeft, tcRight, tcTop, tcBottom;
+};
+
+f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
+	// TODO(LV): Populate font atlas, both initially at font loading and here on demand.
+	f_glyphSprite_s ret{};
+	auto [fontIdx, glyphIdx] = GlyphMappingFromChar(ch);
+	auto dfh = Font(fontIdx);
+	if (auto I = dfh->glyphSlots.find(glyphIdx); I != dfh->glyphSlots.end()) {
+		auto rectHandle = I->second;
+		auto renderer = dfh->renderer;
+		if (auto* alloc = renderer->fontAtlas->LookupRect(rectHandle)) {
+			ret.tex = renderer->fontAtlas->LookupSheet(alloc->sheetIndex);
+			ret.tcLeft = alloc->tcX0;
+			ret.tcRight = alloc->tcX1;
+			ret.tcTop = alloc->tcY0;
+			ret.tcBottom = alloc->tcY1;
+		}
+		//else {
+		//	ret.tex = stack->Font(fontIdx)->glyphTextures[glyphIdx].get();
+		//	ret.tcLeft = 0.0f;
+		//	ret.tcRight = 1.0f;
+		//	ret.tcTop = 0.0f;
+		//	ret.tcBottom = 1.0f;
+		//}
+	}
+	else {
+		dfh->ScheduleGlyphLoad(glyphIdx);
+	}
+	return ret;
+};
+
 void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const char* rawStr)
 {
 	auto codepoints = ztd::text::transcode(std::string_view(rawStr), ztd::text::utf8, ztd::text::utf32);
@@ -637,16 +859,12 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const 
 		return;
 	}
 
-	// Find best height to use
-	f_fontHeight_s* fh = fontHeights[height > maxHeight ? (numFontHeight - 1) : fontHeightMap[height]];
-	f_dynamicFontHeight_c* dfh = dynFont->GetHeightInstance(height);
-
 	// Calculate the string position
 	double x = pos[X];
 	double y = pos[Y];
 	if (align != F_LEFT) {
 		// Calculate the real width of the string
-		double width = StringWidthInternal(dfh, tail);
+		double width = StringWidthInternal(height, tail);
 		switch (align) {
 		case F_CENTRE:
 			x = floor((renderer->sys->video->vid.size[0] - width) / 2.0f + pos[X]);
@@ -672,11 +890,14 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const 
 		FT_Error err{};
 		FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT;
 		FT_Render_Mode renderMode = FT_RENDER_MODE_LIGHT;
-		renderer->curLayer->Bind(dfh->dummyTex.get());
+		auto dynHeights = FetchFontHeights(height);
+		auto stack = FetchFontStack(height);
+
+		double baseline = stack->Baseline();
+		y += baseline;
 
 		while (!tail.empty() && tail[0] != U'\n') {
 			char32_t ch = tail[0];
-			auto glyphIdx = FT_Get_Char_Index(dfh->ftFace, ch);
 
 			if (int escLen = IsColorEscape(tail)) {
 				ReadColorEscape(tail, col);
@@ -686,14 +907,17 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const 
 				continue;
 			}
 
-			if (tail[0] == U'\t') {
+			if (ch == U'\t') {
 				// TODO(LV): Handle tabs
-				err = FT_Load_Glyph(dfh->ftFace, glyphIdx, loadFlags);
-				float advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
-				x += advanceX * 4;
+				auto metrics = stack->MetricsForChar(U' ');
+				x += metrics.advanceX * 4;
 				tail = tail.substr(1);
 				continue;
 			}
+			
+			auto gm = stack->GlyphMappingFromChar(ch);
+			auto& [fontIdx, glyphIdx] = gm;
+			auto* dfh = stack->Font(fontIdx);
 
 			// Skip characters without glyphs - maybe filter out control characters and draw tofu instead?
 			//if (glyphIdx == 0) {
@@ -701,42 +925,48 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const 
 			//	continue;
 			//}
 
+			auto metrics = stack->MetricsForChar(ch);
 			err = FT_Load_Glyph(dfh->ftFace, glyphIdx, loadFlags);
 
-			auto glyph = dfh->ftFace->glyph;
-			double advanceX = glyph->advance.x / 64.0f;
-			double tcLeft = 0.0f, tcRight = 1.0f, tcTop = 0.0f, tcBottom = 1.0f;
-			double dstX0 = x + 1, dstX1 = x + advanceX - 1;
-			double dstY0 = y + 1, dstY1 = dstY0 + height - 1;
-			auto vp = renderer->curViewport;
-			auto lerp = [](auto a, auto b, auto k) { return a * (1.0 - k) + b * k; };
-			//dstX0 = lerp(vp.x, vp.x + vp.width, 0.25f);
-			//dstX1 = lerp(vp.x, vp.x + vp.width, 0.75f);
-			//dstY0 = lerp(vp.y, vp.y + vp.height, 0.25f);
-			//dstY1 = lerp(vp.y, vp.y + vp.height, 0.75f);
-			dstX0 = x + glyph->bitmap_left;
-			dstX1 = dstX0 + glyph->bitmap.width;
-			dstY0 = y + FT_CEIL(dfh->ftMetrics.ascender) - glyph->bitmap_top;
-			dstY1 = dstY0 + glyph->bitmap.rows;
-			auto tex = dfh->glyphTextures[glyphIdx];
-			renderer->curLayer->Bind(tex.get());
-			renderer->curLayer->Quad(
-				tcLeft, tcTop, dstX0, dstY0,
-				tcRight, tcTop, dstX1, dstY0,
-				tcRight, tcBottom, dstX1, dstY1,
-				tcLeft, tcBottom, dstX0, dstY1
-			);
+			struct f_glyphExtents_s {
+				int bitmap_left, bitmap_top, bitmap_width, bitmap_height;
+			};
 
-			x += advanceX;
+			auto glyph = dfh->ftFace->glyph;
+			auto ExtentsForChar = [&](char32_t ch) {
+				f_glyphExtents_s ret{};
+				ret.bitmap_left = glyph->bitmap_left;
+				ret.bitmap_top = glyph->bitmap_top;
+				ret.bitmap_width = glyph->bitmap.width;
+				ret.bitmap_height = glyph->bitmap.rows;
+				return ret;
+			};
+
+			auto extents = ExtentsForChar(ch);
+
+			auto sprite = stack->SpriteForChar(ch);
+			if (sprite.tex) {
+				auto vp = renderer->curViewport;
+				double dstX0 = x + extents.bitmap_left;
+				double dstX1 = dstX0 + extents.bitmap_width;
+				double dstY0 = y - extents.bitmap_top;
+				double dstY1 = dstY0 + extents.bitmap_height;
+				renderer->curLayer->Bind(sprite.tex);
+				renderer->curLayer->Quad(
+					sprite.tcLeft, sprite.tcTop, dstX0, dstY0,
+					sprite.tcRight, sprite.tcTop, dstX1, dstY0,
+					sprite.tcRight, sprite.tcBottom, dstX1, dstY1,
+					sprite.tcLeft, sprite.tcBottom, dstX0, dstY1
+				);
+			}
+
+			x += metrics.advanceX;
 			tail = tail.substr(1);
 
 			if (!tail.empty()) {
-				int nextGlyphIdx = FT_Get_Char_Index(dfh->ftFace, tail[0]);
-				FT_Vector kerning{};
-				err = FT_Get_Kerning(dfh->ftFace, glyphIdx, nextGlyphIdx, FT_KERNING_DEFAULT, &kerning);
-				if (!err) {
-					x += FT_CEIL(kerning.x);
-				}
+				auto gm1 = stack->GlyphMappingFromChar(tail[0]);
+				auto kerning = stack->KerningForGlyphMapping(gm, gm1);
+				x += kerning.x;
 			}
 		}
 	}

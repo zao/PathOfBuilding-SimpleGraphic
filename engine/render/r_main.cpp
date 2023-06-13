@@ -287,7 +287,7 @@ void Batch::Execute()
 	glEnableVertexAttribArray(xyAttr);
 	glEnableVertexAttribArray(uvAttr);
 	glEnableVertexAttribArray(tintAttr);
-	glDrawArrays(GL_TRIANGLES, 0, vertices.size());
+	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size());
 	glDisableVertexAttribArray(xyAttr);
 	glDisableVertexAttribArray(uvAttr);
 	glDisableVertexAttribArray(tintAttr);
@@ -483,7 +483,7 @@ static std::string GetShaderInfoLog(GLuint id)
 	GLint len{};
 	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &len);
 	std::vector<char> msg(len);
-	glGetShaderInfoLog(id, msg.size(), &len, msg.data());
+	glGetShaderInfoLog(id, (GLsizei)msg.size(), &len, msg.data());
 	return std::string(msg.data(), msg.data() + len);
 }
 
@@ -499,7 +499,7 @@ static std::string GetProgramInfoLog(GLuint id)
 	GLint len{};
 	glGetProgramiv(id, GL_INFO_LOG_LENGTH, &len);
 	std::vector<char> msg(len);
-	glGetProgramInfoLog(id, msg.size(), &len, msg.data());
+	glGetProgramInfoLog(id, (GLsizei)msg.size(), &len, msg.data());
 	return std::string(msg.data(), msg.data() + len);
 }
 
@@ -658,6 +658,8 @@ void r_renderer_c::Init()
 
 	whiteImage = RegisterShader("@white", 0);
 
+	fontAtlas = new r_fontAtlas_c(this);
+
 	fontSpec[F_FIXED] = "Bitstream Vera Sans Mono";
 	fontSpec[F_VAR] = "Liberation Sans";
 	fontSpec[F_VAR_BOLD] = "Liberation Sans Bold";
@@ -710,6 +712,7 @@ void r_renderer_c::Shutdown()
 
 void r_renderer_c::BeginFrame()
 {
+	fontAtlas->PackNewRects();
 	glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 	curLayer = layerList[0];
