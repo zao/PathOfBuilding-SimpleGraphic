@@ -34,24 +34,8 @@ FT_Long FT_CEIL(FT_Long val) { return ((val + 63) & -64) / 64; }
 // Classes
 // =======
 
-// Glyph parameters
-struct f_glyph_s {
-	double	tcLeft = 0.0;
-	double	tcRight = 0.0;
-	double	tcTop = 0.0;
-	double	tcBottom = 0.0;
-	int		width = 0;
-	int		spLeft = 0;
-	int		spRight = 0;
-};
-
 struct f_fontData_s {
 	std::vector<uint8_t> ttData;
-};
-
-struct f_subpixelGlyph_s {
-	int x0, y0, x1, y1;
-	int dx, dy;
 };
 
 struct f_metrics_s {
@@ -59,22 +43,6 @@ struct f_metrics_s {
 	int ascent, descent, lineGap;
 	float baseline;
 	int oversampleH, oversampleV;
-};
-
-struct f_stackedGlyph_s {
-	f_subpixelGlyph_s sub;
-	std::array<int, 2> sheetPos;
-	int advance, lsb;
-};
-
-struct f_rangeSheet_s {
-	struct glyphInfo {
-		int width, height;
-		float offsetX, offsetY;
-		float advanceX;
-	};
-	r_tex_c* tex{};
-	std::unordered_map<size_t, glyphInfo> glyphs;
 };
 
 class f_rectPackState_c {
@@ -244,18 +212,6 @@ void r_fontAtlas_c::UpdateTexture() {
 	img.dat = nullptr;
 }
 
-// Font height info
-struct f_fontHeight_s {
-	r_tex_c* tex{};
-	r_tex_c* genTex{};
-	int		height{};
-	int		numGlyph{};
-	f_glyph_s glyphs[128];
-	f_metrics_s metrics;
-	std::unordered_map<char32_t, size_t> glyphFromCodepoint;
-	std::unordered_map<int, f_stackedGlyph_s> spGlyphs;
-};
-
 using f_glyphId_t = size_t;
 
 struct f_dynamicGlyphExtent_s {
@@ -263,12 +219,6 @@ struct f_dynamicGlyphExtent_s {
 	int width, height;
 	float offsetX, offsetY;
 	float advanceX;
-};
-
-class f_dynamicFontSheet_c {
-public:
-	std::shared_ptr<r_tex_c> tex;
-	std::unordered_map<f_glyphId_t, f_dynamicGlyphExtent_s> glyphExtents;
 };
 
 class f_dynamicFontHeight_c {
@@ -285,9 +235,7 @@ public:
 	int height{};
 	FT_Face ftFace{};
 	FT_Size_Metrics ftMetrics{};
-	std::deque<std::shared_ptr<f_dynamicFontSheet_c>> sheets;
 	std::shared_ptr<r_tex_c> dummyTex;
-	//std::unordered_map<uint32_t, std::shared_ptr<r_tex_c>> glyphTextures;
 	std::unordered_map<uint32_t, r_fontAtlas_c::RectHandle> glyphSlots;
 };
 
@@ -357,13 +305,8 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 	assert(!ftErr);
 
 	auto& bitmap = ftFace->glyph->bitmap;
-	//image_c img;
-	//img.width = bitmap.width;
-	//img.height = bitmap.rows;
 	switch (bitmap.pixel_mode) {
 	case FT_PIXEL_MODE_GRAY: {
-		//img.comp = 4;
-		//img.type = IMGTYPE_RGBA;
 		bitmapData.resize(bitmap.width * bitmap.rows * 4);
 		uint8_t* src = bitmap.buffer;
 		uint8_t* dst = bitmapData.data();
@@ -376,8 +319,6 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 		}
 	} break;
 	case FT_PIXEL_MODE_BGRA: {
-		//img.comp = 4;
-		//img.type = IMGTYPE_RGBA;
 		bitmapData.resize(bitmap.width * bitmap.rows * 4);
 		uint8_t* src = bitmap.buffer;
 		uint8_t* dst = bitmapData.data();
@@ -392,11 +333,6 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 		}
 	} break;
 	}
-	//img.dat = bitmapData.data();
-	//auto tex = std::make_shared<r_tex_c>(renderer->texMan, &img, TF_NOMIPMAP);
-	//tex->status = r_tex_c::DONE;
-	//img.dat = nullptr;
-	//glyphTextures[glyphIdx] = tex;
 	glyphSlots[glyphIdx] = renderer->fontAtlas->AllocateGlyphRect(bitmapData.data(), bitmap.width, bitmap.rows);
 }
 
@@ -504,9 +440,6 @@ uint32_t f_dynamicFont_c::GlyphFromChar(char32_t ch) {
 r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 	: renderer(renderer)
 {
-	numFontHeight = 0;
-	fontHeightMap = NULL;
-
 	std::string fileNameBase = fmt::format(CFG_DATAPATH "Fonts/{}", fontName);
 
 	// Open info file
@@ -516,9 +449,6 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 		renderer->sys->con->Warning("font \"%s\" not found", fontName);
 		return;
 	}
-
-	maxHeight = 0;
-	f_fontHeight_s* fh = NULL;
 
 	// Parse info file
 	std::string sub;
@@ -539,31 +469,8 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 			perFontData.push_back(fontData);
 		}
 		else if (sscanf(sub.c_str(), "HEIGHT %u;", &h) == 1) {
-			// New height
-			fh = new f_fontHeight_s;
-			fontHeights[numFontHeight++] = fh;
-			fh->height = h;
-			if (h > maxHeight) {
-				maxHeight = h;
-			}
-			fh->numGlyph = 0;
-
-			continue;
-			std::string tgaName = fmt::format("{}.{}.tga", fileNameBase, h);
-			fh->tex = new r_tex_c(renderer->texMan, tgaName.c_str(), TF_NOMIPMAP);
 		}
-		else if (fh && sscanf(sub.c_str(), "GLYPH %u %u %u %d %d;", &x, &y, &w, &sl, &sr) == 5) {
-			// Add glyph
-			int ordinal = fh->numGlyph;
-			if (fh->numGlyph >= 128) continue;
-			f_glyph_s* glyph = &fh->glyphs[fh->numGlyph++];
-			//glyph->tcLeft = (double)x / fh->tex->fileWidth;
-			//glyph->tcRight = (double)(x + w) / fh->tex->fileWidth;
-			//glyph->tcTop = (double)y / fh->tex->fileHeight;
-			//glyph->tcBottom = (double)(y + fh->height) / fh->tex->fileHeight;
-			glyph->width = w;
-			glyph->spLeft = sl;
-			glyph->spRight = sr;
+		else if (sscanf(sub.c_str(), "GLYPH %u %u %u %d %d;", &x, &y, &w, &sl, &sr) == 5) {
 		}
 	}
 
@@ -573,34 +480,10 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 	}
 
 	// TODO(LV): Initialize atlas with codepoint ranges, record information and metrics in stacked fonts somewhere.
-
-	// Generate mapping of text height to font height
-	fontHeightMap = new int[maxHeight + 1];
-	memset(fontHeightMap, 0, sizeof(int) * (maxHeight + 1));
-	for (int i = 0; i < numFontHeight; i++) {
-		int gh = fontHeights[i]->height;
-		for (int h = gh; h <= maxHeight; h++) {
-			fontHeightMap[h] = i;
-		}
-		if (i > 0) {
-			int belowH = fontHeights[i - 1]->height;
-			int lim = (gh - belowH - 1) / 2;
-			for (int b = 0; b < lim; b++) {
-				fontHeightMap[gh - b - 1] = i;
-			}
-		}
-	}
 }
 
 r_font_c::~r_font_c()
 {
-	// Delete textures
-	for (int i = 0; i < numFontHeight; i++) {
-		delete fontHeights[i]->tex;
-		delete fontHeights[i]->genTex;
-		delete fontHeights[i];
-	}
-	delete fontHeightMap;
 	perFontData.clear();
 }
 
@@ -677,10 +560,8 @@ static std::string StripColorEscapes(const char* str) {
 	return ret;
 }
 
-int r_font_c::StringWidthInternal(int height, std::u32string_view str)
+int r_font_c::StringWidthInternal(f_fontStack_c* stack, std::u32string_view str)
 {
-	auto dynHeights = FetchFontHeights(height);
-
 	double width = 0;
 	while (!str.empty() && str[0] != U'\n') {
 		char32_t ch = str[0];
@@ -689,19 +570,19 @@ int r_font_c::StringWidthInternal(int height, std::u32string_view str)
 			str = str.substr(escLen);
 		}
 		else if (ch == U'\t') {
-			auto metrics = MetricsForChar(dynHeights, U' ');
+			auto metrics = stack->MetricsForChar(U' ');
 			auto spWidth = metrics.advanceX;
 			width += spWidth * 4;
 			str = str.substr(1);
 		}
 		else {
-			auto metrics = MetricsForChar(dynHeights, ch);
+			auto metrics = stack->MetricsForChar(ch);
 			width += metrics.advanceX;
 			str = str.substr(1);
 
 			// Kern to next glyph if any
 			if (!str.empty()) {
-				auto kerning = KerningForChars(dynHeights, ch, str[0]);
+				auto kerning = stack->KerningForChars(ch, str[0]);
 				width += kerning.x;
 			}
 		}
@@ -712,11 +593,12 @@ int r_font_c::StringWidthInternal(int height, std::u32string_view str)
 int r_font_c::StringWidth(int height, const char* str)
 {
 	auto codepoints = ztd::text::transcode(std::string_view(str), ztd::text::utf8, ztd::text::utf32);
+	auto stack = FetchFontStack(height);
 	std::u32string_view tail = codepoints;
 	int max = 0;
 	while (!tail.empty()) {
 		if (tail[0] != U'\n') {
-			int lw = (int)(StringWidthInternal(height, tail));
+			int lw = (int)(StringWidthInternal(stack, tail));
 			if (lw > max) max = lw;
 		}
 		size_t np = tail.find(L'\n');
@@ -730,29 +612,29 @@ int r_font_c::StringWidth(int height, const char* str)
 	return max;
 }
 
-const char* r_font_c::StringCursorInternal(f_fontHeight_s* fh, const char* str, int curX)
+std::u32string_view r_font_c::StringCursorInternal(f_fontStack_c* stack, std::u32string_view str, int curX)
 {
 	int x = 0;
-	while (*str && *str != '\n') {
+	while (!str.empty() && str[0] != U'\n') {
 		int escLen = IsColorEscape(str);
 		if (escLen) {
-			str += escLen;
+			str = str.substr(escLen);
 		}
-		else if (*str == '\t') {
-			int spWidth = fh->glyphs[' '].width + fh->glyphs[' '].spLeft + fh->glyphs[' '].spRight;
-			x += spWidth << 1;
+		else if (str[0] == U'\t') {
+			int spWidth = (int)stack->MetricsForChar(U' ').advanceX;
+			x += spWidth * 2;
 			if (curX <= x) {
 				break;
 			}
-			x += spWidth << 1;
-			str++;
+			x += spWidth * 2;
+			str = str.substr(1);
 		}
 		else {
-			x += fh->glyphs[*str].width + fh->glyphs[*str].spLeft + fh->glyphs[*str].spRight;
+			x += (int)stack->MetricsForChar(str[0]).advanceX;
 			if (curX <= x) {
 				break;
 			}
-			str++;
+			str = str.substr(1);
 		}
 	}
 	return str;
@@ -760,19 +642,20 @@ const char* r_font_c::StringCursorInternal(f_fontHeight_s* fh, const char* str, 
 
 int	r_font_c::StringCursorIndex(int height, const char* str, int curX, int curY)
 {
-	f_fontHeight_s* fh = fontHeights[height > maxHeight ? (numFontHeight - 1) : fontHeightMap[height]];
+	auto stack = FetchFontStack(height);
 	int lastIndex = 0;
 	int lineY = height;
-	curX = (int)(curX / (double)height * fh->height);
 	const char* lptr = str;
+	auto codepoints = ztd::text::transcode(std::string_view(str), ztd::text::utf8, ztd::text::utf32);
+	std::u32string_view tail(codepoints);
 	while (1) {
-		lastIndex = (int)(StringCursorInternal(fh, lptr, curX) - str);
+		lastIndex = (int)(StringCursorInternal(stack, tail, curX).data() - codepoints.data());
 		if (curY <= lineY) {
 			break;
 		}
-		const char* nptr = strchr(lptr, '\n');
-		if (nptr) {
-			lptr = nptr + 1;
+		size_t np = tail.find(L'\n');
+		if (np != tail.npos) {
+			tail = tail.substr(np + 1);
 		}
 		else {
 			break;
@@ -823,13 +706,6 @@ f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
 			ret.tcTop = alloc->tcY0;
 			ret.tcBottom = alloc->tcY1;
 		}
-		//else {
-		//	ret.tex = stack->Font(fontIdx)->glyphTextures[glyphIdx].get();
-		//	ret.tcLeft = 0.0f;
-		//	ret.tcRight = 1.0f;
-		//	ret.tcTop = 0.0f;
-		//	ret.tcBottom = 1.0f;
-		//}
 	}
 	else {
 		dfh->ScheduleGlyphLoad(glyphIdx);
@@ -837,9 +713,8 @@ f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
 	return ret;
 };
 
-void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const char* rawStr)
+void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u32string_view codepoints)
 {
-	auto codepoints = ztd::text::transcode(std::string_view(rawStr), ztd::text::utf8, ztd::text::utf32);
 	std::u32string_view tail(codepoints);
 	// Check if the line is visible
 	if (pos[Y] >= renderer->sys->video->vid.size[1] || pos[Y] <= -height) {
@@ -859,12 +734,14 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const 
 		return;
 	}
 
+	auto stack = FetchFontStack(height);
+
 	// Calculate the string position
 	double x = pos[X];
 	double y = pos[Y];
 	if (align != F_LEFT) {
 		// Calculate the real width of the string
-		double width = StringWidthInternal(height, tail);
+		double width = StringWidthInternal(stack, tail);
 		switch (align) {
 		case F_CENTRE:
 			x = floor((renderer->sys->video->vid.size[0] - width) / 2.0f + pos[X]);
@@ -891,7 +768,6 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, const 
 		FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT;
 		FT_Render_Mode renderMode = FT_RENDER_MODE_LIGHT;
 		auto dynHeights = FetchFontHeights(height);
-		auto stack = FetchFontStack(height);
 
 		double baseline = stack->Baseline();
 		y += baseline;
@@ -983,15 +859,16 @@ void r_font_c::Draw(scp_t pos, int align, int height, col4_t col, const char* st
 	renderer->curLayer->Color(col);
 
 	// Separate into lines and render them
-	const char* lptr = str;
-	while (*lptr) {
-		if (*lptr != '\n') {
-			DrawTextLine(pos, align, height, col, lptr);
+	auto codepoints = ztd::text::transcode(std::string_view(str), ztd::text::utf8, ztd::text::utf32);
+	std::u32string_view tail(codepoints);
+	while (!tail.empty()) {
+		if (tail[0] != U'\n') {
+			DrawTextLine(pos, align, height, col, tail);
 		}
 		pos[Y] += height;
-		const char* nptr = strchr(lptr, '\n');
-		if (nptr) {
-			lptr = nptr + 1;
+		size_t np = tail.find(U'\n');
+		if (np != tail.npos) {
+			tail = tail.substr(np + 1);
 		}
 		else {
 			break;

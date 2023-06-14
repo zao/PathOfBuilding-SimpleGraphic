@@ -93,9 +93,9 @@ public:
 
 private:
 	friend f_fontStack_c;
-	int		StringWidthInternal(int height, std::u32string_view str);
-	const char*	StringCursorInternal(struct f_fontHeight_s* fh, const char* str, int curX);
-	void	DrawTextLine(scp_t pos, int align, int height, col4_t col, const char* str);
+	int		StringWidthInternal(class f_fontStack_c* stack, std::u32string_view codepoints);
+	std::u32string_view	StringCursorInternal(class f_fontStack_c* fh, std::u32string_view codepoints, int curX);
+	void	DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u32string_view codepoints);
 	
 	f_fontStack_c* FetchFontStack(int height);
 	std::vector<class f_dynamicFontHeight_c*> FetchFontHeights(int height);
@@ -104,10 +104,6 @@ private:
 	struct f_dynKerning_s KerningForChars(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch0, char32_t ch1);
 
 	class r_renderer_c* renderer = nullptr;
-	int		numFontHeight = 0;
-	struct f_fontHeight_s *fontHeights[32] = {};
-	int		maxHeight = 0;
-	int*	fontHeightMap = nullptr;
 	std::vector<std::shared_ptr<struct f_fontData_s>> perFontData;
 	std::vector<std::shared_ptr<f_dynamicFont_c>> dynFonts;
 	std::unordered_map<int, std::shared_ptr<f_fontStack_c>> fontStackForHeight;
