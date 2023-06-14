@@ -274,14 +274,14 @@ bool jpeg_c::Load(const char* fileName)
 		return true;
 	}
 	int x, y, in_comp;
-	if (!stbi_info_from_memory(fileData.data(), fileData.size(), &x, &y, &in_comp)) {
+	if (!stbi_info_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp)) {
 		return true;
 	}
 	if (in_comp != 1 && in_comp != 3) {
 		con->Warning("JPEG '%s': unsupported component count '%d'", fileName, comp);
 		return true;
 	}
-	stbi_uc* data = stbi_load_from_memory(fileData.data(), fileData.size(), &x, &y, &in_comp, in_comp);
+	stbi_uc* data = stbi_load_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp, in_comp);
 	if (!data) {
 		stbi_image_free(data);
 		return true;
@@ -332,7 +332,7 @@ bool jpeg_c::ImageInfo(const char* fileName, imageInfo_s* info)
 		return true;
 	}
 	int x, y, comp;
-	if (stbi_info_from_memory(fileData.data(), fileData.size(), &x, &y, &comp)) {
+	if (stbi_info_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &comp)) {
 		return true;
 	}
 
@@ -363,14 +363,14 @@ bool png_c::Load(const char* fileName)
 		return true;
 	}
 	int x, y, in_comp;
-	if (!stbi_info_from_memory(fileData.data(), fileData.size(), &x, &y, &in_comp)) {
+	if (!stbi_info_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp)) {
 		return true;
 	}
 	width = x;
 	height = y;
 	comp = (in_comp == 1 || in_comp == 3) ? 3 : 4;
 	type = comp == 3 ? IMGTYPE_RGB : IMGTYPE_RGBA;
-	stbi_uc* data = stbi_load_from_memory(fileData.data(), fileData.size(), &x, &y, &in_comp, comp);
+	stbi_uc* data = stbi_load_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp, comp);
 	if (!data) {
 		stbi_image_free(data);
 		return true;
@@ -417,7 +417,7 @@ bool png_c::ImageInfo(const char* fileName, imageInfo_s* info)
 		return true;
 	}
 	int x, y, comp;
-	if (stbi_info_from_memory(fileData.data(), fileData.size(), &x, &y, &comp)) {
+	if (stbi_info_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &comp)) {
 		return true;
 	}
 
@@ -446,7 +446,7 @@ bool gif_c::Load(const char* fileName)
 			return true;
 		}
 		int x, y, in_comp;
-		stbi_uc* data = stbi_load_from_memory(fileData.data(), fileData.size(), &x, &y, &in_comp, 4);
+		stbi_uc* data = stbi_load_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp, 4);
 		if (!data || in_comp != 4) {
 			stbi_image_free(data);
 			return true;

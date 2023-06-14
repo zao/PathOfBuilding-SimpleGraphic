@@ -736,10 +736,10 @@ static int l_Deflate(lua_State* L)
 	deflateInit(&z, 9);
 	size_t inLen;
 	byte* in = (byte*)lua_tolstring(L, 1, &inLen);
-	int outSz = deflateBound(&z, inLen);
+	int outSz = deflateBound(&z, (uLong)inLen);
 	byte* out = new byte[outSz];
 	z.next_in = in;
-	z.avail_in = inLen;
+	z.avail_in = (uInt)inLen;
 	z.next_out = out;
 	z.avail_out = outSz;
 	int err = deflate(&z, Z_FINISH);
@@ -762,24 +762,24 @@ static int l_Inflate(lua_State* L)
 	ui->LAssert(L, lua_isstring(L, 1), "Inflate() argument 1: expected string, got %s", luaL_typename(L, 1));
 	size_t inLen;
 	byte* in = (byte*)lua_tolstring(L, 1, &inLen);
-	int outSz = inLen * 4;
+	size_t outSz = inLen * 4;
 	byte* out = new byte[outSz];
 	z_stream_s z;
 	z.next_in = in;
-	z.avail_in = inLen;
+	z.avail_in = (uInt)inLen;
 	z.zalloc = NULL;
 	z.zfree = NULL;
 	z.next_out = out;
-	z.avail_out = outSz;
+	z.avail_out = (uInt)outSz;
 	inflateInit(&z);
 	int err;
 	while ((err = inflate(&z, Z_NO_FLUSH)) == Z_OK) {
 		if (z.avail_out == 0) {
 			// Output buffer filled, embiggen it
-			int newSz = outSz << 1;
+			size_t newSz = outSz << 1;
 			trealloc(out, newSz);
 			z.next_out = out + outSz;
-			z.avail_out = outSz;
+			z.avail_out = (uInt)outSz;
 			outSz = newSz;
 		}
 	}

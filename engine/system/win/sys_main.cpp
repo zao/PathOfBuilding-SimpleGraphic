@@ -692,7 +692,7 @@ std::string FindBasePath()
 {
 #ifdef _WIN32
 	std::vector<char> basePath(512);
-	GetModuleFileNameA(NULL, basePath.data(), basePath.size());
+	GetModuleFileNameA(NULL, basePath.data(), (int)basePath.size());
 	*strrchr(basePath.data(), '\\') = 0;
 	return basePath.data();
 #elif __linux__
