@@ -575,6 +575,10 @@ void r_renderer_c::Init()
 	glDisable(GL_DEPTH_TEST);
 	glEnable(GL_BLEND);
 
+	// Present a black frame early to make loading more pleasant
+	glClear(GL_COLOR_BUFFER_BIT);
+	openGL->Swap();
+
 	// Load extensions
 	sys->con->Printf("Loading OpenGL extensions...\n");
 
