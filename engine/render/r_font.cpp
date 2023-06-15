@@ -24,6 +24,7 @@
 #include <stb_rect_pack.h>
 
 #include <ft2build.h>
+#include FT_ADVANCES_H
 #include FT_FREETYPE_H
 #include FT_MODULE_H
 #include FT_GLYPH_H
@@ -230,6 +231,11 @@ public:
 
 	void ScheduleGlyphLoad(uint32_t glyphIdx);
 
+	f_dynMetrics_s* GlyphMetrics(uint32_t glyph);
+	f_dynKerning_s* KerningPair(uint32_t glyph0, uint32_t glyph1);
+
+	using KerningPairKey = uint64_t;
+
 	class r_renderer_c* renderer{};
 	class f_dynamicFont_c* parent{};
 	int height{};
@@ -237,6 +243,8 @@ public:
 	FT_Size_Metrics ftMetrics{};
 	std::shared_ptr<r_tex_c> dummyTex;
 	std::unordered_map<uint32_t, r_fontAtlas_c::RectHandle> glyphSlots;
+	std::unordered_map<uint32_t, f_dynMetrics_s> glyphMetrics;
+	std::unordered_map<KerningPairKey, f_dynKerning_s> kerningPairs;
 };
 
 struct f_glyphMapping_s {
@@ -261,15 +269,6 @@ public:
 	std::unordered_map<int, std::shared_ptr<f_dynamicFontHeight_c>> heights;
 	std::unordered_map<char32_t, uint32_t> glyphFromChar;
 };
-
-f_glyphMapping_s r_font_c::GlyphMappingFromChar(char32_t ch) {
-	for (size_t fontIdx = 0; fontIdx < dynFonts.size(); ++fontIdx) {
-		if (auto glyphIdx = dynFonts[fontIdx]->GlyphFromChar(ch)) {
-			return { fontIdx, glyphIdx };
-		}
-	}
-	return { 0, 0 };
-}
 
 f_glyphMapping_s f_fontStack_c::GlyphMappingFromChar(char32_t ch) const {
 	for (size_t fontIdx = 0; fontIdx < heights.size(); ++fontIdx) {
@@ -336,6 +335,23 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 	glyphSlots[glyphIdx] = renderer->fontAtlas->AllocateGlyphRect(bitmapData.data(), bitmap.width, bitmap.rows);
 }
 
+f_dynMetrics_s* f_dynamicFontHeight_c::GlyphMetrics(uint32_t glyph)
+{
+	if (auto I = glyphMetrics.find(glyph); I != glyphMetrics.end()) {
+		return &I->second;
+	}
+	return nullptr;
+}
+
+f_dynKerning_s* f_dynamicFontHeight_c::KerningPair(uint32_t glyph0, uint32_t glyph1)
+{
+	KerningPairKey key = (uint64_t)glyph0 | ((uint64_t)glyph1 << 32);
+	if (auto I = kerningPairs.find(key); I != kerningPairs.end()) {
+		return &I->second;
+	}
+	return nullptr;
+}
+
 f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFont_c* parent, FT_Library ftLib,
 	const uint8_t* ttfDataPtr, size_t ttfDataSize, int height)
 	: renderer(renderer), parent(parent), height(height)
@@ -371,7 +387,23 @@ f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFo
 	dummyTex->status = r_tex_c::DONE;
 	img.dat = nullptr;
 
-	std::vector<uint8_t> bitmapData;
+	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
+	std::vector<FT_Fixed> advances(ftFace->num_glyphs);
+	FT_Get_Advances(ftFace, 0, ftFace->num_glyphs, loadFlags, advances.data());
+	for (FT_Long glyphIdx = 0; glyphIdx < ftFace->num_glyphs; ++glyphIdx) {
+		glyphMetrics[glyphIdx].advanceX = advances[glyphIdx] / 65536.0f;
+		if (FT_HAS_KERNING(ftFace)) {
+			for (FT_Long glyphIdx2 = 0; glyphIdx2 < ftFace->num_glyphs; ++glyphIdx2) {
+				FT_Vector kerning{};
+				ftErr = FT_Get_Kerning(ftFace, glyphIdx, glyphIdx2, FT_KERNING_DEFAULT, &kerning);
+				if (!ftErr && kerning.x != 0) {
+					KerningPairKey key = (uint64_t)glyphIdx | ((uint64_t)glyphIdx2 << 32);
+					kerningPairs[key].x = kerning.x / 64.0f;
+				}
+			}
+		}
+	}
+
 	for (char32_t ch = 0; ch < 128; ++ch) {
 		uint32_t glyphIdx = parent->GlyphFromChar(ch);
 		ScheduleGlyphLoad(glyphIdx);
@@ -487,42 +519,22 @@ r_font_c::~r_font_c()
 	perFontData.clear();
 }
 
-f_dynMetrics_s r_font_c::MetricsForChar(const std::vector<f_dynamicFontHeight_c*> &dynHeights, char32_t ch) {
-	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
-	auto [fontIdx, glyphIdx] = GlyphMappingFromChar(ch);
-	auto dfh = dynHeights[fontIdx];
-	FT_Load_Glyph(dfh->ftFace, glyphIdx, loadFlags);
-	f_dynMetrics_s ret{};
-	ret.advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
-	return ret;
-}
-
 f_dynMetrics_s f_fontStack_c::MetricsForChar(char32_t ch) const {
 	auto gm = GlyphMappingFromChar(ch);
 	return MetricsForGlyphMapping(gm);
 }
 
 f_dynMetrics_s f_fontStack_c::MetricsForGlyphMapping(const f_glyphMapping_s& gm) const {
-	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
 	auto dfh = heights[gm.font];
-	FT_Load_Glyph(dfh->ftFace, gm.glyphIdx, loadFlags);
-	f_dynMetrics_s ret{};
-	ret.advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
-	return ret;
-}
-
-f_dynKerning_s r_font_c::KerningForChars(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch0, char32_t ch1) {
-	auto [fontIdx, glyphIdx] = GlyphMappingFromChar(ch0);
-	auto [nextFontIdx, nextGlyphIdx] = GlyphMappingFromChar(ch1);
-	if (fontIdx == nextFontIdx && nextGlyphIdx) {
-		auto* dfh = dynHeights[fontIdx];
-		FT_Vector kerning{};
-		FT_Get_Kerning(dfh->ftFace, glyphIdx, nextGlyphIdx, FT_KERNING_DEFAULT, &kerning);
-		f_dynKerning_s ret{};
-		ret.x = kerning.x / 64.0f;
-		return ret;
+	if (auto mp = dfh->GlyphMetrics(gm.glyphIdx)) {
+		return *mp;
 	}
 	return {};
+	//FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
+	//FT_Load_Glyph(dfh->ftFace, gm.glyphIdx, loadFlags);
+	//f_dynMetrics_s ret{};
+	//ret.advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
+	//return ret;
 }
 
 f_dynKerning_s f_fontStack_c::KerningForChars(char32_t ch0, char32_t ch1) const {
@@ -534,11 +546,14 @@ f_dynKerning_s f_fontStack_c::KerningForChars(char32_t ch0, char32_t ch1) const 
 f_dynKerning_s f_fontStack_c::KerningForGlyphMapping(const f_glyphMapping_s& gm0, const f_glyphMapping_s& gm1) const {
 	if (gm0.font == gm1.font && gm1.glyphIdx) {
 		auto dfh = heights[gm0.font];
-		FT_Vector kerning{};
-		FT_Get_Kerning(dfh->ftFace, gm0.glyphIdx, gm1.glyphIdx, FT_KERNING_DEFAULT, &kerning);
-		f_dynKerning_s ret{};
-		ret.x = kerning.x / 64.0f;
-		return ret;
+		if (auto kpp = dfh->KerningPair(gm0.glyphIdx, gm1.glyphIdx)) {
+			return *kpp;
+		}
+		//FT_Vector kerning{};
+		//FT_Get_Kerning(dfh->ftFace, gm0.glyphIdx, gm1.glyphIdx, FT_KERNING_DEFAULT, &kerning);
+		//f_dynKerning_s ret{};
+		//ret.x = kerning.x / 64.0f;
+		//return ret;
 	}
 	return {};
 }

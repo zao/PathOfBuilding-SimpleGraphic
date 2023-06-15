@@ -99,9 +99,6 @@ private:
 	
 	f_fontStack_c* FetchFontStack(int height);
 	std::vector<class f_dynamicFontHeight_c*> FetchFontHeights(int height);
-	struct f_glyphMapping_s GlyphMappingFromChar(char32_t ch);
-	struct f_dynMetrics_s MetricsForChar(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch);
-	struct f_dynKerning_s KerningForChars(const std::vector<f_dynamicFontHeight_c*>& dynHeights, char32_t ch0, char32_t ch1);
 
 	class r_renderer_c* renderer = nullptr;
 	std::vector<std::shared_ptr<struct f_fontData_s>> perFontData;
