@@ -11,7 +11,9 @@
 #include <deque>
 #include <iostream>
 #include <fstream>
+#include <map>
 #include <mutex>
+#include <stack>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -30,6 +32,12 @@
 #include FT_GLYPH_H
 
 FT_Long FT_CEIL(FT_Long val) { return ((val + 63) & -64) / 64; }
+
+#include <fribidi.h>
+#include <fribidi-bidi-types.h>
+
+#include <hb.h>
+#include <hb-ft.h>
 
 // =======
 // Classes
@@ -67,6 +75,25 @@ struct f_dynMetrics_s {
 
 struct f_dynKerning_s {
 	float x;
+};
+
+struct f_glyphLayout_s {
+	f_glyphLayout_s() = default;
+	f_glyphLayout_s(uint32_t fontId, hb_glyph_info_t gi, hb_glyph_position_t gp)
+		: fontId(fontId), glyphId(gi.codepoint), advX(gp.x_advance / 64.0f), advY(gp.y_advance / 64.0f),
+		offX(gp.x_offset / 64.0f), offY(gp.y_offset / 64.0f), cluster(gi.cluster) {}
+
+	uint32_t fontId{};
+	uint32_t glyphId{};
+	float advX{}, advY{};
+	float offX{}, offY{};
+	uint32_t cluster{};
+};
+
+struct f_textLayout_s {
+	using Chunk = std::vector<f_glyphLayout_s>;
+
+	std::deque<Chunk> chunks;
 };
 
 f_rectPackState_c::f_rectPackState_c(int textureWidth, int textureHeight)
@@ -166,7 +193,7 @@ void r_fontAtlas_c::PackNewRects() {
 			auto& rects = packState->rects;
 			auto I = std::remove_if(rects.begin(), rects.end(), [&](auto& r) -> bool {
 				return r.id >= 0;
-			});
+				});
 			rects.erase(I, rects.end());
 		}
 		PushBlankTexture();
@@ -222,6 +249,10 @@ struct f_dynamicGlyphExtent_s {
 	float advanceX;
 };
 
+struct f_glyphExtents_s {
+	int bitmap_left, bitmap_top, bitmap_width, bitmap_height;
+};
+
 class f_dynamicFontHeight_c {
 public:
 	f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFont_c* parent, FT_Library ftLib, const uint8_t* ttfDataPtr, size_t ttfDataSize, int height);
@@ -241,8 +272,17 @@ public:
 	int height{};
 	FT_Face ftFace{};
 	FT_Size_Metrics ftMetrics{};
+
+	/* We would like to have the HarfBuzz face shared among sizes but as setting
+	the height of a FreeType face changes the face it is impossible. */
+	std::shared_ptr<hb_font_t> hbFont;
+
 	std::shared_ptr<r_tex_c> dummyTex;
-	std::unordered_map<uint32_t, r_fontAtlas_c::RectHandle> glyphSlots;
+	struct SlotData {
+		r_fontAtlas_c::RectHandle rect;
+		f_glyphExtents_s extents;
+	};
+	std::unordered_map<uint32_t, SlotData> glyphSlots;
 	std::unordered_map<uint32_t, f_dynMetrics_s> glyphMetrics;
 	std::unordered_map<KerningPairKey, f_dynKerning_s> kerningPairs;
 };
@@ -271,7 +311,7 @@ public:
 };
 
 f_glyphMapping_s f_fontStack_c::GlyphMappingFromChar(char32_t ch) const {
-	for (size_t fontIdx = 0; fontIdx < heights.size(); ++fontIdx) {
+	for (size_t fontIdx = 0; fontIdx < FontCount(); ++fontIdx) {
 		auto dfh = heights[fontIdx];
 		if (auto glyphIdx = dfh->parent->GlyphFromChar(ch)) {
 			return { fontIdx, glyphIdx };
@@ -297,13 +337,15 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 		return;
 	}
 	std::vector<uint8_t> bitmapData;
+	auto glyph = ftFace->glyph;
 	FT_Error ftErr{};
-	ftErr = FT_Load_Glyph(ftFace, glyphIdx, FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT);
+	auto loadFlags = hb_ft_font_get_load_flags(hbFont.get());
+	ftErr = FT_Load_Glyph(ftFace, glyphIdx, loadFlags);
 	assert(!ftErr);
-	ftErr = FT_Render_Glyph(ftFace->glyph, FT_RENDER_MODE_LIGHT);
+	ftErr = FT_Render_Glyph(glyph, FT_RENDER_MODE_LIGHT);
 	assert(!ftErr);
 
-	auto& bitmap = ftFace->glyph->bitmap;
+	auto& bitmap = glyph->bitmap;
 	switch (bitmap.pixel_mode) {
 	case FT_PIXEL_MODE_GRAY: {
 		bitmapData.resize(bitmap.width * bitmap.rows * 4);
@@ -332,7 +374,14 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 		}
 	} break;
 	}
-	glyphSlots[glyphIdx] = renderer->fontAtlas->AllocateGlyphRect(bitmapData.data(), bitmap.width, bitmap.rows);
+	auto& gs = glyphSlots[glyphIdx];
+	gs.rect = renderer->fontAtlas->AllocateGlyphRect(bitmapData.data(), bitmap.width, bitmap.rows);
+	f_glyphExtents_s extents{};
+	extents.bitmap_left = glyph->bitmap_left;
+	extents.bitmap_top = glyph->bitmap_top;
+	extents.bitmap_width = glyph->bitmap.width;
+	extents.bitmap_height = glyph->bitmap.rows;
+	gs.extents = extents;
 }
 
 f_dynMetrics_s* f_dynamicFontHeight_c::GlyphMetrics(uint32_t glyph)
@@ -370,10 +419,11 @@ f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFo
 	req.vertResolution = 0;
 	FT_Request_Size(ftFace, &req);
 
+	hbFont.reset(hb_ft_font_create_referenced(ftFace), hb_font_destroy);
+	hb_ft_font_set_funcs(hbFont.get());
+	hb_ft_font_set_load_flags(hbFont.get(), FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT);
+
 	ftMetrics = ftFace->size->metrics;
-	// TODO(LV): store these somewhere
-	//fh->metrics.ascent = (float)FT_CEIL(metrics.ascender);
-	//fh->metrics.descent = (float)FT_CEIL(metrics.descender);
 
 	image_c img;
 	uint8_t texData[8 * 8 * 4]{};
@@ -387,7 +437,7 @@ f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFo
 	dummyTex->status = r_tex_c::DONE;
 	img.dat = nullptr;
 
-	FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
+	FT_Int32 loadFlags = hb_ft_font_get_load_flags(hbFont.get()) | FT_LOAD_ADVANCE_ONLY;
 	std::vector<FT_Fixed> advances(ftFace->num_glyphs);
 	FT_Get_Advances(ftFace, 0, ftFace->num_glyphs, loadFlags, advances.data());
 	for (FT_Long glyphIdx = 0; glyphIdx < ftFace->num_glyphs; ++glyphIdx) {
@@ -510,8 +560,6 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 		auto dynFont = std::make_shared<f_dynamicFont_c>(renderer, fontData->ttData.data(), fontData->ttData.size());
 		dynFonts.push_back(dynFont);
 	}
-
-	// TODO(LV): Initialize atlas with codepoint ranges, record information and metrics in stacked fonts somewhere.
 }
 
 r_font_c::~r_font_c()
@@ -701,38 +749,122 @@ f_dynamicFontHeight_c* f_fontStack_c::Font(size_t fontIdx) const {
 	return heights[fontIdx];
 }
 
+size_t f_fontStack_c::FontCount() const { return heights.size(); }
+
 struct f_glyphSprite_s {
 	r_tex_c* tex;
 	double tcLeft, tcRight, tcTop, tcBottom;
+	f_glyphExtents_s extents;
 };
 
-f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
-	// TODO(LV): Populate font atlas, both initially at font loading and here on demand.
+f_glyphSprite_s f_fontStack_c::SpriteForGlyphMapping(f_glyphMapping_s gm) const {
 	f_glyphSprite_s ret{};
-	auto [fontIdx, glyphIdx] = GlyphMappingFromChar(ch);
+	auto [fontIdx, glyphIdx] = gm;
 	auto dfh = Font(fontIdx);
 	if (auto I = dfh->glyphSlots.find(glyphIdx); I != dfh->glyphSlots.end()) {
-		auto rectHandle = I->second;
+		auto [rect, extents] = I->second;
 		auto renderer = dfh->renderer;
-		if (auto* alloc = renderer->fontAtlas->LookupRect(rectHandle)) {
+		if (auto* alloc = renderer->fontAtlas->LookupRect(rect)) {
 			ret.tex = renderer->fontAtlas->LookupSheet(alloc->sheetIndex);
 			ret.tcLeft = alloc->tcX0;
 			ret.tcRight = alloc->tcX1;
 			ret.tcTop = alloc->tcY0;
 			ret.tcBottom = alloc->tcY1;
+			ret.extents = extents;
 		}
 	}
 	else {
 		dfh->ScheduleGlyphLoad(glyphIdx);
 	}
 	return ret;
+}
+
+f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
+	return SpriteForGlyphMapping(GlyphMappingFromChar(ch));
 };
+
+struct f_richTextString_c {
+	f_richTextString_c(std::string_view str, col4_t col);
+	f_richTextString_c(std::u32string_view str, col4_t col);
+
+	size_t SegmentCount() const;
+	std::u32string_view Segment(size_t idx) const;
+
+	using Color = std::array<float, 3>;
+	std::map<size_t, Color> colorChanges;
+	using SegmentExtent = std::pair<size_t, size_t>;
+	std::vector<SegmentExtent> segments;
+	std::u32string fullText;
+	std::u32string onlyText;
+
+private:
+	void AddSegment(size_t startIdx, size_t endIdx, Color color);
+};
+
+f_richTextString_c::f_richTextString_c(std::string_view str, col3_t col)
+	: f_richTextString_c(ztd::text::transcode(str, ztd::text::utf8, ztd::text::utf32), col)
+{}
+
+f_richTextString_c::f_richTextString_c(std::u32string_view str, col3_t col)
+	: fullText(str)
+{
+	std::u32string_view view(fullText);
+	size_t segmentStartIdx = 0;
+	Color color{ col[0], col[1], col[2] };
+	for (size_t charIdx = 0; charIdx < fullText.size();) {
+		auto tail = view.substr(charIdx);
+		if (int escLen = IsColorEscape(tail)) {
+			ReadColorEscape(tail, color.data());
+			AddSegment(segmentStartIdx, charIdx, color);
+			charIdx += escLen;
+			segmentStartIdx = charIdx;
+		}
+		else {
+			++charIdx;
+		}
+	}
+
+	if (segmentStartIdx != fullText.size()) {
+		AddSegment(segmentStartIdx, fullText.size(), color);
+	}
+}
+
+void f_richTextString_c::AddSegment(size_t startIdx, size_t endIdx, Color color)
+{
+	size_t outStartIdx = onlyText.size();
+	if (colorChanges.empty() || colorChanges.rbegin()->second != color) {
+		colorChanges[outStartIdx] = color;
+	}
+	if (startIdx != endIdx) {
+		onlyText.append(fullText.begin() + startIdx, fullText.begin() + endIdx);
+		size_t outEndIdx = onlyText.size();
+		segments.push_back({ outStartIdx, outEndIdx });
+	}
+}
+
+size_t f_richTextString_c::SegmentCount() const
+{
+	return segments.size();
+}
+
+std::u32string_view f_richTextString_c::Segment(size_t idx) const
+{
+	auto segment = segments[idx];
+	return std::u32string_view(fullText).substr(segment.first, segment.second - segment.first);
+}
 
 void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u32string_view codepoints)
 {
 	std::u32string_view tail(codepoints);
+	f_richTextString_c richStr(tail, col);
 	// Check if the line is visible
 	if (pos[Y] >= renderer->sys->video->vid.size[1] || pos[Y] <= -height) {
+		if (!richStr.colorChanges.empty()) {
+			auto c = richStr.colorChanges.rbegin()->second;
+			col4_t col{ c[0], c[1], c[2], 1.0f };
+			renderer->curLayer->Color(col);
+		}
+		return;
 		// Just process the colour codes
 		while (!tail.empty() && tail[0] != U'\n') {
 			// Check for escape character
@@ -750,6 +882,178 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	}
 
 	auto stack = FetchFontStack(height);
+
+	/* TODO(LV) : For HarfBuzz shaped text, it makes more sense to layout once and interpret those measurements both
+	* for the string width needed for alignment and as the actual layout for drawing.
+	*
+	* - split input text into segments based on directionality
+	* - for each segment: keep a queue of work items that either are spans that need to be (re)shaped or successfully
+		shaped runs of glyphs
+	* - consume that queue one item at a time;
+	*   - if it's a good run write it out to the layout
+	*   - if not try to shape it with the next font in line and split up into new work items in reverse order,
+	*     pushing them onto the queue
+	*
+	* Remember to consult colour segmentation with cluster ID when iterating for drawing.
+	*
+	* Glyph runs are either monotonically increasing in cluster IDs or monotonically decreasing for LTR and RTL order
+	* respectively. We want cluster level 1 - HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS, allowing us to colour marks
+	  differently for example (https://harfbuzz.github.io/working-with-harfbuzz-clusters.html)
+	*/
+
+	// Segment and shape text
+	f_textLayout_s layout;
+	if (!richStr.onlyText.empty()) {
+		struct Segment {
+			uint32_t clusterBase{}, clusterCount{};
+			bool isRtl{};
+		};
+
+		struct PendingSpan {
+			uint32_t nextFontId{};
+			uint32_t clusterBase{}, clusterEnd{};
+			uint32_t ClusterCount() const { return clusterEnd - clusterBase; }
+		};
+
+		using WorkSpan = std::variant<f_textLayout_s::Chunk, PendingSpan>;
+
+		std::map<uint32_t, Segment> initialSegments;
+		std::map<uint32_t, bool> isRtl;
+		auto textPtr = (const FriBidiChar*)richStr.onlyText.c_str();
+		auto textLen = (int)richStr.onlyText.size();
+		std::vector<FriBidiCharType> bTypes(textLen);
+		fribidi_get_bidi_types(textPtr, textLen, bTypes.data());
+
+		std::vector<FriBidiCharType> bracketTypes(textLen);
+		fribidi_get_bracket_types(textPtr, textLen, bTypes.data(), bracketTypes.data());
+
+		FriBidiParType pbaseDir = FRIBIDI_PAR_ON;
+		std::vector<FriBidiLevel> embeddingLevels(textLen);
+		fribidi_get_par_embedding_levels_ex(bTypes.data(), bracketTypes.data(), textLen, &pbaseDir, embeddingLevels.data());
+
+		// Build directionality lookup table
+		{
+			bool lastRtl = FRIBIDI_LEVEL_IS_RTL(embeddingLevels[0]);
+			isRtl[0] = lastRtl;
+			for (size_t idx = 1; idx < textLen; ++idx) {
+				bool thisRtl = FRIBIDI_LEVEL_IS_RTL(embeddingLevels[idx]);
+				if (lastRtl != thisRtl) {
+					isRtl[(uint32_t)idx] = thisRtl;
+					lastRtl = thisRtl;
+				}
+			}
+		}
+
+		// Segment input based on directionality
+		for (auto I = isRtl.begin(); I != isRtl.end(); ++I) {
+			auto J = std::next(I);
+			size_t segEnd = J != isRtl.end() ? J->first : textLen;
+			Segment seg{};
+			seg.isRtl = I->second;
+			seg.clusterBase = I->first;
+			seg.clusterCount = (uint32_t)(segEnd - seg.clusterBase);
+			initialSegments[seg.clusterBase] = seg;
+		}
+
+		std::shared_ptr<hb_buffer_t> buf(hb_buffer_create(), &hb_buffer_destroy);
+		for (auto& [_, seg] : initialSegments) {
+			std::deque<WorkSpan> spanProcessQueue;
+			{
+				PendingSpan span{};
+				span.nextFontId = 0;
+				span.clusterBase = seg.clusterBase;
+				span.clusterEnd = seg.clusterBase + seg.clusterCount;
+				spanProcessQueue.push_front(span);
+			}
+
+			while (!spanProcessQueue.empty()) {
+				auto span = std::move(spanProcessQueue.front());
+				spanProcessQueue.pop_front();
+				if (auto* deferredChunk = std::get_if<f_textLayout_s::Chunk>(&span)) {
+					layout.chunks.push_back(std::move(*deferredChunk));
+				}
+				else if (auto* pSpan = std::get_if<PendingSpan>(&span)) {
+					hb_buffer_add_utf32(buf.get(), (uint32_t const*)textPtr, textLen, pSpan->clusterBase,
+						pSpan->ClusterCount());
+					hb_buffer_set_cluster_level(buf.get(), HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+					hb_buffer_set_direction(buf.get(), seg.isRtl ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+					hb_buffer_guess_segment_properties(buf.get());
+
+					auto dfh = stack->Font(pSpan->nextFontId);
+					hb_shape(dfh->hbFont.get(), buf.get(), nullptr, 0);
+
+					uint32_t glyphCount{};
+					auto* glyphInfos = hb_buffer_get_glyph_infos(buf.get(), &glyphCount);
+					auto* glyphPositions = hb_buffer_get_glyph_positions(buf.get(), &glyphCount);
+					auto glyphInfosEnd = glyphInfos + glyphCount;
+					auto glyphPositionsEnd = glyphPositions + glyphCount;
+
+					std::stack<WorkSpan> newWork;
+					bool seekingGood = true;
+					for (size_t glyphIdx = 0; glyphIdx < glyphCount;) {
+						auto giI = glyphInfos + glyphIdx;
+						auto gpI = glyphPositions + glyphIdx;
+						auto& gi = *giI;
+						if (gi.codepoint > 0) {
+							auto giJ = std::find_if(giI + 1, glyphInfosEnd, [](auto& gi) { return gi.codepoint == 0; });
+							auto n = giJ - giI;
+							f_textLayout_s::Chunk goodChunk;
+							for (auto glyphOff = 0; glyphOff < n; ++glyphOff) {
+								f_glyphLayout_s glyph(pSpan->nextFontId, *(giI + glyphOff), *(gpI + glyphOff));
+								goodChunk.push_back(glyph);
+							}
+							if (newWork.empty()) {
+								layout.chunks.push_back(std::move(goodChunk));
+							}
+							else {
+								newWork.push(std::move(goodChunk));
+							}
+							glyphIdx += n;
+						}
+						else {
+							auto giJ = std::find_if(giI + 1, glyphInfosEnd, [](auto& gi) { return gi.codepoint > 0; });
+							auto n = giJ - giI;
+							auto upcomingFontId = pSpan->nextFontId + 1;
+							if (upcomingFontId == stack->FontCount()) {
+								// Out of fonts, emit a sequence of notdef glyphs
+								// TODO(LV): keep a shaped notdef from the primary font to use here for visual consistency when adding more fallback fonts
+								f_textLayout_s::Chunk tofuChunk{};
+								for (auto glyphOff = 0; glyphOff < n; ++glyphOff) {
+									f_glyphLayout_s glyph(pSpan->nextFontId, *(giI + glyphOff), *(gpI + glyphOff));
+									tofuChunk.push_back(glyph);
+								}
+								if (newWork.empty()) {
+									layout.chunks.push_back(std::move(tofuChunk));
+								}
+								else {
+									newWork.push(std::move(tofuChunk));
+								}
+							}
+							else {
+								PendingSpan pendingSpan{};
+								pendingSpan.nextFontId = upcomingFontId;
+								if (seg.isRtl) {
+									pendingSpan.clusterBase = (uint32_t)(giI->cluster + 1 - n);
+									pendingSpan.clusterEnd = (uint32_t)(giI->cluster + 1);
+								}
+								else {
+									pendingSpan.clusterBase = giI->cluster;
+									pendingSpan.clusterEnd = (uint32_t)(giI->cluster + n);
+								}
+								newWork.push(pendingSpan);
+							}
+							glyphIdx += n;
+						}
+					}
+					hb_buffer_reset(buf.get());
+					while (!newWork.empty()) {
+						spanProcessQueue.push_front(newWork.top());
+						newWork.pop();
+					}
+				}
+			}
+		}
+	}
 
 	// Calculate the string position
 	double x = pos[X];
@@ -777,88 +1081,57 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	double startX = x;
 	double startY = y;
 
-	// Render with FreeType.
+	// Render with HarfBuzz-assisted FreeType
 	if (1) {
-		FT_Error err{};
-		FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT;
-		FT_Render_Mode renderMode = FT_RENDER_MODE_LIGHT;
-		auto dynHeights = FetchFontHeights(height);
+		std::shared_ptr<hb_buffer_t> buf(hb_buffer_create(), &hb_buffer_destroy);
+		hb_buffer_add_utf32(buf.get(), (const uint32_t*)tail.data(), (int)tail.size(), 0, -1);
+		hb_buffer_guess_segment_properties(buf.get());
+		hb_shape(stack->Font(0)->hbFont.get(), buf.get(), nullptr, 0);
+		unsigned int glyphCount;
+		hb_glyph_info_t* glyphInfo = hb_buffer_get_glyph_infos(buf.get(), &glyphCount);
+		hb_glyph_position_t* glyphPos = hb_buffer_get_glyph_positions(buf.get(), &glyphCount);
+
+		x = startX;
+		y = startY;
 
 		double baseline = stack->Baseline();
 		y += baseline;
 
-		while (!tail.empty() && tail[0] != U'\n') {
-			char32_t ch = tail[0];
+		for (auto& chunk : layout.chunks) {
+			for (auto& info : chunk) {
+				auto colorI = richStr.colorChanges.lower_bound(info.cluster);
+				if (colorI != richStr.colorChanges.end()) {
+					auto change = colorI->second;
+					col4_t color{ change[0], change[1], change[2], 1.0f };
+					renderer->curLayer->Color(color);
+				}
+				f_glyphMapping_s gm{ info.fontId, info.glyphId };
 
-			if (int escLen = IsColorEscape(tail)) {
-				ReadColorEscape(tail, col);
-				col[3] = 1.0f;
-				renderer->curLayer->Color(col);
-				tail = tail.substr(escLen);
-				continue;
+				auto sprite = stack->SpriteForGlyphMapping(gm);
+				if (sprite.tex) {
+					auto& extents = sprite.extents;
+					auto vp = renderer->curViewport;
+					double dstX0 = x + info.offX + extents.bitmap_left;
+					double dstX1 = dstX0 + extents.bitmap_width;
+					double dstY0 = y - info.offY - extents.bitmap_top;
+					double dstY1 = dstY0 + extents.bitmap_height;
+					renderer->curLayer->Bind(sprite.tex);
+					renderer->curLayer->Quad(
+						sprite.tcLeft, sprite.tcTop, dstX0, dstY0,
+						sprite.tcRight, sprite.tcTop, dstX1, dstY0,
+						sprite.tcRight, sprite.tcBottom, dstX1, dstY1,
+						sprite.tcLeft, sprite.tcBottom, dstX0, dstY1
+					);
+				}
+
+				x += info.advX;
+				y += info.advY;
 			}
-
-			if (ch == U'\t') {
-				// TODO(LV): Handle tabs
-				auto metrics = stack->MetricsForChar(U' ');
-				x += metrics.advanceX * 4;
-				tail = tail.substr(1);
-				continue;
-			}
-			
-			auto gm = stack->GlyphMappingFromChar(ch);
-			auto& [fontIdx, glyphIdx] = gm;
-			auto* dfh = stack->Font(fontIdx);
-
-			// Skip characters without glyphs - maybe filter out control characters and draw tofu instead?
-			//if (glyphIdx == 0) {
-			//	tail = tail.substr(1);
-			//	continue;
-			//}
-
-			auto metrics = stack->MetricsForChar(ch);
-			err = FT_Load_Glyph(dfh->ftFace, glyphIdx, loadFlags);
-
-			struct f_glyphExtents_s {
-				int bitmap_left, bitmap_top, bitmap_width, bitmap_height;
-			};
-
-			auto glyph = dfh->ftFace->glyph;
-			auto ExtentsForChar = [&](char32_t ch) {
-				f_glyphExtents_s ret{};
-				ret.bitmap_left = glyph->bitmap_left;
-				ret.bitmap_top = glyph->bitmap_top;
-				ret.bitmap_width = glyph->bitmap.width;
-				ret.bitmap_height = glyph->bitmap.rows;
-				return ret;
-			};
-
-			auto extents = ExtentsForChar(ch);
-
-			auto sprite = stack->SpriteForChar(ch);
-			if (sprite.tex) {
-				auto vp = renderer->curViewport;
-				double dstX0 = x + extents.bitmap_left;
-				double dstX1 = dstX0 + extents.bitmap_width;
-				double dstY0 = y - extents.bitmap_top;
-				double dstY1 = dstY0 + extents.bitmap_height;
-				renderer->curLayer->Bind(sprite.tex);
-				renderer->curLayer->Quad(
-					sprite.tcLeft, sprite.tcTop, dstX0, dstY0,
-					sprite.tcRight, sprite.tcTop, dstX1, dstY0,
-					sprite.tcRight, sprite.tcBottom, dstX1, dstY1,
-					sprite.tcLeft, sprite.tcBottom, dstX0, dstY1
-				);
-			}
-
-			x += metrics.advanceX;
-			tail = tail.substr(1);
-
-			if (!tail.empty()) {
-				auto gm1 = stack->GlyphMappingFromChar(tail[0]);
-				auto kerning = stack->KerningForGlyphMapping(gm, gm1);
-				x += kerning.x;
-			}
+		}
+		if (!richStr.colorChanges.empty()) {
+			auto change = richStr.colorChanges.rbegin()->second;
+			col4_t color{ change[0], change[1], change[2], 1.0f };
+			renderer->curLayer->Color(color);
 		}
 	}
 }
@@ -877,17 +1150,20 @@ void r_font_c::Draw(scp_t pos, int align, int height, col4_t col, const char* st
 	auto codepoints = ztd::text::transcode(std::string_view(str), ztd::text::utf8, ztd::text::utf32);
 	std::u32string_view tail(codepoints);
 	while (!tail.empty()) {
-		if (tail[0] != U'\n') {
-			DrawTextLine(pos, align, height, col, tail);
-		}
-		pos[Y] += height;
-		size_t np = tail.find(U'\n');
+		std::u32string_view head;
+		auto np = tail.find(U'\n');
 		if (np != tail.npos) {
+			head = tail.substr(0, np);
 			tail = tail.substr(np + 1);
 		}
 		else {
-			break;
+			head = tail;
+			tail = tail.substr(0, 0);
 		}
+		if (!head.empty()) {
+			DrawTextLine(pos, align, height, col, head);
+		}
+		pos[Y] += height;
 	}
 }
 

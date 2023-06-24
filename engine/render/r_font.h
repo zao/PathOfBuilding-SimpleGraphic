@@ -67,6 +67,7 @@ public:
 
 	double Baseline() const;
 	f_dynamicFontHeight_c* Font(size_t fontIdx) const;
+	size_t FontCount() const;
 	
 	struct f_dynMetrics_s MetricsForChar(char32_t ch) const;
 	struct f_dynMetrics_s MetricsForGlyphMapping(const f_glyphMapping_s& gm) const;
@@ -74,8 +75,9 @@ public:
 	struct f_dynKerning_s KerningForGlyphMapping(const f_glyphMapping_s& gm0, const f_glyphMapping_s& gm1) const;
 
 	struct f_glyphSprite_s SpriteForChar(char32_t ch) const;
-private:
+	struct f_glyphSprite_s SpriteForGlyphMapping(f_glyphMapping_s gm) const;
 
+private:
 	std::vector<f_dynamicFontHeight_c*> heights;
 };
 
