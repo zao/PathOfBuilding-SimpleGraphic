@@ -69,19 +69,27 @@ public:
 	std::vector<stbrp_rect> rects;
 };
 
-struct f_dynMetrics_s {
-	float advanceX;
-};
+struct f_richTextString_c {
+	f_richTextString_c(std::string_view str, col4_t col);
+	f_richTextString_c(std::u32string_view str, col4_t col);
 
-struct f_dynKerning_s {
-	float x;
+	size_t SegmentCount() const;
+	std::u32string_view Segment(size_t idx) const;
+
+	using Color = std::array<float, 3>;
+	std::map<size_t, Color> colorChanges;
+	using SegmentExtent = std::pair<size_t, size_t>;
+	std::vector<SegmentExtent> segments;
+	std::u32string fullText;
+	std::u32string onlyText;
+
+private:
+	void AddSegment(size_t startIdx, size_t endIdx, Color color);
 };
 
 struct f_glyphLayout_s {
 	f_glyphLayout_s() = default;
-	f_glyphLayout_s(uint32_t fontId, hb_glyph_info_t gi, hb_glyph_position_t gp)
-		: fontId(fontId), glyphId(gi.codepoint), advX(gp.x_advance / 64.0f), advY(gp.y_advance / 64.0f),
-		offX(gp.x_offset / 64.0f), offY(gp.y_offset / 64.0f), cluster(gi.cluster) {}
+	f_glyphLayout_s(uint32_t fontId, hb_glyph_info_t gi, hb_glyph_position_t gp);
 
 	uint32_t fontId{};
 	uint32_t glyphId{};
@@ -93,8 +101,44 @@ struct f_glyphLayout_s {
 struct f_textLayout_s {
 	using Chunk = std::vector<f_glyphLayout_s>;
 
+	static f_textLayout_s LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr);
+	static f_textLayout_s LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str);
+	double TotalAdvanceX() const;
+
 	std::deque<Chunk> chunks;
+	double totalAdvanceX{};
+
+	struct CacheKey {
+		const f_fontStack_c* stack;
+		std::u32string plainText;
+
+		bool operator == (const CacheKey& rhs) const {
+			return stack == rhs.stack && plainText == rhs.plainText;
+		}
+	};
+
+	struct CacheValue;
+
+private:
+	void AddChunk(Chunk&& chunk);
+
+	static std::unordered_map<CacheKey, CacheValue> cache;
 };
+
+struct f_textLayout_s::CacheValue
+{
+	f_textLayout_s layout;
+};
+
+namespace std {
+	template <> struct hash<f_textLayout_s::CacheKey> {
+		size_t operator()(const f_textLayout_s::CacheKey& x) const {
+			return hash<const f_fontStack_c*>()(x.stack) ^ hash<u32string>()(x.plainText);
+		}
+	};
+}
+
+std::unordered_map<f_textLayout_s::CacheKey, f_textLayout_s::CacheValue> f_textLayout_s::cache;
 
 f_rectPackState_c::f_rectPackState_c(int textureWidth, int textureHeight)
 	: texWidth(textureWidth), texHeight(textureHeight), nodes(textureWidth) {
@@ -262,11 +306,6 @@ public:
 
 	void ScheduleGlyphLoad(uint32_t glyphIdx);
 
-	f_dynMetrics_s* GlyphMetrics(uint32_t glyph);
-	f_dynKerning_s* KerningPair(uint32_t glyph0, uint32_t glyph1);
-
-	using KerningPairKey = uint64_t;
-
 	class r_renderer_c* renderer{};
 	class f_dynamicFont_c* parent{};
 	int height{};
@@ -283,8 +322,6 @@ public:
 		f_glyphExtents_s extents;
 	};
 	std::unordered_map<uint32_t, SlotData> glyphSlots;
-	std::unordered_map<uint32_t, f_dynMetrics_s> glyphMetrics;
-	std::unordered_map<KerningPairKey, f_dynKerning_s> kerningPairs;
 };
 
 struct f_glyphMapping_s {
@@ -384,23 +421,6 @@ void f_dynamicFontHeight_c::ScheduleGlyphLoad(uint32_t glyphIdx) {
 	gs.extents = extents;
 }
 
-f_dynMetrics_s* f_dynamicFontHeight_c::GlyphMetrics(uint32_t glyph)
-{
-	if (auto I = glyphMetrics.find(glyph); I != glyphMetrics.end()) {
-		return &I->second;
-	}
-	return nullptr;
-}
-
-f_dynKerning_s* f_dynamicFontHeight_c::KerningPair(uint32_t glyph0, uint32_t glyph1)
-{
-	KerningPairKey key = (uint64_t)glyph0 | ((uint64_t)glyph1 << 32);
-	if (auto I = kerningPairs.find(key); I != kerningPairs.end()) {
-		return &I->second;
-	}
-	return nullptr;
-}
-
 f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFont_c* parent, FT_Library ftLib,
 	const uint8_t* ttfDataPtr, size_t ttfDataSize, int height)
 	: renderer(renderer), parent(parent), height(height)
@@ -436,23 +456,6 @@ f_dynamicFontHeight_c::f_dynamicFontHeight_c(r_renderer_c* renderer, f_dynamicFo
 	dummyTex.reset(new r_tex_c(renderer->texMan, &img, TF_NOMIPMAP));
 	dummyTex->status = r_tex_c::DONE;
 	img.dat = nullptr;
-
-	FT_Int32 loadFlags = hb_ft_font_get_load_flags(hbFont.get()) | FT_LOAD_ADVANCE_ONLY;
-	std::vector<FT_Fixed> advances(ftFace->num_glyphs);
-	FT_Get_Advances(ftFace, 0, ftFace->num_glyphs, loadFlags, advances.data());
-	for (FT_Long glyphIdx = 0; glyphIdx < ftFace->num_glyphs; ++glyphIdx) {
-		glyphMetrics[glyphIdx].advanceX = advances[glyphIdx] / 65536.0f;
-		if (FT_HAS_KERNING(ftFace)) {
-			for (FT_Long glyphIdx2 = 0; glyphIdx2 < ftFace->num_glyphs; ++glyphIdx2) {
-				FT_Vector kerning{};
-				ftErr = FT_Get_Kerning(ftFace, glyphIdx, glyphIdx2, FT_KERNING_DEFAULT, &kerning);
-				if (!ftErr && kerning.x != 0) {
-					KerningPairKey key = (uint64_t)glyphIdx | ((uint64_t)glyphIdx2 << 32);
-					kerningPairs[key].x = kerning.x / 64.0f;
-				}
-			}
-		}
-	}
 
 	for (char32_t ch = 0; ch < 128; ++ch) {
 		uint32_t glyphIdx = parent->GlyphFromChar(ch);
@@ -567,45 +570,6 @@ r_font_c::~r_font_c()
 	perFontData.clear();
 }
 
-f_dynMetrics_s f_fontStack_c::MetricsForChar(char32_t ch) const {
-	auto gm = GlyphMappingFromChar(ch);
-	return MetricsForGlyphMapping(gm);
-}
-
-f_dynMetrics_s f_fontStack_c::MetricsForGlyphMapping(const f_glyphMapping_s& gm) const {
-	auto dfh = heights[gm.font];
-	if (auto mp = dfh->GlyphMetrics(gm.glyphIdx)) {
-		return *mp;
-	}
-	return {};
-	//FT_Int32 loadFlags = FT_LOAD_NO_BITMAP | FT_LOAD_TARGET_LIGHT | FT_LOAD_ADVANCE_ONLY;
-	//FT_Load_Glyph(dfh->ftFace, gm.glyphIdx, loadFlags);
-	//f_dynMetrics_s ret{};
-	//ret.advanceX = dfh->ftFace->glyph->advance.x / 64.0f;
-	//return ret;
-}
-
-f_dynKerning_s f_fontStack_c::KerningForChars(char32_t ch0, char32_t ch1) const {
-	auto gm0 = GlyphMappingFromChar(ch0);
-	auto gm1 = GlyphMappingFromChar(ch1);
-	return KerningForGlyphMapping(gm0, gm1);
-}
-
-f_dynKerning_s f_fontStack_c::KerningForGlyphMapping(const f_glyphMapping_s& gm0, const f_glyphMapping_s& gm1) const {
-	if (gm0.font == gm1.font && gm1.glyphIdx) {
-		auto dfh = heights[gm0.font];
-		if (auto kpp = dfh->KerningPair(gm0.glyphIdx, gm1.glyphIdx)) {
-			return *kpp;
-		}
-		//FT_Vector kerning{};
-		//FT_Get_Kerning(dfh->ftFace, gm0.glyphIdx, gm1.glyphIdx, FT_KERNING_DEFAULT, &kerning);
-		//f_dynKerning_s ret{};
-		//ret.x = kerning.x / 64.0f;
-		//return ret;
-	}
-	return {};
-}
-
 // =============
 // Font Renderer
 // =============
@@ -625,32 +589,10 @@ static std::string StripColorEscapes(const char* str) {
 
 int r_font_c::StringWidthInternal(f_fontStack_c* stack, std::u32string_view str)
 {
-	double width = 0;
-	while (!str.empty() && str[0] != U'\n') {
-		char32_t ch = str[0];
-		int escLen = IsColorEscape(str);
-		if (escLen) {
-			str = str.substr(escLen);
-		}
-		else if (ch == U'\t') {
-			auto metrics = stack->MetricsForChar(U' ');
-			auto spWidth = metrics.advanceX;
-			width += spWidth * 4;
-			str = str.substr(1);
-		}
-		else {
-			auto metrics = stack->MetricsForChar(ch);
-			width += metrics.advanceX;
-			str = str.substr(1);
-
-			// Kern to next glyph if any
-			if (!str.empty()) {
-				auto kerning = stack->KerningForChars(ch, str[0]);
-				width += kerning.x;
-			}
-		}
-	}
-	return (int)std::ceil(width);
+	col3_t col{};
+	f_richTextString_c richStr(str, col);
+	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
+	return (int)std::ceil(layout.TotalAdvanceX());
 }
 
 int r_font_c::StringWidth(int height, const char* str)
@@ -677,6 +619,24 @@ int r_font_c::StringWidth(int height, const char* str)
 
 std::u32string_view r_font_c::StringCursorInternal(f_fontStack_c* stack, std::u32string_view str, int curX)
 {
+	// TODO(LV): Implement this via f_textLayout_s queries for the horizontal section corresponding to the cluster. Also probably group characters as graphemes too.
+	col3_t col{};
+	f_richTextString_c richStr(str, col);
+	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
+
+	double x{};
+	for (auto& chunk : layout.chunks) {
+		for (auto& glyph : chunk) {
+			if (curX >= x) {
+				x += glyph.advX;
+				if (curX <= x) {
+					return str.substr(glyph.cluster); // BUG(LV): cluster is an offset into stripped string, while the caller expects offsets into the full string.
+				}
+			}
+		}
+	}
+	return str.substr(str.size()); // BUG(LV): wrong offset as above
+#if 0
 	int x = 0;
 	while (!str.empty() && str[0] != U'\n') {
 		int escLen = IsColorEscape(str);
@@ -701,6 +661,7 @@ std::u32string_view r_font_c::StringCursorInternal(f_fontStack_c* stack, std::u3
 		}
 	}
 	return str;
+#endif
 }
 
 int	r_font_c::StringCursorIndex(int height, const char* str, int curX, int curY)
@@ -735,7 +696,7 @@ f_fontStack_c* r_font_c::FetchFontStack(int height) {
 	auto I = fontStackForHeight.find(height);
 	if (I == fontStackForHeight.end()) {
 		auto heights = FetchFontHeights(height);
-		auto fs = std::make_shared<f_fontStack_c>(FetchFontHeights(height));
+		auto fs = std::make_shared<f_fontStack_c>(heights);
 		I = fontStackForHeight.insert({ height, fs }).first;
 	}
 	return I->second.get();
@@ -781,24 +742,6 @@ f_glyphSprite_s f_fontStack_c::SpriteForGlyphMapping(f_glyphMapping_s gm) const 
 
 f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
 	return SpriteForGlyphMapping(GlyphMappingFromChar(ch));
-};
-
-struct f_richTextString_c {
-	f_richTextString_c(std::string_view str, col4_t col);
-	f_richTextString_c(std::u32string_view str, col4_t col);
-
-	size_t SegmentCount() const;
-	std::u32string_view Segment(size_t idx) const;
-
-	using Color = std::array<float, 3>;
-	std::map<size_t, Color> colorChanges;
-	using SegmentExtent = std::pair<size_t, size_t>;
-	std::vector<SegmentExtent> segments;
-	std::u32string fullText;
-	std::u32string onlyText;
-
-private:
-	void AddSegment(size_t startIdx, size_t endIdx, Color color);
 };
 
 f_richTextString_c::f_richTextString_c(std::string_view str, col3_t col)
@@ -882,185 +825,14 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	}
 
 	auto stack = FetchFontStack(height);
-
-	/* TODO(LV) : For HarfBuzz shaped text, it makes more sense to layout once and interpret those measurements both
-	* for the string width needed for alignment and as the actual layout for drawing.
-	*
-	* - split input text into segments based on directionality
-	* - for each segment: keep a queue of work items that either are spans that need to be (re)shaped or successfully
-		shaped runs of glyphs
-	* - consume that queue one item at a time;
-	*   - if it's a good run write it out to the layout
-	*   - if not try to shape it with the next font in line and split up into new work items in reverse order,
-	*     pushing them onto the queue
-	*
-	* Remember to consult colour segmentation with cluster ID when iterating for drawing.
-	*
-	* Glyph runs are either monotonically increasing in cluster IDs or monotonically decreasing for LTR and RTL order
-	* respectively. We want cluster level 1 - HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS, allowing us to colour marks
-	  differently for example (https://harfbuzz.github.io/working-with-harfbuzz-clusters.html)
-	*/
-
-	// Segment and shape text
-	f_textLayout_s layout;
-	if (!richStr.onlyText.empty()) {
-		struct Segment {
-			uint32_t clusterBase{}, clusterCount{};
-			bool isRtl{};
-		};
-
-		struct PendingSpan {
-			uint32_t nextFontId{};
-			uint32_t clusterBase{}, clusterEnd{};
-			uint32_t ClusterCount() const { return clusterEnd - clusterBase; }
-		};
-
-		using WorkSpan = std::variant<f_textLayout_s::Chunk, PendingSpan>;
-
-		std::map<uint32_t, Segment> initialSegments;
-		std::map<uint32_t, bool> isRtl;
-		auto textPtr = (const FriBidiChar*)richStr.onlyText.c_str();
-		auto textLen = (int)richStr.onlyText.size();
-		std::vector<FriBidiCharType> bTypes(textLen);
-		fribidi_get_bidi_types(textPtr, textLen, bTypes.data());
-
-		std::vector<FriBidiCharType> bracketTypes(textLen);
-		fribidi_get_bracket_types(textPtr, textLen, bTypes.data(), bracketTypes.data());
-
-		FriBidiParType pbaseDir = FRIBIDI_PAR_ON;
-		std::vector<FriBidiLevel> embeddingLevels(textLen);
-		fribidi_get_par_embedding_levels_ex(bTypes.data(), bracketTypes.data(), textLen, &pbaseDir, embeddingLevels.data());
-
-		// Build directionality lookup table
-		{
-			bool lastRtl = FRIBIDI_LEVEL_IS_RTL(embeddingLevels[0]);
-			isRtl[0] = lastRtl;
-			for (size_t idx = 1; idx < textLen; ++idx) {
-				bool thisRtl = FRIBIDI_LEVEL_IS_RTL(embeddingLevels[idx]);
-				if (lastRtl != thisRtl) {
-					isRtl[(uint32_t)idx] = thisRtl;
-					lastRtl = thisRtl;
-				}
-			}
-		}
-
-		// Segment input based on directionality
-		for (auto I = isRtl.begin(); I != isRtl.end(); ++I) {
-			auto J = std::next(I);
-			size_t segEnd = J != isRtl.end() ? J->first : textLen;
-			Segment seg{};
-			seg.isRtl = I->second;
-			seg.clusterBase = I->first;
-			seg.clusterCount = (uint32_t)(segEnd - seg.clusterBase);
-			initialSegments[seg.clusterBase] = seg;
-		}
-
-		std::shared_ptr<hb_buffer_t> buf(hb_buffer_create(), &hb_buffer_destroy);
-		for (auto& [_, seg] : initialSegments) {
-			std::deque<WorkSpan> spanProcessQueue;
-			{
-				PendingSpan span{};
-				span.nextFontId = 0;
-				span.clusterBase = seg.clusterBase;
-				span.clusterEnd = seg.clusterBase + seg.clusterCount;
-				spanProcessQueue.push_front(span);
-			}
-
-			while (!spanProcessQueue.empty()) {
-				auto span = std::move(spanProcessQueue.front());
-				spanProcessQueue.pop_front();
-				if (auto* deferredChunk = std::get_if<f_textLayout_s::Chunk>(&span)) {
-					layout.chunks.push_back(std::move(*deferredChunk));
-				}
-				else if (auto* pSpan = std::get_if<PendingSpan>(&span)) {
-					hb_buffer_add_utf32(buf.get(), (uint32_t const*)textPtr, textLen, pSpan->clusterBase,
-						pSpan->ClusterCount());
-					hb_buffer_set_cluster_level(buf.get(), HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
-					hb_buffer_set_direction(buf.get(), seg.isRtl ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
-					hb_buffer_guess_segment_properties(buf.get());
-
-					auto dfh = stack->Font(pSpan->nextFontId);
-					hb_shape(dfh->hbFont.get(), buf.get(), nullptr, 0);
-
-					uint32_t glyphCount{};
-					auto* glyphInfos = hb_buffer_get_glyph_infos(buf.get(), &glyphCount);
-					auto* glyphPositions = hb_buffer_get_glyph_positions(buf.get(), &glyphCount);
-					auto glyphInfosEnd = glyphInfos + glyphCount;
-					auto glyphPositionsEnd = glyphPositions + glyphCount;
-
-					std::stack<WorkSpan> newWork;
-					bool seekingGood = true;
-					for (size_t glyphIdx = 0; glyphIdx < glyphCount;) {
-						auto giI = glyphInfos + glyphIdx;
-						auto gpI = glyphPositions + glyphIdx;
-						auto& gi = *giI;
-						if (gi.codepoint > 0) {
-							auto giJ = std::find_if(giI + 1, glyphInfosEnd, [](auto& gi) { return gi.codepoint == 0; });
-							auto n = giJ - giI;
-							f_textLayout_s::Chunk goodChunk;
-							for (auto glyphOff = 0; glyphOff < n; ++glyphOff) {
-								f_glyphLayout_s glyph(pSpan->nextFontId, *(giI + glyphOff), *(gpI + glyphOff));
-								goodChunk.push_back(glyph);
-							}
-							if (newWork.empty()) {
-								layout.chunks.push_back(std::move(goodChunk));
-							}
-							else {
-								newWork.push(std::move(goodChunk));
-							}
-							glyphIdx += n;
-						}
-						else {
-							auto giJ = std::find_if(giI + 1, glyphInfosEnd, [](auto& gi) { return gi.codepoint > 0; });
-							auto n = giJ - giI;
-							auto upcomingFontId = pSpan->nextFontId + 1;
-							if (upcomingFontId == stack->FontCount()) {
-								// Out of fonts, emit a sequence of notdef glyphs
-								// TODO(LV): keep a shaped notdef from the primary font to use here for visual consistency when adding more fallback fonts
-								f_textLayout_s::Chunk tofuChunk{};
-								for (auto glyphOff = 0; glyphOff < n; ++glyphOff) {
-									f_glyphLayout_s glyph(pSpan->nextFontId, *(giI + glyphOff), *(gpI + glyphOff));
-									tofuChunk.push_back(glyph);
-								}
-								if (newWork.empty()) {
-									layout.chunks.push_back(std::move(tofuChunk));
-								}
-								else {
-									newWork.push(std::move(tofuChunk));
-								}
-							}
-							else {
-								PendingSpan pendingSpan{};
-								pendingSpan.nextFontId = upcomingFontId;
-								if (seg.isRtl) {
-									pendingSpan.clusterBase = (uint32_t)(giI->cluster + 1 - n);
-									pendingSpan.clusterEnd = (uint32_t)(giI->cluster + 1);
-								}
-								else {
-									pendingSpan.clusterBase = giI->cluster;
-									pendingSpan.clusterEnd = (uint32_t)(giI->cluster + n);
-								}
-								newWork.push(pendingSpan);
-							}
-							glyphIdx += n;
-						}
-					}
-					hb_buffer_reset(buf.get());
-					while (!newWork.empty()) {
-						spanProcessQueue.push_front(newWork.top());
-						newWork.pop();
-					}
-				}
-			}
-		}
-	}
+	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
 
 	// Calculate the string position
 	double x = pos[X];
 	double y = pos[Y];
 	if (align != F_LEFT) {
 		// Calculate the real width of the string
-		double width = StringWidthInternal(stack, tail);
+		double width = layout.TotalAdvanceX();
 		switch (align) {
 		case F_CENTRE:
 			x = floor((renderer->sys->video->vid.size[0] - width) / 2.0f + pos[X]);
@@ -1083,14 +855,6 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 
 	// Render with HarfBuzz-assisted FreeType
 	if (1) {
-		std::shared_ptr<hb_buffer_t> buf(hb_buffer_create(), &hb_buffer_destroy);
-		hb_buffer_add_utf32(buf.get(), (const uint32_t*)tail.data(), (int)tail.size(), 0, -1);
-		hb_buffer_guess_segment_properties(buf.get());
-		hb_shape(stack->Font(0)->hbFont.get(), buf.get(), nullptr, 0);
-		unsigned int glyphCount;
-		hb_glyph_info_t* glyphInfo = hb_buffer_get_glyph_infos(buf.get(), &glyphCount);
-		hb_glyph_position_t* glyphPos = hb_buffer_get_glyph_positions(buf.get(), &glyphCount);
-
 		x = startX;
 		y = startY;
 
@@ -1181,4 +945,211 @@ void r_font_c::VDraw(scp_t pos, int align, int height, col4_t col, const char* f
 	vsnprintf(str, 65535, fmt, va);
 	str[65535] = 0;
 	Draw(pos, align, height, col, str);
+}
+
+inline f_glyphLayout_s::f_glyphLayout_s(uint32_t fontId, hb_glyph_info_t gi, hb_glyph_position_t gp)
+	: fontId(fontId), glyphId(gi.codepoint), advX(gp.x_advance / 64.0f), advY(gp.y_advance / 64.0f),
+	offX(gp.x_offset / 64.0f), offY(gp.y_offset / 64.0f), cluster(gi.cluster) {}
+
+f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr)
+{
+	/* TODO(LV) : For HarfBuzz shaped text, it makes more sense to layout once and interpret those measurements both
+	* for the string width needed for alignment and as the actual layout for drawing.
+	*
+	* - split input text into segments based on directionality
+	* - for each segment: keep a queue of work items that either are spans that need to be (re)shaped or successfully
+		shaped runs of glyphs
+	* - consume that queue one item at a time;
+	*   - if it's a good run write it out to the layout
+	*   - if not try to shape it with the next font in line and split up into new work items in reverse order,
+	*     pushing them onto the queue
+	*
+	* Remember to consult colour segmentation with cluster ID when iterating for drawing.
+	*
+	* Glyph runs are either monotonically increasing in cluster IDs or monotonically decreasing for LTR and RTL order
+	* respectively. We want cluster level 1 - HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS, allowing us to colour marks
+	  differently for example (https://harfbuzz.github.io/working-with-harfbuzz-clusters.html)
+	*/
+
+	// TODO(LV): Handle tabs somewhere, either in rich text strings or layout code.
+
+	f_textLayout_s layout{};
+	// Segment and shape text
+	if (!richStr.onlyText.empty()) {
+		struct Segment {
+			uint32_t clusterBase{}, clusterCount{};
+			bool isRtl{};
+		};
+
+		struct PendingSpan {
+			uint32_t nextFontId{};
+			uint32_t clusterBase{}, clusterEnd{};
+			uint32_t ClusterCount() const { return clusterEnd - clusterBase; }
+		};
+
+		using WorkSpan = std::variant<f_textLayout_s::Chunk, PendingSpan>;
+
+		std::map<uint32_t, Segment> initialSegments;
+		std::map<uint32_t, bool> isRtl;
+		auto textPtr = (const FriBidiChar*)richStr.onlyText.c_str();
+		auto textLen = (int)richStr.onlyText.size();
+		std::vector<FriBidiCharType> bTypes(textLen);
+		fribidi_get_bidi_types(textPtr, textLen, bTypes.data());
+
+		std::vector<FriBidiCharType> bracketTypes(textLen);
+		fribidi_get_bracket_types(textPtr, textLen, bTypes.data(), bracketTypes.data());
+
+		FriBidiParType pbaseDir = FRIBIDI_PAR_ON;
+		std::vector<FriBidiLevel> embeddingLevels(textLen);
+		fribidi_get_par_embedding_levels_ex(bTypes.data(), bracketTypes.data(), textLen, &pbaseDir, embeddingLevels.data());
+
+		// Build directionality lookup table
+		{
+			bool lastRtl = FRIBIDI_LEVEL_IS_RTL(embeddingLevels[0]);
+			isRtl[0] = lastRtl;
+			for (size_t idx = 1; idx < textLen; ++idx) {
+				bool thisRtl = FRIBIDI_LEVEL_IS_RTL(embeddingLevels[idx]);
+				if (lastRtl != thisRtl) {
+					isRtl[(uint32_t)idx] = thisRtl;
+					lastRtl = thisRtl;
+				}
+			}
+		}
+
+		// Segment input based on directionality
+		for (auto I = isRtl.begin(); I != isRtl.end(); ++I) {
+			auto J = std::next(I);
+			size_t segEnd = J != isRtl.end() ? J->first : textLen;
+			Segment seg{};
+			seg.isRtl = I->second;
+			seg.clusterBase = I->first;
+			seg.clusterCount = (uint32_t)(segEnd - seg.clusterBase);
+			initialSegments[seg.clusterBase] = seg;
+		}
+
+		std::shared_ptr<hb_buffer_t> buf(hb_buffer_create(), &hb_buffer_destroy);
+		for (auto& [_, seg] : initialSegments) {
+			std::deque<WorkSpan> spanProcessQueue;
+			{
+				PendingSpan span{};
+				span.nextFontId = 0;
+				span.clusterBase = seg.clusterBase;
+				span.clusterEnd = seg.clusterBase + seg.clusterCount;
+				spanProcessQueue.push_front(span);
+			}
+
+			while (!spanProcessQueue.empty()) {
+				auto span = std::move(spanProcessQueue.front());
+				spanProcessQueue.pop_front();
+				if (auto* deferredChunk = std::get_if<f_textLayout_s::Chunk>(&span)) {
+					layout.AddChunk(std::move(*deferredChunk));
+				}
+				else if (auto* pSpan = std::get_if<PendingSpan>(&span)) {
+					hb_buffer_add_utf32(buf.get(), (uint32_t const*)textPtr, textLen, pSpan->clusterBase,
+						pSpan->ClusterCount());
+					hb_buffer_set_cluster_level(buf.get(), HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+					hb_buffer_set_direction(buf.get(), seg.isRtl ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
+					hb_buffer_guess_segment_properties(buf.get());
+
+					auto dfh = stack->Font(pSpan->nextFontId);
+					hb_shape(dfh->hbFont.get(), buf.get(), nullptr, 0);
+
+					uint32_t glyphCount{};
+					auto* glyphInfos = hb_buffer_get_glyph_infos(buf.get(), &glyphCount);
+					auto* glyphPositions = hb_buffer_get_glyph_positions(buf.get(), &glyphCount);
+					auto glyphInfosEnd = glyphInfos + glyphCount;
+					auto glyphPositionsEnd = glyphPositions + glyphCount;
+
+					std::stack<WorkSpan> newWork;
+					bool seekingGood = true;
+					for (size_t glyphIdx = 0; glyphIdx < glyphCount;) {
+						auto giI = glyphInfos + glyphIdx;
+						auto gpI = glyphPositions + glyphIdx;
+						auto& gi = *giI;
+						if (gi.codepoint > 0) {
+							auto giJ = std::find_if(giI + 1, glyphInfosEnd, [](auto& gi) { return gi.codepoint == 0; });
+							auto n = giJ - giI;
+							f_textLayout_s::Chunk goodChunk;
+							goodChunk.reserve(n);
+							for (auto glyphOff = 0; glyphOff < n; ++glyphOff) {
+								f_glyphLayout_s glyph(pSpan->nextFontId, *(giI + glyphOff), *(gpI + glyphOff));
+								goodChunk.push_back(glyph);
+							}
+							if (newWork.empty()) {
+								layout.AddChunk(std::move(goodChunk));
+							}
+							else {
+								newWork.push(std::move(goodChunk));
+							}
+							glyphIdx += n;
+						}
+						else {
+							auto giJ = std::find_if(giI + 1, glyphInfosEnd, [](auto& gi) { return gi.codepoint > 0; });
+							auto n = giJ - giI;
+							auto upcomingFontId = pSpan->nextFontId + 1;
+							if (upcomingFontId == stack->FontCount()) {
+								// Out of fonts, emit a sequence of notdef glyphs
+								// TODO(LV): keep a shaped notdef from the primary font to use here for visual consistency when adding more fallback fonts
+								f_textLayout_s::Chunk tofuChunk{};
+								for (auto glyphOff = 0; glyphOff < n; ++glyphOff) {
+									f_glyphLayout_s glyph(pSpan->nextFontId, *(giI + glyphOff), *(gpI + glyphOff));
+									tofuChunk.push_back(glyph);
+								}
+								if (newWork.empty()) {
+									layout.chunks.push_back(std::move(tofuChunk));
+								}
+								else {
+									newWork.push(std::move(tofuChunk));
+								}
+							}
+							else {
+								PendingSpan pendingSpan{};
+								pendingSpan.nextFontId = upcomingFontId;
+								if (seg.isRtl) {
+									pendingSpan.clusterBase = (uint32_t)(giI->cluster + 1 - n);
+									pendingSpan.clusterEnd = (uint32_t)(giI->cluster + 1);
+								}
+								else {
+									pendingSpan.clusterBase = giI->cluster;
+									pendingSpan.clusterEnd = (uint32_t)(giI->cluster + n);
+								}
+								newWork.push(pendingSpan);
+							}
+							glyphIdx += n;
+						}
+					}
+					hb_buffer_reset(buf.get());
+					while (!newWork.empty()) {
+						spanProcessQueue.push_front(newWork.top());
+						newWork.pop();
+					}
+				}
+			}
+		}
+	}
+	return layout;
+}
+
+f_textLayout_s f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str)
+{
+	CacheKey key{ stack, str.onlyText };
+	auto I = cache.find(key);
+	if (I == cache.end()) {
+		CacheValue value{ LayoutRichTextLine(stack, str) };
+		I = cache.insert({ key, value }).first;
+	}
+	return I->second.layout;
+}
+
+double f_textLayout_s::TotalAdvanceX() const
+{
+	return totalAdvanceX;
+}
+
+void f_textLayout_s::AddChunk(Chunk&& chunk)
+{
+	for (auto& glyph : chunk) {
+		totalAdvanceX += glyph.advX;
+	}
+	chunks.push_back(std::move(chunk));
 }
