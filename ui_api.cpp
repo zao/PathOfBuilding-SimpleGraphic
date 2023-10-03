@@ -6,7 +6,10 @@
 
 #include "ui_local.h"
 
+#include <array>
 #include <filesystem>
+#include <glm/mat3x3.hpp>
+#include <glm/vec3.hpp>
 #include <zlib.h>
 
 /* OnFrame()
@@ -39,7 +42,9 @@
 ** SetViewport([x, y, width, height])
 ** SetDrawColor(red, green, blue[, alpha]) / SetDrawColor("<escapeStr>")
 ** DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom])
+** DrawImageAt({imgHandle|nil}, xform, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom])
 ** DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4])
+** DrawImageQuadAt({imgHandle|nil}, xform, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4])
 ** DrawString(left, top, align{"LEFT"|"CENTER"|"RIGHT"|"CENTER_X"|"RIGHT_X"}, height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>")
 ** width = DrawStringWidth(height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>")
 ** index = DrawStringCursorIndex(height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>", cursorX, cursorY)
@@ -470,6 +475,128 @@ static int l_DrawImageQuad(lua_State* L)
 	}
 	return 0;
 }
+
+static int l_DrawImageAt(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LAssert(L, ui->renderEnable, "DrawImageAt() called outside of OnFrame");
+	int n = lua_gettop(L);
+	ui->LAssert(L, n >= 6, "Usage: DrawImageAt({imgHandle|nil}, xform, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom])");
+	ui->LAssert(L, lua_isnil(L, 1) || ui->IsUserData(L, 1, "uiimghandlemeta"), "DrawImage() argument 1: expected image handle or nil, got %s", luaL_typename(L, 1));
+	r_shaderHnd_c* hnd = NULL;
+	if (!lua_isnil(L, 1)) {
+		imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, 1);
+		ui->LAssert(L, imgHandle->hnd != NULL, "DrawImageAt(): image handle has no image loaded");
+		hnd = imgHandle->hnd;
+	}
+	glm::mat3x3 xform(1);
+	{
+		ui->LAssert(L, lua_istable(L, 2), "DrawImageAt() argument 2: expected 2x3 matrix table, got %s", luaL_typename(L, 2));
+		ui->LAssert(L, lua_objlen(L, 2) == 6, "DrawImageAt() argument 2: expected 6-element matrix, got %d", lua_objlen(L, 2));
+		lua_pushvalue(L, 2);
+		for (int i = 1; i <= 6; ++i) {
+			lua_pushinteger(L, i);
+			lua_gettable(L, -2);
+			ui->LAssert(L, lua_isnumber(L, -1), "DrawImageAt() argument 2[%d]: expected number, got %s", i, lua_typename(L, -1));
+			int c = (i - 1) % 3;
+			int r = (i - 1) / 3;
+			xform[c][r] = (float)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	float arg[8];
+	bool const hasTc = n > 6;
+	if (hasTc) {
+		ui->LAssert(L, n >= 10, "DrawImageAt(): incomplete set of texture coordinates provided");
+		for (int i = 3; i <= 10; i++) {
+			ui->LAssert(L, lua_isnumber(L, i), "DrawImageAt() argument %d: expected number, got %s", i, luaL_typename(L, i));
+			arg[i - 3] = (float)lua_tonumber(L, i);
+		}
+	}
+	else {
+		for (int i = 3; i <= 6; i++) {
+			ui->LAssert(L, lua_isnumber(L, i), "DrawImageAt() argument %d: expected number, got %s", i, luaL_typename(L, i));
+			arg[i - 3] = (float)lua_tonumber(L, i);
+		}
+	}
+	auto x = arg[0], y = arg[1], w = arg[2], h = arg[3];
+	std::array<glm::vec3, 4> v{
+		xform * glm::vec3(x, y, 1.0f),
+		xform * glm::vec3(x + w, y, 1.0f),
+		xform * glm::vec3(x + w, y + h, 1.0f),
+		xform * glm::vec3(x, y + h, 1.0f),
+	};
+	if (hasTc) {
+		auto s0 = arg[4], t0 = arg[5], s1 = arg[6], t1 = arg[7];
+		ui->renderer->DrawImageQuad(hnd, v[0].x, v[0].y, v[1].x, v[1].y, v[2].x, v[2].y, v[3].x, v[3].y, s0, t0, s1, t0, s1, t1, s0, t1);
+	}
+	else {
+		ui->renderer->DrawImageQuad(hnd, v[0].x, v[0].y, v[1].x, v[1].y, v[2].x, v[2].y, v[3].x, v[3].y);
+	}
+	return 0;
+}
+
+static int l_DrawImageQuadAt(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LAssert(L, ui->renderEnable, "DrawImageQuadAt() called outside of OnFrame");
+	int n = lua_gettop(L);
+	ui->LAssert(L, n >= 9, "Usage: DrawImageQuadAt({imgHandle|nil}, xform, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4])");
+	ui->LAssert(L, lua_isnil(L, 1) || ui->IsUserData(L, 1, "uiimghandlemeta"), "DrawImageQuadAt() argument 1: expected image handle or nil, got %s", luaL_typename(L, 1));
+	r_shaderHnd_c* hnd = NULL;
+	if (!lua_isnil(L, 1)) {
+		imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, 1);
+		ui->LAssert(L, imgHandle->hnd != NULL, "DrawImageQuadAt(): image handle has no image loaded");
+		hnd = imgHandle->hnd;
+	}
+	glm::mat3x3 xform(1);
+	{
+		ui->LAssert(L, lua_istable(L, 2), "DrawImageQuadAt() argument 2: expected 2x3 matrix table, got %s", luaL_typename(L, 2));
+		ui->LAssert(L, lua_objlen(L, 2) == 6, "DrawImageQuadAt() argument 2: expected 6-element matrix, got %d", lua_objlen(L, 2));
+		lua_pushvalue(L, 2);
+		for (int i = 1; i <= 6; ++i) {
+			lua_pushinteger(L, i);
+			lua_gettable(L, -2);
+			ui->LAssert(L, lua_isnumber(L, -1), "DrawImageQuadAt() argument 2[%d]: expected number, got %s", i, lua_typename(L, -1));
+			int c = (i - 1) % 3;
+			int r = (i - 1) / 3;
+			xform[c][r] = (float)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+	float arg[16];
+	bool const hasTc = n > 10;
+	if (hasTc) {
+		ui->LAssert(L, n >= 18, "DrawImageQuadAt(): incomplete set of texture coordinates provided");
+		for (int i = 3; i <= 18; i++) {
+			ui->LAssert(L, lua_isnumber(L, i), "DrawImageQuadAt() argument %d: expected number, got %s", i, luaL_typename(L, i));
+			arg[i - 3] = (float)lua_tonumber(L, i);
+		}
+	}
+	else {
+		for (int i = 3; i <= 10; i++) {
+			ui->LAssert(L, lua_isnumber(L, i), "DrawImageQuadAt() argument %d: expected number, got %s", i, luaL_typename(L, i));
+			arg[i - 3] = (float)lua_tonumber(L, i);
+		}
+	}
+	std::array<glm::vec3, 4> v;
+	for (int i = 0; i < 4; ++i) {
+		size_t base = 2 * i;
+		v[i] = xform * glm::vec3(arg[base], arg[base + 1], 1.0f);
+	}
+	if (hasTc) {
+		ui->renderer->DrawImageQuad(hnd, v[0].x, v[0].y, v[1].x, v[1].y, v[2].x, v[2].y, v[3].x, v[3].y, arg[8], arg[9], arg[10], arg[11], arg[12], arg[13], arg[14], arg[15]);
+	}
+	else {
+		ui->renderer->DrawImageQuad(hnd, v[0].x, v[0].y, v[1].x, v[1].y, v[2].x, v[2].y, v[3].x, v[3].y);
+	}
+	return 0;
+}
+
 
 static int l_DrawString(lua_State* L)
 {
@@ -1352,7 +1479,9 @@ int ui_main_c::InitAPI(lua_State* L)
 	ADDFUNC(SetBlendMode);
 	ADDFUNC(SetDrawColor);
 	ADDFUNC(DrawImage);
+	ADDFUNC(DrawImageAt);
 	ADDFUNC(DrawImageQuad);
+	ADDFUNC(DrawImageQuadAt);
 	ADDFUNC(DrawString);
 	ADDFUNC(DrawStringWidth);
 	ADDFUNC(DrawStringCursorIndex);
