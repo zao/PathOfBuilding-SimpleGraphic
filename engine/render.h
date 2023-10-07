@@ -8,6 +8,8 @@
 // Classes
 // =======
 
+#include <glm/mat3x3.hpp>
+
 // Font alignment
 enum r_fontAlign_e {
 	F_LEFT,
@@ -49,6 +51,19 @@ private:
 	r_shader_c* sh;
 };
 
+// Mesh handle
+struct r_meshVtx_s {
+	glm::vec2 position;
+	glm::vec2 texcoord;
+};
+
+using r_meshIdx_t = uint32_t;
+
+struct r_meshHnd_t {
+	uint32_t meshId;
+	uint32_t generation;
+};
+
 // ==========
 // Interfaces
 // ==========
@@ -72,6 +87,9 @@ public:
 	virtual void	PurgeShaders() = 0;
 	virtual int		GetTexAsyncCount() = 0;
 
+	virtual r_meshHnd_t NewMeshHandle(size_t vertexCount, r_meshVtx_s const* vertexData, size_t indexCount, r_meshIdx_t const* indexData) = 0;
+	virtual void	DeleteMeshHandle(r_meshHnd_t handle) = 0;
+
 	virtual void	SetClearColor(const col4_t col) = 0;
 	virtual void	SetDrawLayer(int layer, int subLayer = 0) = 0;
 	virtual void	SetDrawSubLayer(int subLayer) = 0;
@@ -82,6 +100,7 @@ public:
 	virtual void	DrawColor(dword col) = 0;
 	virtual void	DrawImage(r_shaderHnd_c* hnd, float x, float y, float w, float h, float s1 = 0.0f, float t1 = 0.0f, float s2 = 1.0f, float t2 = 1.0f) = 0;
 	virtual void	DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, float s0 = 0, float t0 = 0, float s1 = 1, float t1 = 0, float s2 = 1, float t2 = 1, float s3 = 0, float t3 = 1) = 0;
+	virtual void	DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x3 const& xform) = 0;
 	virtual void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str) = 0;
 	virtual void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...) = 0;
 	virtual int		DrawStringWidth(int height, int font, const char* str) = 0;

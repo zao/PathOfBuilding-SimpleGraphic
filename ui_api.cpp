@@ -8,8 +8,10 @@
 
 #include <array>
 #include <filesystem>
+#include <fmt/core.h>
 #include <glm/mat3x3.hpp>
 #include <glm/vec3.hpp>
+#include <numeric>
 #include <zlib.h>
 
 /* OnFrame()
@@ -34,6 +36,8 @@
 ** imgHandle:SetLoadingPriority(pri)
 ** width, height = imgHandle:ImageSize()
 **
+** mshHandle = NewMeshHandle(coords, texcoords[, indices])
+**
 ** RenderInit()
 ** width, height = GetScreenSize()
 ** SetClearColor(red, green, blue[, alpha])
@@ -45,6 +49,7 @@
 ** DrawImageAt({imgHandle|nil}, xform, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom])
 ** DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4])
 ** DrawImageQuadAt({imgHandle|nil}, xform, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4])
+** DrawMeshAt({imgHandle|nil}, xform, mshHandle)
 ** DrawString(left, top, align{"LEFT"|"CENTER"|"RIGHT"|"CENTER_X"|"RIGHT_X"}, height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>")
 ** width = DrawStringWidth(height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>")
 ** index = DrawStringCursorIndex(height, font{"FIXED"|"VAR"|"VAR BOLD"}, "<text>", cursorX, cursorY)
@@ -276,6 +281,124 @@ static int l_imgHandleImageSize(lua_State* L)
 	return 2;
 }
 
+// ============
+// Mesh Handles
+// ============
+
+struct meshHandle_s {
+	r_meshHnd_t mesh;
+};
+
+static int l_NewMeshHandle(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	int const n = lua_gettop(L);
+	ui->LAssert(L, n >= 2, "Usage: NewMeshHandle(positions, texcoords[, indices])");
+	ui->LAssert(L, lua_istable(L, 1), "NewMeshHandle() argument 1: expected table, got %s", luaL_typename(L, 1));
+	ui->LAssert(L, lua_istable(L, 2), "NewMeshHandle() argument 2: expected table, got %s", luaL_typename(L, 2));
+	int const positionsLen = (int)lua_objlen(L, 1);
+	int const texcoordsLen = (int)lua_objlen(L, 2);
+	ui->LAssert(L, positionsLen == texcoordsLen, "NewMeshHandle() argument 1 and 2: expected same element count, got %d and %d", positionsLen, texcoordsLen);
+	ui->LAssert(L, (positionsLen % 2) == 0, "NewMeshHandle() argument 1 and 2: expected even number of elements, got %d", positionsLen);
+	int const numVertices = positionsLen / 2;
+
+	int numIndices{};
+	bool const hasIndices = n >= 3;
+	if (hasIndices) {
+		ui->LAssert(L, lua_istable(L, 3), "NewMeshHandle() argument 3: expected table, got %s", luaL_typename(L, 3));
+		numIndices = (int)lua_objlen(L, 3);
+		ui->LAssert(L, (numIndices % 3) == 0, "NewMeshHandle() argument 3, expected element count divisible by 3, got %d", numIndices);
+	}
+	else {
+		numIndices = numVertices;
+	}
+
+	// As ui->LAssert alters control flow without unwinding we cannot allocate anything before all invariants have been established.
+	// The first pass checks invariants and the second pass fetches data to construct objects.
+	r_meshHnd_t mesh{};
+	std::unique_ptr<r_meshVtx_s[]> vertices;
+	std::unique_ptr<r_meshIdx_t[]> indices;
+	for (int pass = 0; pass < 2; ++pass) {
+		if (pass == 1) {
+			vertices = std::make_unique<r_meshVtx_s[]>(numVertices);
+			indices = std::make_unique<r_meshIdx_t[]>(numIndices);
+		}
+
+		for (int i = 1; i <= positionsLen; ++i) {
+			int const vtxIdx = (i - 1) / 2;
+			int const compIdx = (i - 1) % 2;
+
+			// position table is {x1, y1, x2, y2, ..}
+			// texcoord table is {s1, t1, s2, t2, ..}
+
+			lua_rawgeti(L, 1, i); // position to -2
+			lua_rawgeti(L, 2, i); // texcoord to -1
+			if (pass == 0) {
+				ui->LAssert(L, lua_isnumber(L, -2), "NewMeshHandle() argument 1[%d]: expected number, got %s", vtxIdx + 1, luaL_typename(L, -2));
+				ui->LAssert(L, lua_isnumber(L, -1), "NewMeshHandle() argument 2[%d]: expected number, got %s", vtxIdx + 1, luaL_typename(L, -1));
+			}
+			else {
+				vertices[vtxIdx].position[compIdx] = (float)lua_tonumber(L, -2);
+				vertices[vtxIdx].texcoord[compIdx] = (float)lua_tonumber(L, -1);
+			}
+			lua_pop(L, 2);
+		}
+
+		if (hasIndices) {
+			for (int i = 1; i <= numIndices; ++i) {
+				lua_rawgeti(L, 3, i); // index to -1
+				if (pass == 0) {
+					ui->LAssert(L, lua_isnumber(L, -1), "NewMeshHandle() argument 3[%d]: expected number, got %s", i, luaL_typename(L, -1));
+					double num = lua_tonumber(L, -1);
+					auto index = (int)num;
+					ui->LAssert(L, num == (double)index, "NewMeshHandle() argument 3[%d]: expected integer, got %f", i, num);
+					ui->LAssert(L, index >= 1 && index <= numVertices, "NewMeshHandle() argument 3[%d]: value %d out of bounds for %d vertices", i, index, numVertices);
+				}
+				else {
+					indices[i - 1] = (int)lua_tonumber(L, -1) - 1;
+				}
+				lua_pop(L, 1);
+			}
+		}
+		else {
+			if (pass == 0) {
+				ui->LAssert(L, (numVertices % 3) == 0, "NewMeshHandle() argument 1 and 2: vertex count must be divisible by three when no indices are provided");
+			}
+			else {
+				std::iota(indices.get(), indices.get()  + numVertices, 0);
+			}
+		}
+
+		if (pass == 1) {
+			mesh = ui->renderer->NewMeshHandle(numVertices, vertices.get(), numIndices, indices.get());
+		}
+	}
+
+	meshHandle_s* meshHandle = (meshHandle_s*)lua_newuserdata(L, sizeof(meshHandle_s));
+	meshHandle->mesh = mesh;
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_setmetatable(L, -2);
+
+	return 1;
+}
+
+static meshHandle_s* GetMeshHandle(lua_State* L, ui_main_c* ui, const char* method)
+{
+	ui->LAssert(L, ui->IsUserData(L, 1, "uimeshhandlemeta"), "meshHandle:%s() must be used on an mesh handle", method);
+	meshHandle_s* meshHandle = (meshHandle_s*)lua_touserdata(L, 1);
+	lua_remove(L, 1);
+	return meshHandle;
+}
+
+static int l_meshHandleGC(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	meshHandle_s* meshHandle = GetMeshHandle(L, ui, "__gc");
+	ui->renderer->DeleteMeshHandle(meshHandle->mesh);
+	return 0;
+}
+
 // =========
 // Rendering
 // =========
@@ -494,17 +617,14 @@ static int l_DrawImageAt(lua_State* L)
 	{
 		ui->LAssert(L, lua_istable(L, 2), "DrawImageAt() argument 2: expected 2x3 matrix table, got %s", luaL_typename(L, 2));
 		ui->LAssert(L, lua_objlen(L, 2) == 6, "DrawImageAt() argument 2: expected 6-element matrix, got %d", lua_objlen(L, 2));
-		lua_pushvalue(L, 2);
 		for (int i = 1; i <= 6; ++i) {
-			lua_pushinteger(L, i);
-			lua_gettable(L, -2);
+			lua_rawgeti(L, 2, i);
 			ui->LAssert(L, lua_isnumber(L, -1), "DrawImageAt() argument 2[%d]: expected number, got %s", i, lua_typename(L, -1));
 			int c = (i - 1) % 3;
 			int r = (i - 1) / 3;
 			xform[c][r] = (float)lua_tonumber(L, -1);
 			lua_pop(L, 1);
 		}
-		lua_pop(L, 1);
 	}
 	float arg[8];
 	bool const hasTc = n > 6;
@@ -556,17 +676,14 @@ static int l_DrawImageQuadAt(lua_State* L)
 	{
 		ui->LAssert(L, lua_istable(L, 2), "DrawImageQuadAt() argument 2: expected 2x3 matrix table, got %s", luaL_typename(L, 2));
 		ui->LAssert(L, lua_objlen(L, 2) == 6, "DrawImageQuadAt() argument 2: expected 6-element matrix, got %d", lua_objlen(L, 2));
-		lua_pushvalue(L, 2);
 		for (int i = 1; i <= 6; ++i) {
-			lua_pushinteger(L, i);
-			lua_gettable(L, -2);
-			ui->LAssert(L, lua_isnumber(L, -1), "DrawImageQuadAt() argument 2[%d]: expected number, got %s", i, lua_typename(L, -1));
+			lua_rawgeti(L, 2, i);
+			ui->LAssert(L, lua_isnumber(L, -1), "DrawImageQuadAt() argument 2[%d]: expected number, got %s", i, luaL_typename(L, -1));
 			int c = (i - 1) % 3;
 			int r = (i - 1) / 3;
 			xform[c][r] = (float)lua_tonumber(L, -1);
 			lua_pop(L, 1);
 		}
-		lua_pop(L, 1);
 	}
 	float arg[16];
 	bool const hasTc = n > 10;
@@ -597,6 +714,46 @@ static int l_DrawImageQuadAt(lua_State* L)
 	return 0;
 }
 
+static int l_DrawMeshAt(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LAssert(L, ui->renderEnable, "DrawMeshAt() called outside of OnFrame");
+	int n = lua_gettop(L);
+	ui->LAssert(L, n == 3, "Usage: DrawMeshAt({imgHandle|nil}, mshHandle, xform)");
+	int k = 1;
+	ui->LAssert(L, lua_isnil(L, k) || ui->IsUserData(L, k, "uiimghandlemeta"), "DrawMeshAt() argument %d: expected image handle or nil, got %s", k, luaL_typename(L, k));
+	r_shaderHnd_c* imgHnd = NULL;
+	if (!lua_isnil(L, k)) {
+		imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, k);
+		ui->LAssert(L, imgHandle->hnd != NULL, "DrawMeshAt(): image handle has no image loaded");
+		imgHnd = imgHandle->hnd;
+	}
+	++k;
+
+	glm::mat3x3 xform(1);
+	{
+		ui->LAssert(L, lua_istable(L, k), "DrawMeshAt() argument %d: expected 2x3 matrix table, got %s", k, luaL_typename(L, k));
+		ui->LAssert(L, lua_objlen(L, k) == 6, "DrawMeshAt() argument %d: expected 6-element matrix, got %d", k, lua_objlen(L, k));
+		for (int i = 1; i <= 6; ++i) {
+			lua_rawgeti(L, k, i);
+			ui->LAssert(L, lua_isnumber(L, -1), "DrawMeshAt() argument %d[%d]: expected number, got %s", k, i, luaL_typename(L, -1));
+			int c = (i - 1) % 3;
+			int r = (i - 1) / 3;
+			xform[c][r] = (float)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+	}
+	++k;
+
+	ui->LAssert(L, ui->IsUserData(L, k, "uimeshhandlemeta"), "DrawMeshAt() argument %d: expected mesh handle, got %s", k, luaL_typename(L, k));
+	meshHandle_s* mesh = NULL;
+	mesh = (meshHandle_s*)lua_touserdata(L, k);
+	++k;
+
+	ui->renderer->DrawMesh(imgHnd, mesh->mesh, xform);
+	return 0;
+}
 
 static int l_DrawString(lua_State* L)
 {
@@ -790,9 +947,9 @@ struct CloudProviderInfo {
 #include <cfapi.h>
 
 static std::string NarrowString(std::wstring_view ws) {
-	auto cb = WideCharToMultiByte(CP_UTF8, 0, ws.data(), ws.size(), nullptr, 0, nullptr, nullptr);
+	auto cb = WideCharToMultiByte(CP_UTF8, 0, ws.data(), (int)ws.size(), nullptr, 0, nullptr, nullptr);
 	std::string ret(cb, '\0');
-	WideCharToMultiByte(CP_UTF8, 0, ws.data(), ws.size(), ret.data(), ret.size(), nullptr, nullptr);
+	WideCharToMultiByte(CP_UTF8, 0, ws.data(), (int)ws.size(), ret.data(), (int)ret.size(), nullptr, nullptr);
 	return ret;
 }
 
@@ -826,7 +983,7 @@ static std::optional<CloudProviderInfo> GetCloudProviderInfo(std::filesystem::pa
 	if (!lib.Loaded()) {
 		return {};
 	}
-	hr = lib.CfGetSyncRootInfoByPath(path.generic_wstring().c_str(), CF_SYNC_ROOT_INFO_PROVIDER, buf.data(), buf.size(), &len);
+	hr = lib.CfGetSyncRootInfoByPath(path.generic_wstring().c_str(), CF_SYNC_ROOT_INFO_PROVIDER, buf.data(), (DWORD)buf.size(), &len);
 	if (FAILED(hr) && GetLastError() != ERROR_MORE_DATA) {
 		return {};
 	}
@@ -1469,6 +1626,16 @@ int ui_main_c::InitAPI(lua_State* L)
 	lua_setfield(L, -2, "ImageSize");
 	lua_setfield(L, LUA_REGISTRYINDEX, "uiimghandlemeta");
 
+	// Mesh handles
+	lua_newtable(L); // Mesh handle metatable
+	lua_pushvalue(L, -1); // Push mesh handle metatable
+	ADDFUNCCL(NewMeshHandle, 1);
+	lua_pushvalue(L, -1); // Push mesh handle metatable
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, l_meshHandleGC);
+	lua_setfield(L, -2, "__gc");
+	lua_setfield(L, LUA_REGISTRYINDEX, "uimeshhandlemeta");
+
 	// Rendering
 	ADDFUNC(RenderInit);
 	ADDFUNC(GetScreenSize);
@@ -1482,6 +1649,7 @@ int ui_main_c::InitAPI(lua_State* L)
 	ADDFUNC(DrawImageAt);
 	ADDFUNC(DrawImageQuad);
 	ADDFUNC(DrawImageQuadAt);
+	ADDFUNC(DrawMeshAt);
 	ADDFUNC(DrawString);
 	ADDFUNC(DrawStringWidth);
 	ADDFUNC(DrawStringCursorIndex);

@@ -128,6 +128,22 @@ Mat4 OrthoMatrix(double left, double right, double bottom, double top, double ne
 	return ret;
 }
 
+// ==========
+// Mesh Class
+// ==========
+
+r_meshVtx_s* r_mesh_c::GetVertices()
+{
+	return reinterpret_cast<r_meshVtx_s*>(this + 1);
+}
+
+r_meshIdx_t* r_mesh_c::GetIndices()
+{
+	char* p = reinterpret_cast<char*>(this + 1);
+	p += vertexCount * sizeof(r_meshVtx_s);
+	return reinterpret_cast<r_meshIdx_t*>(p);
+}
+
 // =================
 // Layer queue class
 // =================
@@ -1512,6 +1528,7 @@ void r_renderer_c::EndFrame()
 	takeScreenshot = R_SSNONE;
 
 	PurgeShaders();
+	PurgeMeshes();
 }
 
 // =================
@@ -1603,6 +1620,56 @@ void r_renderer_c::SetShaderLoadingPriority(r_shaderHnd_c* hnd, int pri)
 int r_renderer_c::GetTexAsyncCount()
 {
 	return texMan->GetAsyncCount();
+}
+
+// ===============
+// Mesh Management
+// ===============
+
+r_meshHnd_t r_renderer_c::NewMeshHandle(size_t vertexCount, r_meshVtx_s const* vertexData, size_t indexCount, r_meshIdx_t const* indexData)
+{
+	uint32_t meshId{};
+	if (freeMeshIds.empty()) {
+		meshId = (uint32_t)meshes.size();
+		meshes.push_back({});
+	}
+	else {
+		meshId = freeMeshIds.front();
+		freeMeshIds.pop_front();
+	}
+
+	auto generation = ++meshes[meshId].generation;
+	size_t const vertexCb = vertexCount * sizeof(r_meshVtx_s);
+	size_t const indexCb = indexCount * sizeof(r_meshIdx_t);
+	size_t const cb = sizeof(r_mesh_c) + vertexCb + indexCb;
+	char* mem = new char[cb];
+	r_mesh_c* mesh = new(mem) r_mesh_c();
+	mesh->vertexCount = vertexCount;
+	mesh->indexCount = indexCount;
+
+	memcpy(mesh->GetVertices(), vertexData, vertexCb);
+	memcpy(mesh->GetIndices(), indexData, indexCb);
+
+	meshes[meshId].mesh = mesh;
+	return { meshId, generation };
+}
+
+void r_renderer_c::DeleteMeshHandle(r_meshHnd_t handle)
+{
+	meshesPendingDestruction.push_back(handle);
+}
+
+void r_renderer_c::PurgeMeshes() {
+	for (auto& handle : meshesPendingDestruction) {
+		auto& [mesh, gen] = meshes[handle.meshId];
+		if (mesh && gen == handle.generation) {
+			mesh->~r_mesh_c();
+			delete[](char*)mesh;
+			mesh = nullptr;
+			freeMeshIds.push_back(handle.meshId);
+		}
+	}
+	meshesPendingDestruction.clear();
 }
 
 // ==========
@@ -1706,6 +1773,26 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x
 	}
 	curLayer->Color(drawColor);
 	curLayer->Quad(s0, t0, x0, y0, s1, t1, x1, y1, s2, t2, x2, y2, s3, t3, x3, y3);
+}
+
+void r_renderer_c::DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x3 const& xform)
+{
+	// TODO(LV): Implement this more proper than a bunch of degenerate triangles.
+	auto* mesh = meshes[meshHnd.meshId].mesh;
+	auto* vertices = mesh->GetVertices();
+	auto* indices = mesh->GetIndices();
+	for (int i = 0; i < mesh->indexCount; i += 3) {
+		std::array<glm::vec3, 3> pos;
+		std::array<glm::vec2, 3> tc;
+		for (int j = 0; j < 3; ++j) {
+			auto& vtx = vertices[indices[i + j]];
+			pos[j] = xform * glm::vec3(vtx.position, 1.0f);
+			tc[j] = vtx.texcoord;
+		}
+		DrawImageQuad(hnd,
+			pos[0].x, pos[0].y, pos[1].x, pos[1].y, pos[2].x, pos[2].y, pos[2].x, pos[2].y,
+			tc[0].s, tc[0].t, tc[1].s, tc[1].t, tc[2].s, tc[2].t, tc[2].s, tc[2].t);
+	}
 }
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)

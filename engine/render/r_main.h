@@ -63,6 +63,17 @@ private:
 	struct r_layerCmd_s* NewCommand(size_t size);
 };
 
+class r_mesh_c {
+public:
+	friend class r_renderer_c;
+	size_t vertexCount;
+	size_t indexCount;
+
+	r_meshVtx_s* GetVertices();
+	r_meshIdx_t* GetIndices();
+};
+
+
 // Renderer Main Class
 class r_renderer_c: public r_IRenderer, public conCmdHandler_c {
 public:
@@ -80,6 +91,10 @@ public:
 	void	PurgeShaders();
 	int		GetTexAsyncCount();
 
+	r_meshHnd_t NewMeshHandle(size_t vertexCount, r_meshVtx_s const* vertexData, size_t indexCount, r_meshIdx_t const* indexData);
+	void	DeleteMeshHandle(r_meshHnd_t handle);
+	void	PurgeMeshes();
+
 	void	SetClearColor(const col4_t col);
 	void	SetDrawLayer(int layer, int subLayer = 0);
 	void	SetDrawSubLayer(int subLayer);
@@ -90,6 +105,7 @@ public:
 	void	DrawColor(dword col);
 	void	DrawImage(r_shaderHnd_c* hnd, float x, float y, float w, float h, float s1 = 0.0f, float t1 = 0.0f, float s2 = 1.0f, float t2 = 1.0f);
 	void	DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, float s0 = 0, float t0 = 0, float s1 = 1, float t1 = 0, float s2 = 1, float t2 = 1, float s3 = 0, float t3 = 1);
+	void	DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x3 const& xform);
 	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str);
 	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...);
 	int		DrawStringWidth(int height, int font, const char* str);
@@ -171,6 +187,17 @@ public:
 
 	RenderTarget rttMain[2];
 	int	presentRtt = 0;
+
+	using MeshId = uint32_t;
+	
+	struct MeshEntry {
+		r_mesh_c* mesh{};
+		uint32_t generation{};
+	};
+
+	std::vector<MeshEntry> meshes;
+	std::deque<r_meshHnd_t> meshesPendingDestruction;
+	std::deque<MeshId> freeMeshIds;
 
 	std::vector<uint8_t> lastFrameHash{};
 
