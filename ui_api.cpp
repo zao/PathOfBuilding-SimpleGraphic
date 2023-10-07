@@ -731,7 +731,7 @@ static int l_DrawMeshAt(lua_State* L)
 	}
 	++k;
 
-	glm::mat3x3 xform(1);
+	glm::mat3x2 xform(1);
 	{
 		ui->LAssert(L, lua_istable(L, k), "DrawMeshAt() argument %d: expected 2x3 matrix table, got %s", k, luaL_typename(L, k));
 		ui->LAssert(L, lua_objlen(L, k) == 6, "DrawMeshAt() argument %d: expected 6-element matrix, got %d", k, lua_objlen(L, k));

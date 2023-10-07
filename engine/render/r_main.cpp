@@ -25,6 +25,7 @@
 #include <imgui_stdlib.h>
 
 static uint64_t MurmurHash64A(void const* data, int len, uint64_t seed);
+static void DestroyMesh(r_mesh_c* mesh);
 
 // =======
 // Classes
@@ -155,6 +156,7 @@ struct r_layerCmd_s {
 		BIND,
 		COLOR,
 		QUAD,
+		MESH,
 	} cmd;
 };
 
@@ -188,6 +190,12 @@ struct r_layerCmdQuad_s {
 	} quad;
 };
 
+struct r_layerCmdMesh_s {
+	r_layerCmd_s::Command cmd;
+	r_meshHnd_t meshHandle;
+	glm::mat3x2 xform;
+};
+
 r_layer_c::r_layer_c(r_renderer_c* renderer, int layer, int subLayer)
 	: renderer(renderer), layer(layer), subLayer(subLayer)
 {
@@ -208,6 +216,7 @@ static size_t CommandSize(r_layerCmd_s::Command cmd, size_t extraSize = 0) {
 	case Tag::BIND: return sizeof(r_layerCmdBind_s);
 	case Tag::COLOR: return sizeof(r_layerCmdColor_s);
 	case Tag::QUAD: return sizeof(r_layerCmdQuad_s);
+	case Tag::MESH: return sizeof(r_layerCmdMesh_s);
 	default:
 		abort();
 	}
@@ -243,7 +252,7 @@ r_layerCmd_s* r_layer_c::NewCommand(size_t size)
 	if (cmdEnd >= cmdStorage.size()) {
 		return nullptr;
 	}
-	auto *ret = (r_layerCmd_s*)(cmdStorage.data() + cmdCursor);
+	auto* ret = (r_layerCmd_s*)(cmdStorage.data() + cmdCursor);
 	cmdCursor = cmdEnd;
 	++numCmd;
 	return ret;
@@ -292,6 +301,15 @@ void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1,
 		cmd->quad.t[0] = t0; cmd->quad.t[1] = t1; cmd->quad.t[2] = t2; cmd->quad.t[3] = t3;
 		cmd->quad.x[0] = x0; cmd->quad.x[1] = x1; cmd->quad.x[2] = x2; cmd->quad.x[3] = x3;
 		cmd->quad.y[0] = y0; cmd->quad.y[1] = y1; cmd->quad.y[2] = y2; cmd->quad.y[3] = y3;
+	}
+}
+
+void r_layer_c::Mesh(r_meshHnd_t handle, glm::mat3x2 const &xform)
+{
+	if (auto* cmd = (r_layerCmdMesh_s*)NewCommand(CommandSize(r_layerCmd_s::MESH))) {
+		cmd->cmd = r_layerCmd_s::MESH;
+		cmd->meshHandle = handle;
+		cmd->xform = xform;
 	}
 }
 
@@ -527,28 +545,7 @@ struct AdjacentMergeStrategy : RenderStrategy {
 				}
 			}
 
-			// If the current batch is incompatible key-wise, dispatch it to get a fresh
-			// batch to grow in.
-			if (!batch_.batch.vertices.empty() && batch_.key != latchKey_) {
-				Dispatch();
-			}
-			batch_.key = latchKey_;
-
-			// Check current (and only) batch if the texture set has the latched texture.
-			// If it's there, use its index as vertex attribute.
-			// If it's not, insert it if room, otherwise dispatch batch and prepare a fresh one.
-			size_t texSlot{};
-			{
-				auto& textures = batch_.textures;
-				auto texI = std::find(textures.begin(), textures.end(), nextTex_);
-				if (texI == textures.end()) {
-					if (textures.size() == batchTextureCap_) {
-						Dispatch();
-					}
-					texI = textures.insert(textures.end(), nextTex_);
-				}
-				texSlot = std::distance(textures.begin(), texI);
-			}
+			CommitLatchedState();
 
 			Vertex quad[4];
 			for (int v = 0; v < 4; v++) {
@@ -562,7 +559,7 @@ struct AdjacentMergeStrategy : RenderStrategy {
 				q.g = tint_[1];
 				q.b = tint_[2];
 				q.a = tint_[3];
-				q.texId = (float)texSlot;
+				q.texId = (float)currentTexSlot_;
 				q.viewX = (float)vp.x;
 				q.viewY = (float)vp.y;
 				q.viewW = (float)vp.width;
@@ -577,6 +574,118 @@ struct AdjacentMergeStrategy : RenderStrategy {
 			}
 			totalVertexCount_ += std::size(indices);
 		} break;
+		case r_layerCmd_s::MESH: {
+			auto* c = (r_layerCmdMesh_s*)cmd;
+			if (showStats_) {
+				// ImGui::Text("MESH");
+			}
+
+			r_mesh_c* mesh = renderer_->meshes[c->meshHandle.meshId].mesh;
+			assert(renderer_->meshes[c->meshHandle.meshId].generation == c->meshHandle.generation);
+
+			/*
+			* Cull the bounds. If there was a lot of geometry we could save some computation
+			* by computing an AABB from raw data and transform it into an OBB to cull, but as
+			* most connectors and things currently are just quad-sized meshes, there's very
+			* little difference and we might as well just transform the geometry and cull the
+			* AABB of that instead.
+			*/
+
+			glm::mat3x3 xform({ c->xform[0], 0.0f }, { c->xform[1], 0.0f }, { c->xform[2], 1.0f });
+			auto& vp = nextViewport_;
+
+			/*
+			* Transform vertex positions to screen space for culling and rendering. We need to use
+			* scratch space to store the transforms as the mesh is immutable and shared. The
+			* transformed geometry is required for both bounds checking and for filling the GPU
+			* vertex buffer by resolving indices.
+			*/
+			vertexScratch_.resize(mesh->vertexCount);
+			r_meshVtx_s const* vtxSrc = mesh->GetVertices();
+			glm::vec2 minPos{ +FLT_MAX }, maxPos{ -FLT_MAX };
+			for (size_t vIdx = 0; vIdx < mesh->vertexCount; ++vIdx) {
+				auto& src = vtxSrc[vIdx];
+				glm::vec2 pos = glm::vec2(xform * glm::vec3(src.position, 1.0f));
+				minPos = (glm::min)(minPos, pos);
+				maxPos = (glm::max)(maxPos, pos);
+				vertexScratch_[vIdx] = pos;
+			}
+
+			// Cull the mesh first before it influences any boundary cuts.
+			if (!!renderer_->r_drawCull->intVal) {
+				r_aabb_s a{};
+				a.lo[0] = minPos.x + vp.x;
+				a.lo[1] = minPos.y + vp.y;
+				a.hi[0] = maxPos.x + vp.x;
+				a.hi[1] = maxPos.y + vp.y;
+				auto b = AabbFromViewport(vp);
+				bool intersects = AabbAabbIntersects(a, b);
+				if (!intersects) {
+					break;
+				}
+			}
+
+			// Commit the latched state, dispatching incompatible batches and locking in `currentTexSlot_`.
+			CommitLatchedState();
+
+			/*
+			* Index the transformed geometry from scratch space and populate the vertex buffer. We
+			* can't do GPU indexing as ES2 only supports 16-bit indices and no meaningful vertex/index
+			* offsets so in order to draw larger chunks of geometry we need to have a vertex buffer
+			* with geometry expanded CPU-side from indices.
+			*/
+			r_meshIdx_t const* idxSrc = mesh->GetIndices();
+			for (auto iIdx = 0; iIdx < mesh->indexCount; ++iIdx) {
+				r_meshIdx_t index = idxSrc[iIdx];
+				r_meshVtx_s const& rawSrc = vtxSrc[index];
+				glm::vec2 screenSrc = vertexScratch_[index];
+
+				Vertex v;
+				v.u = rawSrc.texcoord.s;
+				v.v = rawSrc.texcoord.t;
+				v.x = screenSrc.x;
+				v.y = screenSrc.y;
+				v.r = tint_[0];
+				v.g = tint_[1];
+				v.b = tint_[2];
+				v.a = tint_[3];
+				v.texId = (float)currentTexSlot_;
+				v.viewX = (float)vp.x;
+				v.viewY = (float)vp.y;
+				v.viewW = (float)vp.width;
+				v.viewH = (float)vp.height;
+
+				batch_.batch.vertices.push_back(v);
+			}
+			totalVertexCount_ += mesh->indexCount;
+		} break;
+
+		default:
+			abort();
+		}
+	}
+
+	void CommitLatchedState() {
+		// If the current batch is incompatible key-wise, dispatch it to get a fresh
+		// batch to grow in.
+		if (!batch_.batch.vertices.empty() && batch_.key != latchKey_) {
+			Dispatch();
+		}
+		batch_.key = latchKey_;
+
+		// Check current (and only) batch if the texture set has the latched texture.
+		// If it's there, use its index as vertex attribute.
+		// If it's not, insert it if room, otherwise dispatch batch and prepare a fresh one.
+		{
+			auto& textures = batch_.textures;
+			auto texI = std::find(textures.begin(), textures.end(), nextTex_);
+			if (texI == textures.end()) {
+				if (textures.size() == batchTextureCap_) {
+					Dispatch();
+				}
+				texI = textures.insert(textures.end(), nextTex_);
+			}
+			currentTexSlot_ = std::distance(textures.begin(), texI);
 		}
 	}
 
@@ -585,7 +694,7 @@ struct AdjacentMergeStrategy : RenderStrategy {
 			Dispatch();
 		}
 		if (showStats_) {
-			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex);
+			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex_);
 		}
 	}
 
@@ -602,7 +711,7 @@ private:
 		auto& lastKey = lastDispatchKey_;
 
 		if (showStats_) {
-			ImGui::Text("Batch %d", batchIndex);
+			ImGui::Text("Batch %d", batchIndex_);
 			ImGui::Text("%d verts", batch.vertices.size());
 		}
 
@@ -658,7 +767,7 @@ private:
 
 		glUseProgram(0);
 
-		batchIndex += 1;
+		batchIndex_ += 1;
 	}
 
 	r_layer_c* layer_{};
@@ -683,13 +792,15 @@ private:
 	BatchKey latchKey_{};
 	r_viewport_s nextViewport_{};
 	r_tex_c* nextTex_{};
+	size_t currentTexSlot_{};
 	std::optional<BatchKey> lastDispatchKey_;
 	TexturedBatch batch_;
 
 	std::array<float, 4> tint_{ 1.0f, 1.0f, 1.0f, 1.0f };
 
 	size_t totalVertexCount_ = 0;
-	size_t batchIndex = 0;
+	size_t batchIndex_ = 0;
+	std::vector<glm::vec2> vertexScratch_;
 };
 
 void r_layer_c::Render()
@@ -1029,7 +1140,7 @@ void r_renderer_c::Init()
 		}
 		glGenFramebuffers(1, &rtt.framebuffer);
 		glGenTextures(1, &rtt.colorTexture);
-		
+
 		if (i == 0) {
 			auto compileShader = [](std::string_view src, GLenum type) -> GLuint {
 				GLuint id = glCreateShader(type);
@@ -1100,6 +1211,10 @@ void r_renderer_c::Shutdown()
 	ImGui::DestroyContext(imguiCtx);
 
 	delete whiteImage;
+
+	for (auto& m : meshes) {
+		DestroyMesh(m.mesh);
+	}
 
 	for (int f = 0; f < F_NUMFONTS; f++) {
 		delete fonts[f];
@@ -1219,7 +1334,7 @@ void CVarCheckbox(char const* label, conVar_c* cvar) {
 }
 
 static std::string BinaryUnitPrefix(uint64_t quantity) {
-	if (quantity < 1ull<<10) {
+	if (quantity < 1ull << 10) {
 		return fmt::format("{} ", quantity);
 	}
 	if (quantity < 1ull << 20) {
@@ -1309,11 +1424,9 @@ void r_renderer_c::EndFrame()
 				size_t byteAcc{};
 				auto layer = layerSort[l];
 				size_t const numCmd = layer->numCmd;
-				totalFootprint += numCmd * sizeof(r_layerCmdQuad_s); // legacy footprint
 				totalDenseFootprint += layer->cmdCursor;
 			}
 
-			ImGui::Text("Total payload footprint: %sB", BinaryUnitPrefix(totalFootprint).c_str());
 			ImGui::Text("Total dense footprint: %sB", BinaryUnitPrefix(totalDenseFootprint).c_str());
 
 			size_t totalCmd{};
@@ -1372,7 +1485,7 @@ void r_renderer_c::EndFrame()
 			}
 
 			return commandDigest;
-		});
+			});
 	}
 	else {
 		std::promise<std::optional<std::vector<uint8_t>>> p;
@@ -1476,7 +1589,7 @@ void r_renderer_c::EndFrame()
 
 	std::chrono::time_point endFrameToc = std::chrono::steady_clock::now();
 	frameStats.AppendDuration(&FrameStats::endFrameStepDurations, endFrameToc - endFrameTic);
-	
+
 	if (showTiming) {
 		if (ImGui::Begin("Timing")) {
 			auto stepStatsUi = [&](std::string label, auto& seq) {
@@ -1654,6 +1767,14 @@ r_meshHnd_t r_renderer_c::NewMeshHandle(size_t vertexCount, r_meshVtx_s const* v
 	return { meshId, generation };
 }
 
+static void DestroyMesh(r_mesh_c* mesh)
+{
+	if (mesh) {
+		mesh->~r_mesh_c();
+		delete[](char*)mesh;
+	}
+}
+
 void r_renderer_c::DeleteMeshHandle(r_meshHnd_t handle)
 {
 	meshesPendingDestruction.push_back(handle);
@@ -1663,9 +1784,7 @@ void r_renderer_c::PurgeMeshes() {
 	for (auto& handle : meshesPendingDestruction) {
 		auto& [mesh, gen] = meshes[handle.meshId];
 		if (mesh && gen == handle.generation) {
-			mesh->~r_mesh_c();
-			delete[](char*)mesh;
-			mesh = nullptr;
+			DestroyMesh(mesh);
 			freeMeshIds.push_back(handle.meshId);
 		}
 	}
@@ -1775,24 +1894,16 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x
 	curLayer->Quad(s0, t0, x0, y0, s1, t1, x1, y1, s2, t2, x2, y2, s3, t3, x3, y3);
 }
 
-void r_renderer_c::DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x3 const& xform)
+void r_renderer_c::DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x2 const& xform)
 {
-	// TODO(LV): Implement this more proper than a bunch of degenerate triangles.
-	auto* mesh = meshes[meshHnd.meshId].mesh;
-	auto* vertices = mesh->GetVertices();
-	auto* indices = mesh->GetIndices();
-	for (int i = 0; i < mesh->indexCount; i += 3) {
-		std::array<glm::vec3, 3> pos;
-		std::array<glm::vec2, 3> tc;
-		for (int j = 0; j < 3; ++j) {
-			auto& vtx = vertices[indices[i + j]];
-			pos[j] = xform * glm::vec3(vtx.position, 1.0f);
-			tc[j] = vtx.texcoord;
-		}
-		DrawImageQuad(hnd,
-			pos[0].x, pos[0].y, pos[1].x, pos[1].y, pos[2].x, pos[2].y, pos[2].x, pos[2].y,
-			tc[0].s, tc[0].t, tc[1].s, tc[1].t, tc[2].s, tc[2].t, tc[2].s, tc[2].t);
+	if (hnd) {
+		curLayer->Bind(hnd->sh->tex);
 	}
+	else {
+		curLayer->Bind(whiteImage->sh->tex);
+	}
+	curLayer->Color(drawColor);
+	curLayer->Mesh(meshHnd, xform);
 }
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)
@@ -1941,7 +2052,7 @@ void r_renderer_c::DoScreenshot(image_c* i, const char* ext)
 
 	// Make folder if it doesn't exist
 	std::filesystem::create_directory(CFG_DATAPATH "Screenshots");
-	
+
 	// Save image
 	if (i->Save(ssname.c_str())) {
 		sys->con->Print("Couldn't write screenshot!\n");

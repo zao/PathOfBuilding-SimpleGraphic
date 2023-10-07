@@ -46,6 +46,7 @@ public:
 	void	Bind(r_tex_c* tex);
 	void	Color(col4_t col);
 	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3);
+	void	Mesh(r_meshHnd_t handle, glm::mat3x2 const &xform);
 	void	Render();
 	void    Discard();
 
@@ -105,7 +106,7 @@ public:
 	void	DrawColor(dword col);
 	void	DrawImage(r_shaderHnd_c* hnd, float x, float y, float w, float h, float s1 = 0.0f, float t1 = 0.0f, float s2 = 1.0f, float t2 = 1.0f);
 	void	DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, float s0 = 0, float t0 = 0, float s1 = 1, float t1 = 0, float s2 = 1, float t2 = 1, float s3 = 0, float t3 = 1);
-	void	DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x3 const& xform);
+	void	DrawMesh(r_shaderHnd_c* hnd, r_meshHnd_t meshHnd, glm::mat3x2 const& xform);
 	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str);
 	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...);
 	int		DrawStringWidth(int height, int font, const char* str);
