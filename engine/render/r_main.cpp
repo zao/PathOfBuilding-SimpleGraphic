@@ -1215,6 +1215,7 @@ void r_renderer_c::Shutdown()
 	for (auto& m : meshes) {
 		DestroyMesh(m.mesh);
 	}
+	meshes.clear();
 
 	for (int f = 0; f < F_NUMFONTS; f++) {
 		delete fonts[f];
@@ -1785,6 +1786,7 @@ void r_renderer_c::PurgeMeshes() {
 		auto& [mesh, gen] = meshes[handle.meshId];
 		if (mesh && gen == handle.generation) {
 			DestroyMesh(mesh);
+			mesh = nullptr;
 			freeMeshIds.push_back(handle.meshId);
 		}
 	}
