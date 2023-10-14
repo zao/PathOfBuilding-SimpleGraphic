@@ -38,8 +38,9 @@
 **
 ** mshHandle = NewMeshHandle(coords, texcoords[, indices])
 **
-** RenderInit()
+** RenderInit(["flag1"[, "flag2"...]])  flag:{"DPI_AWARE"}
 ** width, height = GetScreenSize()
+** scaleFactor = GetScreenScale()
 ** SetClearColor(red, green, blue[, alpha])
 ** SetDrawLayer({layer|nil}[, subLayer)
 ** GetDrawLayer()
@@ -406,7 +407,20 @@ static int l_meshHandleGC(lua_State* L)
 static int l_RenderInit(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	ui->RenderInit();
+	int n = lua_gettop(L);
+	bool dpiAware = false;
+	for (int i = 1; i <= n; ++i) {
+		ui->LAssert(L, lua_isstring(L, i), "RenderInit() argument %d: expected string, got %s", i, luaL_typename(L, i));
+		char const* str = lua_tostring(L, i);
+		if (strcmp(str, "DPI_AWARE") == 0) {
+			dpiAware = true;
+		}
+	}
+	r_featureFlag_e features{};
+	if (dpiAware) {
+		features = (r_featureFlag_e)(features | F_DPI_AWARE);
+	}
+	ui->RenderInit(features);
 	return 0;
 }
 
@@ -416,6 +430,13 @@ static int l_GetScreenSize(lua_State* L)
 	lua_pushinteger(L, ui->renderer->VirtualScreenWidth());
 	lua_pushinteger(L, ui->renderer->VirtualScreenHeight());
 	return 2;
+}
+
+static int l_GetScreenScale(lua_State* L)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	lua_pushnumber(L, ui->renderer->VirtualScreenScaleFactor());
+	return 1;
 }
 
 static int l_SetClearColor(lua_State* L)
@@ -1639,6 +1660,7 @@ int ui_main_c::InitAPI(lua_State* L)
 	// Rendering
 	ADDFUNC(RenderInit);
 	ADDFUNC(GetScreenSize);
+	ADDFUNC(GetScreenScale);
 	ADDFUNC(SetClearColor);
 	ADDFUNC(SetDrawLayer);
 	ADDFUNC(GetDrawLayer);
