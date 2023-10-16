@@ -36,7 +36,8 @@
 ** imgHandle:SetLoadingPriority(pri)
 ** width, height = imgHandle:ImageSize()
 **
-** mshHandle = NewMeshHandle(coords, texcoords[, indices])
+** mshHandle = NewMeshHandle("TRIANGLES", coords, texcoords[, indices])
+** mshHandle = NewMeshHandle("QUADS", coords, {texcoords|nil}, {indices|nil})
 **
 ** RenderInit(["flag1"[, "flag2"...]])  flag:{"DPI_AWARE"}
 ** width, height = GetScreenSize()
@@ -104,6 +105,52 @@ static ui_main_c* GetUIPtr(lua_State* L)
 	lua_pop(L, 1);
 	return ui;
 }
+
+// ===============
+// C++ scaffolding
+// ===============
+
+/*
+* ui->LAssert transfers control immediately out of the function without destroying
+* any C++ objects. To support RAII this scaffolding serves as a landing pad for
+* ui->LExpect, to transfer control to Lua but only after the call stack has been
+* unwound with normal C++ exception semantics.
+* 
+* Example use site:
+* SG_LUA_FUN_BEGIN(DoTheThing)
+* {
+*   ui_main_c* ui = GetUIPtr(L);
+*	auto foo = std::make_shared<Foo>();
+*   ui->LExpect(L, lua_gettop(L) >= 1), "Usage: DoTheThing(x)");
+*   ui->LExpect(L, lua_isstring(L, 1), "DoTheThing() argument 1: expected string, got %s", luaL_typename(L, 1));
+*	return 0;
+* }
+* SG_LUA_FUN_END()
+*/
+
+#ifdef _WIN32
+#define SG_NOINLINE __declspec(noinline)
+#else
+#define SG_NOINLINE [[gnu::noinline]]
+#endif
+#define SG_NORETURN [[noreturn]]
+
+SG_NORETURN static void LuaErrorWrapper(lua_State* L)
+{
+	lua_error(L);
+}
+
+#define SG_LUA_CPP_FUN_BEGIN(Name)                                 \
+static int l_##Name(lua_State* L) {                                \
+	int (*fun)(lua_State*) = [](lua_State* L) SG_NOINLINE -> int { \
+		try
+
+#define SG_LUA_CPP_FUN_END()                          \
+		catch (ui_expectationFailed_s) { return -1; } \
+    };                                                \
+	int rc = fun(L);                                  \
+	if (rc < 0) { LuaErrorWrapper(L); }               \
+	return rc; }
 
 // =========
 // Callbacks
@@ -290,99 +337,165 @@ struct meshHandle_s {
 	r_meshHnd_t mesh;
 };
 
-static int l_NewMeshHandle(lua_State* L)
+class ui_luaReader_c {
+public:
+	ui_luaReader_c(ui_main_c* ui, lua_State* L, std::string funName) : ui(ui), L(L), funName(funName) {}
+
+	// Always zero terminated as all regular strings are terminated in Lua.
+	std::string_view ArgToString(int k) {
+		ui->LExpect(L, lua_isstring(L, k), "%s() argument %d: expected string, got %s",
+			funName.c_str(), k, luaL_typename(L, k));
+		return lua_tostring(L, k);
+	}
+
+	void ArgCheckTable(int k) {
+		ui->LExpect(L, lua_istable(L, k), "%s() argument %d: expected table, got %s",
+			funName.c_str(), k, luaL_typename(L, k));
+	}
+
+	void ArgCheckNumber(int k) {
+		ui->LExpect(L, lua_isnumber(L, k), "%s() argument %d: expected number, got %s",
+			funName.c_str(), k, luaL_typename(L, k));
+	}
+
+	void ValCheckNumber(int k, char const* ctx) {
+		ui->LExpect(L, lua_isnumber(L, k), "%s() %s: expected number, got %s",
+			funName.c_str(), ctx, k, luaL_typename(L, k));
+	}
+
+private:
+	ui_main_c* ui;
+	lua_State* L;
+	std::string funName;
+};
+
+SG_LUA_CPP_FUN_BEGIN(NewMeshHandle)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LExpect(L, ui->renderer != NULL, "Renderer is not initialised");
+
 	int const n = lua_gettop(L);
-	ui->LAssert(L, n >= 2, "Usage: NewMeshHandle(positions, texcoords[, indices])");
-	ui->LAssert(L, lua_istable(L, 1), "NewMeshHandle() argument 1: expected table, got %s", luaL_typename(L, 1));
-	ui->LAssert(L, lua_istable(L, 2), "NewMeshHandle() argument 2: expected table, got %s", luaL_typename(L, 2));
-	int const positionsLen = (int)lua_objlen(L, 1);
-	int const texcoordsLen = (int)lua_objlen(L, 2);
-	ui->LAssert(L, positionsLen == texcoordsLen, "NewMeshHandle() argument 1 and 2: expected same element count, got %d and %d", positionsLen, texcoordsLen);
-	ui->LAssert(L, (positionsLen % 2) == 0, "NewMeshHandle() argument 1 and 2: expected even number of elements, got %d", positionsLen);
+	int k = 1;
+	ui->LExpect(L, n >= 2,
+		"Usage: NewMeshHandle(\"QUADS\", positions, {texcoords|nil}, {indices|nil})\n"
+		"Usage: NewMeshHandle(\"TRIANGLES\", positions, texcoords[, indices])");
+
+	ui_luaReader_c reader(ui, L, "NewMeshHandle");
+
+	// Check primitive type
+	int kPrim = k++;
+	std::string_view primType = reader.ArgToString(kPrim);
+	bool const isQuads = primType == "QUADS";
+	bool const isTris = primType == "TRIANGLES";
+	ui->LExpect(L, isQuads || isTris, "NewMeshHandle() argument %d: expected primitive type, got %s", kPrim, primType.data());
+
+	// Check positions
+	int kPos = k++;
+	reader.ArgCheckTable(kPos);
+	int const positionsLen = (int)lua_objlen(L, kPos);
+	ui->LExpect(L, (positionsLen % 2) == 0, "NewMeshHandle() argument %d: expected even number of elements, got %d", kPos, positionsLen);
+
+	// Check texcoords
+	std::optional<int> texcoordsLen;
+	bool const hasTexcoordsArg = n - k >= 0;
+	int kTc = k++;
+	if (hasTexcoordsArg && !lua_isnil(L, kTc)) {
+		reader.ArgCheckTable(kTc);
+		texcoordsLen = (int)lua_objlen(L, kTc);
+	}
+
+	if (isTris && !texcoordsLen) {
+		ui->LExpect(L, false, "NewMeshHandle() argument %d: expected table for triangles, got nil", kTc);
+	}
+
+	if (texcoordsLen) {
+		ui->LExpect(L, positionsLen == *texcoordsLen, "NewMeshHandle() argument %d and %d: expected same element count, got %d and %d",
+			kPos, kTc, positionsLen, *texcoordsLen);
+	}
+	ui->LExpect(L, (positionsLen % 2) == 0, "NewMeshHandle() argument %d and %d: expected even number of elements, got %d", kPos, kTc, positionsLen);
 	int const numVertices = positionsLen / 2;
 
-	int numIndices{};
-	bool const hasIndices = n >= 3;
-	if (hasIndices) {
-		ui->LAssert(L, lua_istable(L, 3), "NewMeshHandle() argument 3: expected table, got %s", luaL_typename(L, 3));
-		numIndices = (int)lua_objlen(L, 3);
-		ui->LAssert(L, (numIndices % 3) == 0, "NewMeshHandle() argument 3, expected element count divisible by 3, got %d", numIndices);
-	}
-	else {
-		numIndices = numVertices;
-	}
+	std::unique_ptr<r_meshVtx_s[]> vertices = std::make_unique<r_meshVtx_s[]>(numVertices);
+	for (int i = 1; i <= positionsLen; ++i) {
+		int const vtxIdx = (i - 1) / 2;
+		int const compIdx = (i - 1) % 2;
 
-	// As ui->LAssert alters control flow without unwinding we cannot allocate anything before all invariants have been established.
-	// The first pass checks invariants and the second pass fetches data to construct objects.
-	r_meshHnd_t mesh{};
-	std::unique_ptr<r_meshVtx_s[]> vertices;
-	std::unique_ptr<r_meshIdx_t[]> indices;
-	for (int pass = 0; pass < 2; ++pass) {
-		if (pass == 1) {
-			vertices = std::make_unique<r_meshVtx_s[]>(numVertices);
-			indices = std::make_unique<r_meshIdx_t[]>(numIndices);
-		}
+		// position table is {x1, y1, x2, y2, ..}
+		// texcoord table is {s1, t1, s2, t2, ..}
 
-		for (int i = 1; i <= positionsLen; ++i) {
-			int const vtxIdx = (i - 1) / 2;
-			int const compIdx = (i - 1) % 2;
-
-			// position table is {x1, y1, x2, y2, ..}
-			// texcoord table is {s1, t1, s2, t2, ..}
-
-			lua_rawgeti(L, 1, i); // position to -2
-			lua_rawgeti(L, 2, i); // texcoord to -1
-			if (pass == 0) {
-				ui->LAssert(L, lua_isnumber(L, -2), "NewMeshHandle() argument 1[%d]: expected number, got %s", vtxIdx + 1, luaL_typename(L, -2));
-				ui->LAssert(L, lua_isnumber(L, -1), "NewMeshHandle() argument 2[%d]: expected number, got %s", vtxIdx + 1, luaL_typename(L, -1));
-			}
-			else {
-				vertices[vtxIdx].position[compIdx] = (float)lua_tonumber(L, -2);
-				vertices[vtxIdx].texcoord[compIdx] = (float)lua_tonumber(L, -1);
-			}
-			lua_pop(L, 2);
-		}
-
-		if (hasIndices) {
-			for (int i = 1; i <= numIndices; ++i) {
-				lua_rawgeti(L, 3, i); // index to -1
-				if (pass == 0) {
-					ui->LAssert(L, lua_isnumber(L, -1), "NewMeshHandle() argument 3[%d]: expected number, got %s", i, luaL_typename(L, -1));
-					double num = lua_tonumber(L, -1);
-					auto index = (int)num;
-					ui->LAssert(L, num == (double)index, "NewMeshHandle() argument 3[%d]: expected integer, got %f", i, num);
-					ui->LAssert(L, index >= 1 && index <= numVertices, "NewMeshHandle() argument 3[%d]: value %d out of bounds for %d vertices", i, index, numVertices);
-				}
-				else {
-					indices[i - 1] = (int)lua_tonumber(L, -1) - 1;
-				}
-				lua_pop(L, 1);
-			}
+		int curTop = lua_gettop(L);
+		auto& v = vertices[vtxIdx];
+		if (texcoordsLen) {
+			lua_rawgeti(L, kTc, i); // texcoord to -1
+			reader.ValCheckNumber(-1, "texcoords");
+			v.texcoord[compIdx] = (float)lua_tonumber(L, -1);
 		}
 		else {
-			if (pass == 0) {
-				ui->LAssert(L, (numVertices % 3) == 0, "NewMeshHandle() argument 1 and 2: vertex count must be divisible by three when no indices are provided");
-			}
-			else {
-				std::iota(indices.get(), indices.get()  + numVertices, 0);
-			}
+			static glm::vec2 const defaultTexcoords[] = { {0, 0}, {1, 0}, {1, 1}, {0, 1} };
+			v.texcoord[compIdx] = defaultTexcoords[vtxIdx % 4][compIdx];
 		}
 
-		if (pass == 1) {
-			mesh = ui->renderer->NewMeshHandle(numVertices, vertices.get(), numIndices, indices.get());
+		lua_rawgeti(L, kPos, i); // position to -1
+		reader.ValCheckNumber(-1, "positions");
+		v.position[compIdx] = (float)lua_tonumber(L, -1);
+
+		lua_settop(L, curTop);
+	}
+
+	// Check and populate indices
+	int numIndices{};
+	bool const hasIndices = n - k >= 0;
+	int kIx = k++;
+	std::unique_ptr<r_meshIdx_t[]> indices;
+	if (hasIndices) {
+		reader.ArgCheckTable(kIx);
+		numIndices = (int)lua_objlen(L, kIx);
+		ui->LExpect(L, (numIndices % 3) == 0, "NewMeshHandle() argument %d, expected element count divisible by 3, got %d", kIx, numIndices);
+		indices = std::make_unique<r_meshIdx_t[]>(numIndices);
+		for (int i = 1; i <= numIndices; ++i) {
+			lua_rawgeti(L, kIx, i); // index to -1
+			reader.ValCheckNumber(-1, "indices");
+			double num = lua_tonumber(L, -1);
+			auto index = (int)num;
+			ui->LExpect(L, num == (double)index, "NewMeshHandle() argument %d[%d]: expected integer, got %f", kIx, i, num);
+			ui->LExpect(L, index >= 1 && index <= numVertices, "NewMeshHandle() argument %d[%d]: value %d out of bounds for %d vertices", kIx, i, index, numVertices);
+			indices[i - 1] = index - 1;
+			lua_pop(L, 1);
 		}
+	}
+	else if (isQuads) {
+		// Populate indices as treating the vertices as a list of quads.
+		// This means emitting two triangles for each quad.
+		int numQuads = numVertices / 4;
+		numIndices = numQuads * 6;
+		indices = std::make_unique<r_meshIdx_t[]>(numIndices);
+		r_meshIdx_t* pIdx = indices.get();
+		for (int i = 0; i < numQuads; ++i) {
+			int baseVtx = i * 4;
+			*pIdx++ = baseVtx;
+			*pIdx++ = baseVtx + 1;
+			*pIdx++ = baseVtx + 2;
+			*pIdx++ = baseVtx;
+			*pIdx++ = baseVtx + 2;
+			*pIdx++ = baseVtx + 3;
+		}
+	}
+	else {
+		// Populate indices treating the vertices as a list of triangles.
+		numIndices = numVertices;
+		indices = std::make_unique<r_meshIdx_t[]>(numIndices);
+		std::iota(indices.get(), indices.get() + numIndices, 0);
 	}
 
 	meshHandle_s* meshHandle = (meshHandle_s*)lua_newuserdata(L, sizeof(meshHandle_s));
+	r_meshHnd_t mesh = ui->renderer->NewMeshHandle(numVertices, vertices.get(), numIndices, indices.get());
 	meshHandle->mesh = mesh;
 	lua_pushvalue(L, lua_upvalueindex(1));
 	lua_setmetatable(L, -2);
 
 	return 1;
 }
+SG_LUA_CPP_FUN_END()
 
 static meshHandle_s* GetMeshHandle(lua_State* L, ui_main_c* ui, const char* method)
 {
