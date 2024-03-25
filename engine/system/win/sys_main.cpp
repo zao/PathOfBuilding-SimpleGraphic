@@ -758,6 +758,32 @@ sys_main_c::sys_main_c()
 	userPath = FindUserPath();
 }
 
+struct WineInfo {
+	std::optional<std::string> version;
+	std::optional<std::string> buildId;
+};
+
+static WineInfo GetWineInfo()
+{
+	WineInfo ret;
+#ifdef _WIN32
+	HMODULE mod = LoadLibraryW(L"ntdll.dll");
+	if (mod) {
+		using WineGetVersion = char const* __cdecl (void);
+		if (auto versionFun = (WineGetVersion*)GetProcAddress(mod, "wine_get_version")) {
+			ret.version = versionFun();
+		}
+
+		using WineGetBuildId = char const* __cdecl (void);
+		if (auto buildIdFun = (WineGetBuildId*)GetProcAddress(mod, "wine_get_build_id")) {
+			ret.buildId = buildIdFun();
+		}
+		FreeLibrary(mod);
+	}
+#endif
+	return ret;
+}
+
 bool sys_main_c::Run(int argc, char** argv)
 {
 	initialised = false;
@@ -778,6 +804,9 @@ bool sys_main_c::Run(int argc, char** argv)
 
 	// Print some handy information
 	con->Printf(CFG_VERSION" %s %s, built " __DATE__ "\n", x64? "x64":"x86", debug? "Debug":"Release");
+	if (auto info = GetWineInfo(); info.version && info.buildId) {
+		con->Printf("Wine detected: version \"%s\", build ID \"%s\"\n", info.version->c_str(), info.buildId->c_str());
+	}
 	if (debuggerRunning) {
 		con->Printf("Debugger is present.\n");
 	}
