@@ -1068,9 +1068,15 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	ImGui_ImplGlfw_InitForOpenGL((GLFWwindow*)sys->video->GetWindowHandle(), true);
 	ImGui_ImplOpenGL3_Init("#version 100");
 
-	fonts[F_FIXED] = new r_font_c(this, "Bitstream Vera Sans Mono");
-	fonts[F_VAR] = new r_font_c(this, "Liberation Sans");
-	fonts[F_VAR_BOLD] = new r_font_c(this, "Liberation Sans Bold");
+	fontAtlas = new r_fontAtlas_c(this);
+
+	fontSpec[F_FIXED] = "Bitstream Vera Sans Mono";
+	fontSpec[F_VAR] = "Liberation Sans";
+	fontSpec[F_VAR_BOLD] = "Liberation Sans Bold";
+
+	for (int fontId = 0; fontId < F_NUMFONTS; ++fontId) {
+		fonts[fontId] = new r_font_c(this, fontSpec[fontId].c_str());
+	}
 
 	sys->con->Printf("Renderer initialised in %d msec.\n", timer.Get());
 }
@@ -1162,6 +1168,7 @@ void r_renderer_c::BeginFrame()
 			}
 		}
 	}
+	fontAtlas->PackNewRects();
 
 	curLayer = layerList[0];
 
@@ -1716,6 +1723,9 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, float x0, float y0, float x
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)
 {
+	if (height < 0) {
+		return;
+	}
 	auto idxStr = IndexUTF8ToUTF32(str);
 	if (font < 0 || font >= F_NUMFONTS) {
 		font = F_FIXED;
@@ -1734,6 +1744,9 @@ void r_renderer_c::DrawString(float x, float y, int align, int height, const col
 
 void r_renderer_c::DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...)
 {
+	if (height < 0) {
+		return;
+	}
 	if (font < 0 || font >= F_NUMFONTS) {
 		font = F_FIXED;
 	}
@@ -1756,6 +1769,9 @@ void r_renderer_c::DrawStringFormat(float x, float y, int align, int height, con
 
 int	r_renderer_c::DrawStringWidth(int height, int font, const char* str)
 {
+	if (height < 0) {
+		return 0;
+	}
 	if (!*str) {
 		return 0;
 	}
@@ -1768,6 +1784,9 @@ int	r_renderer_c::DrawStringWidth(int height, int font, const char* str)
 
 int r_renderer_c::DrawStringCursorIndex(int height, int font, const char* str, int curX, int curY)
 {
+	if (height < 0) {
+		return 0;
+	}
 	if (!*str) {
 		return 0;
 	}

@@ -39,7 +39,7 @@ public:
 	void	SetVisible(bool vis);
 	bool	IsVisible();
 	void	SetTitle(const char* title);
-	void* GetWindowHandle();
+	void*	GetWindowHandle();
 	void	GetRelativeCursor(int& x, int& y);
 	void	SetRelativeCursor(int x, int y);
 	bool	IsCursorOverWindow();

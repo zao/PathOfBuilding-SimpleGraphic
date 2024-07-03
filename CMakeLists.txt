@@ -106,11 +106,16 @@ target_include_directories(SimpleGraphic
 find_package(unofficial-angle CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(Freetype REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
+find_package(harfbuzz CONFIG REQUIRED)
 find_package(LuaJIT REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
+
+find_path(FRIBIDI_INCLUDE_DIR NAMES "fribidi.h" PATH_SUFFIXES "fribidi" REQUIRED)
+find_library(FRIBIDI_LIBRARY NAMES "fribidi" REQUIRED)
 
 add_library(imgui STATIC
     dep/imgui/imconfig.h
@@ -152,6 +157,8 @@ target_include_directories(SimpleGraphic
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/dep/glad/include
     ${CMAKE_CURRENT_SOURCE_DIR}/dep/stb
+    ${FRIBIDI_INCLUDE_DIR}
+    ${JPEG_INCLUDE_DIR}
 )
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -194,8 +201,12 @@ target_link_libraries(SimpleGraphic
     unofficial::angle::libEGL
     unofficial::angle::libGLESv2
     fmt::fmt
+    Freetype::Freetype
+    ${FRIBIDI_LIBRARY}
     glfw
     glm::glm
+    harfbuzz
+    harfbuzz::harfbuzz
     imgui
     LuaJIT::LuaJIT
     re2::re2

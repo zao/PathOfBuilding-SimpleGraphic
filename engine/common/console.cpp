@@ -782,7 +782,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 		case KEY_TAB:
 			if (_con->input.len) {
 				std::string comp = _con->input.buf;
-				int	compLen = comp.size();
+				int	compLen = (int)comp.size();
 
 				// Build match list
 				int num = 0;
