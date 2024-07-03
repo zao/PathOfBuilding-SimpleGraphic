@@ -5,10 +5,16 @@
     "angle",
     "curl",
     "fmt",
+    "freetype",
+    "fribidi",
+    "giflib",
     "glfw3",
+    "harfbuzz",
     "luajit",
     "pkgconf",
     "re2",
-    "zlib"
+    "zlib",
+    "ztd-cuneicode",
+    "ztd-text"
   ]
 }

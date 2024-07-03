@@ -164,10 +164,10 @@ void ui_console_c::Render()
 	liney = basey;
 	renderer->DrawString(0, liney, F_RIGHT, fontSize, colorGreen, F_FIXED, CFG_VERSION);
 	liney-= fontSize;
-	int memTotal = lua_gc(ui->L, LUA_GCCOUNT, 0);
+	size_t memTotal = lua_gc(ui->L, LUA_GCCOUNT, 0);
 	for (dword i = 0; i < ui->subScriptSize; i++) {
 		if (ui->subScriptList[i]) {
-			memTotal+= ui->subScriptList[i]->GetScriptMemory();
+			memTotal += ui->subScriptList[i]->GetScriptMemory();
 		}
 	}
 	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%dkB used by Lua", memTotal);

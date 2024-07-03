@@ -4,6 +4,8 @@
 // Render Main Header
 //
 
+#include <unordered_map>
+
 // =============
 // Configuration
 // =============
@@ -138,6 +140,8 @@ public:
 	ImGuiContext* imguiCtx = nullptr;
 
 	r_font_c* fonts[F_NUMFONTS] = {}; // Font objects
+	std::string fontSpec[F_NUMFONTS] = {};
+	r_fontAtlas_c* fontAtlas = {};
 
 	col4_t	drawColor = {};		// Current draw color
 

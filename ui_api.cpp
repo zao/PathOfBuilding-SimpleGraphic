@@ -584,14 +584,17 @@ static int l_DrawImageQuad(lua_State* L)
 			ui->LAssert(L, lua_isnumber(L, i), "DrawImageQuad() argument %d: expected number, got %s", i, luaL_typename(L, i));
 			arg[i - 2] = (float)lua_tonumber(L, i);
 		}
-		ui->renderer->DrawImageQuad(hnd, arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], arg[8], arg[9], arg[10], arg[11], arg[12], arg[13], arg[14], arg[15]);
+		ui->renderer->DrawImageQuad(hnd,
+			arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7],
+			arg[8], arg[9], arg[10], arg[11], arg[12], arg[13], arg[14], arg[15]);
 	}
 	else {
 		for (int i = 2; i <= 9; i++) {
 			ui->LAssert(L, lua_isnumber(L, i), "DrawImageQuad() argument %d: expected number, got %s", i, luaL_typename(L, i));
 			arg[i - 2] = (float)lua_tonumber(L, i);
 		}
-		ui->renderer->DrawImageQuad(hnd, arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
+		ui->renderer->DrawImageQuad(hnd,
+			arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
 	}
 	return 0;
 }
@@ -628,7 +631,8 @@ static int l_DrawStringWidth(lua_State* L)
 	ui->LAssert(L, lua_isstring(L, 2), "DrawStringWidth() argument 2: expected string, got %s", luaL_typename(L, 2));
 	ui->LAssert(L, lua_isstring(L, 3), "DrawStringWidth() argument 3: expected string, got %s", luaL_typename(L, 3));
 	static const char* fontMap[4] = { "FIXED", "VAR", "VAR BOLD", NULL };
-	lua_pushinteger(L, ui->renderer->DrawStringWidth((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3)));
+	auto width = ui->renderer->DrawStringWidth((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3));
+	lua_pushinteger(L, (int)width);
 	return 1;
 }
 
@@ -644,7 +648,8 @@ static int l_DrawStringCursorIndex(lua_State* L)
 	ui->LAssert(L, lua_isnumber(L, 4), "DrawStringCursorIndex() argument 4: expected number, got %s", luaL_typename(L, 4));
 	ui->LAssert(L, lua_isnumber(L, 5), "DrawStringCursorIndex() argument 5: expected number, got %s", luaL_typename(L, 5));
 	static const char* fontMap[4] = { "FIXED", "VAR", "VAR BOLD", NULL };
-	lua_pushinteger(L, ui->renderer->DrawStringCursorIndex((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3), (int)lua_tointeger(L, 4), (int)lua_tointeger(L, 5)) + 1);
+	lua_pushinteger(L, ui->renderer->DrawStringCursorIndex((int)lua_tointeger(L, 1), luaL_checkoption(L, 2, "FIXED", fontMap), lua_tostring(L, 3),
+		(int)lua_tointeger(L, 4), (int)lua_tointeger(L, 5)) + 1);
 	return 1;
 }
 

@@ -310,7 +310,9 @@ void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_
 	loadPri = 0;
 	texId = 0;
 	flags = i_flags;
-	fileName = i_fileName;
+	if (!i_fileName.empty()) {
+		fileName = i_fileName;
+	}
 	fileWidth = 0;
 	fileHeight = 0;
 }

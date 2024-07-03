@@ -5,6 +5,8 @@
 //
 
 #include "common.h"
+#include <algorithm> // # needed for ztd.text
+#include <ztd/text.hpp>
 
 // ===================
 // Argument List Class
