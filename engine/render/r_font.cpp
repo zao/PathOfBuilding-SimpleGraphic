@@ -13,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <stack>
 #include <string>
 #include <thread>
@@ -331,7 +332,7 @@ struct f_glyphMapping_s {
 
 class f_dynamicFont_c {
 public:
-	f_dynamicFont_c(r_renderer_c* renderer, const uint8_t* ttfDataPtr, size_t ttfDataSize);
+	f_dynamicFont_c(r_renderer_c* renderer, const uint8_t* ttfDataPtr, size_t ttfDataSize, double additionalScale = 1.0);
 	~f_dynamicFont_c();
 	f_dynamicFont_c(const f_dynamicFont_c&) = delete;
 	f_dynamicFont_c& operator = (const f_dynamicFont_c&) = delete;
@@ -345,6 +346,7 @@ public:
 	FT_Library ftLib{};
 	std::unordered_map<int, std::shared_ptr<f_dynamicFontHeight_c>> heights;
 	std::unordered_map<char32_t, uint32_t> glyphFromChar;
+	double additionalScale = 1.0;
 };
 
 f_glyphMapping_s f_fontStack_c::GlyphMappingFromChar(char32_t ch) const {
@@ -467,8 +469,8 @@ f_dynamicFontHeight_c::~f_dynamicFontHeight_c() {
 	FT_Done_Face(ftFace);
 }
 
-f_dynamicFont_c::f_dynamicFont_c(r_renderer_c* renderer, const uint8_t* ttfDataPtr, size_t ttfDataSize)
-	: renderer(renderer), ttfData(ttfDataPtr, ttfDataPtr + ttfDataSize)
+f_dynamicFont_c::f_dynamicFont_c(r_renderer_c* renderer, const uint8_t* ttfDataPtr, size_t ttfDataSize, double additionalScale)
+	: renderer(renderer), ttfData(ttfDataPtr, ttfDataPtr + ttfDataSize), additionalScale(additionalScale)
 {
 	FT_Error ftErr{};
 	ftMem.user = nullptr;
@@ -476,7 +478,7 @@ f_dynamicFont_c::f_dynamicFont_c(r_renderer_c* renderer, const uint8_t* ttfDataP
 	ftMem.free = [](FT_Memory mem, void* p) { free(p); };
 	ftMem.realloc = [](FT_Memory mem, long oldSize, long newSize, void* p) -> void* {
 		return realloc(p, newSize);
-	};
+		};
 
 	ftErr = FT_New_Library(&ftMem, &ftLib);
 	assert(ftErr == 0);
@@ -507,10 +509,11 @@ f_dynamicFont_c::~f_dynamicFont_c() {
 }
 
 f_dynamicFontHeight_c* f_dynamicFont_c::GetHeightInstance(int height) {
-	auto I = heights.find(height);
+	int adjHeight = (int)(height * additionalScale + 0.5);
+	auto I = heights.find(adjHeight);
 	if (I == heights.end()) {
-		auto dfh = std::make_shared<f_dynamicFontHeight_c>(renderer, this, ftLib, ttfData.data(), ttfData.size(), height);
-		I = heights.insert_or_assign(height, dfh).first;
+		auto dfh = std::make_shared<f_dynamicFontHeight_c>(renderer, this, ftLib, ttfData.data(), ttfData.size(), adjHeight);
+		I = heights.insert_or_assign(adjHeight, dfh).first;
 	}
 	return I->second.get();
 }
@@ -535,32 +538,65 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 		return;
 	}
 
-	// Parse info file
-	std::string sub;
-	while (std::getline(tgf, sub)) {
-		std::string_view subv = sub;
-		int h, x, y, w, sl, sr;
-		if (subv.substr(0, 5) == "TTF \"" && subv.substr(subv.size() - 2) == "\";") {
-			std::string_view ttfName = std::string_view(sub).substr(5);
-			ttfName = ttfName.substr(0, ttfName.size() - 2);
-			OutputDebugStringA(fmt::format("{}\n", ttfName).c_str());
-			std::filesystem::path ttfPath = fmt::format(CFG_DATAPATH "Fonts/{}", ttfName);
-			std::ifstream is(ttfPath, std::ios::binary);
-			auto ttfDataSize = file_size(ttfPath);
+	struct TgfFontDesc {
+		std::filesystem::path filename;
+		double scale = 1.0;
 
-			auto fontData = std::make_shared<f_fontData_s>();
-			fontData->ttData.resize(ttfDataSize);
-			is.read((char*)fontData->ttData.data(), ttfDataSize);
-			perFontData.push_back(fontData);
+		bool valid() const { return !filename.empty(); }
+	};
+
+	std::vector<TgfFontDesc> fontDescs;
+
+	// Parse info file
+	if (tgf.peek() == '{') {
+		// Parse as new-style JSON
+		nlohmann::json doc = nlohmann::json::parse(tgf);
+
+		auto docFonts = doc["fonts"];
+		if (docFonts.is_array()) {
+			for (auto docFont : docFonts) {
+				if (docFont.is_object()) {
+					TgfFontDesc desc{};
+					if (auto scale = docFont["scale"]; scale.is_number()) {
+						desc.scale = (double)scale;
+					}
+					if (auto file = docFont["file"]; file.is_string()) {
+						auto filename = (std::string)file;
+						desc.filename = std::filesystem::u8path(filename);
+					}
+					fontDescs.push_back(desc);
+				}
+			}
 		}
-		else if (sscanf(sub.c_str(), "HEIGHT %u;", &h) == 1) {
-		}
-		else if (sscanf(sub.c_str(), "GLYPH %u %u %u %d %d;", &x, &y, &w, &sl, &sr) == 5) {
+	}
+	else {
+		std::string sub;
+		while (std::getline(tgf, sub)) {
+			std::string_view subv = sub;
+			if (subv.substr(0, 5) == "TTF \"" && subv.substr(subv.size() - 2) == "\";") {
+				std::string_view ttfName = std::string_view(sub).substr(5);
+				ttfName = ttfName.substr(0, ttfName.size() - 2);
+				TgfFontDesc desc{};
+				desc.filename = ttfName;
+				fontDescs.push_back(desc);
+			}
 		}
 	}
 
-	for (auto fontData : perFontData) {
-		auto dynFont = std::make_shared<f_dynamicFont_c>(renderer, fontData->ttData.data(), fontData->ttData.size());
+	for (auto& desc : fontDescs) {
+		if (!desc.valid()) {
+			throw std::runtime_error("Missing font file");
+		}
+
+		std::filesystem::path ttfPath = CFG_DATAPATH "Fonts" / desc.filename;
+		std::ifstream is(ttfPath, std::ios::binary);
+		auto ttfDataSize = file_size(ttfPath);
+
+		auto fontData = std::make_shared<f_fontData_s>();
+		fontData->ttData.resize(ttfDataSize);
+		is.read((char*)fontData->ttData.data(), ttfDataSize);
+		perFontData.push_back(fontData);
+		auto dynFont = std::make_shared<f_dynamicFont_c>(renderer, fontData->ttData.data(), fontData->ttData.size(), desc.scale);
 		dynFonts.push_back(dynFont);
 	}
 }
@@ -712,7 +748,7 @@ size_t f_fontStack_c::FontCount() const { return heights.size(); }
 
 struct f_glyphSprite_s {
 	r_tex_c* tex;
-	double tcLeft, tcRight, tcTop, tcBottom;
+	float tcLeft, tcRight, tcTop, tcBottom;
 	f_glyphExtents_s extents;
 };
 
@@ -825,7 +861,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	float y = pos[Y];
 	if (align != F_LEFT) {
 		// Calculate the real width of the string
-		double width = layout.TotalAdvanceX();
+		float width = (float)layout.TotalAdvanceX();
 		switch (align) {
 		case F_CENTRE:
 			x = floor((renderer->VirtualScreenWidth() - width) / 2.0f + pos[X]);
@@ -843,15 +879,15 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	}
 
 	std::u32string_view startText = tail;
-	double startX = x;
-	double startY = y;
+	float startX = x;
+	float startY = y;
 
 	// Render with HarfBuzz-assisted FreeType
 	if (1) {
 		x = startX;
 		y = startY;
 
-		double baseline = stack->Baseline();
+		float baseline = (float)stack->Baseline();
 		y += baseline;
 
 		for (auto& chunk : layout.chunks) {
@@ -867,10 +903,10 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 				if (sprite.tex) {
 					auto& extents = sprite.extents;
 					auto vp = renderer->curViewport;
-					double dstX0 = x + info.offX + extents.bitmap_left;
-					double dstX1 = dstX0 + extents.bitmap_width;
-					double dstY0 = y - info.offY - extents.bitmap_top;
-					double dstY1 = dstY0 + extents.bitmap_height;
+					float dstX0 = x + info.offX + extents.bitmap_left;
+					float dstX1 = dstX0 + extents.bitmap_width;
+					float dstY0 = y - info.offY - extents.bitmap_top;
+					float dstY1 = dstY0 + extents.bitmap_height;
 					renderer->curLayer->Bind(sprite.tex);
 					renderer->curLayer->Quad(
 						sprite.tcLeft, sprite.tcTop, dstX0, dstY0,
