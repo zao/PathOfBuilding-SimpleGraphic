@@ -11,6 +11,7 @@
     "glfw3",
     "harfbuzz",
     "luajit",
+    "nlohmann-json",
     "pkgconf",
     "re2",
     "zlib",

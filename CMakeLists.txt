@@ -110,6 +110,7 @@ find_package(Freetype REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(harfbuzz CONFIG REQUIRED)
 find_package(LuaJIT REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -210,6 +211,7 @@ target_link_libraries(SimpleGraphic
     imgui
     LuaJIT::LuaJIT
     re2::re2
+    nlohmann_json::nlohmann_json
     Threads::Threads
     ZLIB::ZLIB
 )
