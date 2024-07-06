@@ -84,7 +84,7 @@ struct f_richTextString_c {
 	std::u32string onlyText;
 
 private:
-	void AddSegment(size_t startIdx, size_t endIdx, Color color);
+	void AddSegment(size_t startIdx, size_t endIdx, std::optional<Color> color);
 };
 
 struct f_glyphLayout_s {
@@ -751,10 +751,10 @@ f_richTextString_c::f_richTextString_c(std::u32string_view str, col3_t col)
 {
 	std::u32string_view view(fullText);
 	size_t segmentStartIdx = 0;
-	Color color{ col[0], col[1], col[2] };
 	for (size_t charIdx = 0; charIdx < fullText.size();) {
 		auto tail = view.substr(charIdx);
 		if (int escLen = IsColorEscape(tail)) {
+			Color color{};
 			ReadColorEscape(tail, color.data());
 			AddSegment(segmentStartIdx, charIdx, color);
 			charIdx += escLen;
@@ -766,15 +766,15 @@ f_richTextString_c::f_richTextString_c(std::u32string_view str, col3_t col)
 	}
 
 	if (segmentStartIdx != fullText.size()) {
-		AddSegment(segmentStartIdx, fullText.size(), color);
+		AddSegment(segmentStartIdx, fullText.size(), std::nullopt);
 	}
 }
 
-void f_richTextString_c::AddSegment(size_t startIdx, size_t endIdx, Color color)
+void f_richTextString_c::AddSegment(size_t startIdx, size_t endIdx, std::optional<Color> color)
 {
 	size_t outStartIdx = onlyText.size();
-	if (colorChanges.empty() || colorChanges.rbegin()->second != color) {
-		colorChanges[outStartIdx] = color;
+	if (color && (colorChanges.empty() || colorChanges.rbegin()->second != color)) {
+		colorChanges[outStartIdx] = color.value();
 	}
 	if (startIdx != endIdx) {
 		onlyText.append(fullText.begin() + startIdx, fullText.begin() + endIdx);
@@ -796,28 +796,23 @@ std::u32string_view f_richTextString_c::Segment(size_t idx) const
 
 void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u32string_view codepoints)
 {
+	// This helper is useful as `col` is a sneaky out parameter.
+	auto LatchCurrentColor = [renderer = this->renderer, &col](f_richTextString_c::Color c) {
+		col[0] = c[0];
+		col[1] = c[1];
+		col[2] = c[2];
+		col[3] = 1.0f;
+		renderer->curLayer->Color(col);
+		};
+
 	std::u32string_view tail(codepoints);
 	f_richTextString_c richStr(tail, col);
 	// Check if the line is visible
 	if (pos[Y] >= renderer->sys->video->vid.size[1] || pos[Y] <= -height) {
+		// Just apply the final colour code
 		if (!richStr.colorChanges.empty()) {
 			auto c = richStr.colorChanges.rbegin()->second;
-			col4_t col{ c[0], c[1], c[2], 1.0f };
-			renderer->curLayer->Color(col);
-		}
-		return;
-		// Just process the colour codes
-		while (!tail.empty() && tail[0] != U'\n') {
-			// Check for escape character
-			int escLen = IsColorEscape(tail);
-			if (escLen) {
-				ReadColorEscape(tail, col);
-				col[3] = 1.0f;
-				renderer->curLayer->Color(col);
-				tail = tail.substr(escLen);
-				continue;
-			}
-			tail = tail.substr(1);
+			LatchCurrentColor(c);
 		}
 		return;
 	}
@@ -864,8 +859,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 				auto colorI = richStr.colorChanges.lower_bound(info.cluster);
 				if (colorI != richStr.colorChanges.end()) {
 					auto change = colorI->second;
-					col4_t color{ change[0], change[1], change[2], 1.0f };
-					renderer->curLayer->Color(color);
+					LatchCurrentColor(change);
 				}
 				f_glyphMapping_s gm{ info.fontId, info.glyphId };
 
@@ -892,8 +886,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		}
 		if (!richStr.colorChanges.empty()) {
 			auto change = richStr.colorChanges.rbegin()->second;
-			col4_t color{ change[0], change[1], change[2], 1.0f };
-			renderer->curLayer->Color(color);
+			LatchCurrentColor(change);
 		}
 	}
 }
@@ -1095,7 +1088,7 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 									tofuChunk.push_back(glyph);
 								}
 								if (newWork.empty()) {
-									layout.chunks.push_back(std::move(tofuChunk));
+									layout.AddChunk(std::move(tofuChunk));
 								}
 								else {
 									newWork.push(std::move(tofuChunk));
