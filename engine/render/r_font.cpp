@@ -71,15 +71,18 @@ public:
 };
 
 struct f_richTextString_c {
-	f_richTextString_c(std::string_view str, col4_t col);
-	f_richTextString_c(std::u32string_view str, col4_t col);
+	f_richTextString_c(std::string_view str);
+	f_richTextString_c(std::u32string_view str);
 
 	size_t SegmentCount() const;
 	std::u32string_view Segment(size_t idx) const;
 
 	using Color = std::array<float, 3>;
 	std::map<size_t, Color> colorChanges;
-	using SegmentExtent = std::pair<size_t, size_t>;
+	struct SegmentExtent {
+		size_t strippedStartIdx, count;
+		size_t fullStartIdx;
+	};
 	std::vector<SegmentExtent> segments;
 	std::u32string fullText;
 	std::u32string onlyText;
@@ -626,7 +629,7 @@ static std::string StripColorEscapes(const char* str) {
 int r_font_c::StringWidthInternal(f_fontStack_c* stack, std::u32string_view str)
 {
 	col3_t col{};
-	f_richTextString_c richStr(str, col);
+	f_richTextString_c richStr(str);
 	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
 	return (int)std::ceil(layout.TotalAdvanceX());
 }
@@ -656,47 +659,36 @@ std::u32string_view r_font_c::StringCursorInternal(f_fontStack_c* stack, std::u3
 {
 	// TODO(LV): Implement this via f_textLayout_s queries for the horizontal section corresponding to the cluster. Also probably group characters as graphemes too.
 	col3_t col{};
-	f_richTextString_c richStr(str, col);
+	f_richTextString_c richStr(str);
 	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
 
-	double x{};
+	float x{};
 	for (auto& chunk : layout.chunks) {
 		for (auto& glyph : chunk) {
 			if (curX >= x) {
 				x += glyph.advX;
 				if (curX <= x) {
-					return str.substr(glyph.cluster); // BUG(LV): cluster is an offset into stripped string, while the caller expects offsets into the full string.
+					for (auto& seg : richStr.segments) {
+						if (auto rel = (int32_t)glyph.cluster - seg.strippedStartIdx; rel >= 0 && rel < seg.count) {
+							auto ret = str.substr(seg.fullStartIdx + rel);
+							// For tabs, select one or the other side depending where the cursor is.
+							if (ret[0] == U'\t') {
+								float fraction = (x - curX) / glyph.advX;
+								if (glyph.advX < 0.0f) {
+									fraction = 1.0f - fraction;
+								}
+								if (fraction <= 0.5f) {
+									ret = ret.substr(1);
+								}
+							}
+							return ret;
+						}
+					}
 				}
 			}
 		}
 	}
-	return str.substr(str.size()); // BUG(LV): wrong offset as above
-#if 0
-	int x = 0;
-	while (!str.empty() && str[0] != U'\n') {
-		int escLen = IsColorEscape(str);
-		if (escLen) {
-			str = str.substr(escLen);
-		}
-		else if (str[0] == U'\t') {
-			int spWidth = (int)stack->MetricsForChar(U' ').advanceX;
-			x += spWidth * 2;
-			if (curX <= x) {
-				break;
-			}
-			x += spWidth * 2;
-			str = str.substr(1);
-		}
-		else {
-			x += (int)stack->MetricsForChar(str[0]).advanceX;
-			if (curX <= x) {
-				break;
-			}
-			str = str.substr(1);
-		}
-	}
-	return str;
-#endif
+	return str.substr(str.size());
 }
 
 int	r_font_c::StringCursorIndex(int height, std::u32string_view str, int curX, int curY)
@@ -707,16 +699,24 @@ int	r_font_c::StringCursorIndex(int height, std::u32string_view str, int curX, i
 	auto codepoints = str;
 	std::u32string_view tail(codepoints);
 	while (1) {
-		lastIndex = (int)(StringCursorInternal(stack, tail, curX).data() - codepoints.data());
-		if (curY <= lineY) {
-			break;
-		}
+		auto line = tail;
 		size_t np = tail.find(L'\n');
 		if (np != tail.npos) {
+			line = tail.substr(0, np);
 			tail = tail.substr(np + 1);
 		}
 		else {
+			line = tail;
+			tail = {};
+		}
+		lastIndex = (int)(StringCursorInternal(stack, line, curX).data() - codepoints.data());
+		if (curY <= lineY) {
 			break;
+		}
+		else {
+			if (tail.empty()) {
+				break;
+			}
 		}
 		lineY += height;
 	}
@@ -778,11 +778,11 @@ f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
 	return SpriteForGlyphMapping(GlyphMappingFromChar(ch));
 };
 
-f_richTextString_c::f_richTextString_c(std::string_view str, col3_t col)
-	: f_richTextString_c(ztd::text::transcode(str, ztd::text::utf8, ztd::text::utf32), col)
+f_richTextString_c::f_richTextString_c(std::string_view str)
+	: f_richTextString_c(ztd::text::transcode(str, ztd::text::utf8, ztd::text::utf32))
 {}
 
-f_richTextString_c::f_richTextString_c(std::u32string_view str, col3_t col)
+f_richTextString_c::f_richTextString_c(std::u32string_view str)
 	: fullText(str)
 {
 	std::u32string_view view(fullText);
@@ -809,13 +809,18 @@ f_richTextString_c::f_richTextString_c(std::u32string_view str, col3_t col)
 void f_richTextString_c::AddSegment(size_t startIdx, size_t endIdx, std::optional<Color> color)
 {
 	size_t outStartIdx = onlyText.size();
-	if (color && (colorChanges.empty() || colorChanges.rbegin()->second != color)) {
-		colorChanges[outStartIdx] = color.value();
-	}
+	size_t outEndIdx = outStartIdx;
 	if (startIdx != endIdx) {
 		onlyText.append(fullText.begin() + startIdx, fullText.begin() + endIdx);
-		size_t outEndIdx = onlyText.size();
-		segments.push_back({ outStartIdx, outEndIdx });
+		outEndIdx = onlyText.size();
+		SegmentExtent ext{};
+		ext.strippedStartIdx = outStartIdx;
+		ext.count = outEndIdx - outStartIdx;
+		ext.fullStartIdx = startIdx;
+		segments.push_back(ext);
+	}
+	if (color && (colorChanges.empty() || colorChanges.rbegin()->second != color)) {
+		colorChanges[outEndIdx] = color.value();
 	}
 }
 
@@ -827,7 +832,7 @@ size_t f_richTextString_c::SegmentCount() const
 std::u32string_view f_richTextString_c::Segment(size_t idx) const
 {
 	auto segment = segments[idx];
-	return std::u32string_view(fullText).substr(segment.first, segment.second - segment.first);
+	return std::u32string_view(onlyText).substr(segment.strippedStartIdx, segment.count);
 }
 
 void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u32string_view codepoints)
@@ -842,7 +847,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		};
 
 	std::u32string_view tail(codepoints);
-	f_richTextString_c richStr(tail, col);
+	f_richTextString_c richStr(tail);
 	// Check if the line is visible
 	if (pos[Y] >= renderer->sys->video->vid.size[1] || pos[Y] <= -height) {
 		// Just apply the final colour code
@@ -890,30 +895,36 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		float baseline = (float)stack->Baseline();
 		y += baseline;
 
+		auto colorI = richStr.colorChanges.begin();
 		for (auto& chunk : layout.chunks) {
 			for (auto& info : chunk) {
-				auto colorI = richStr.colorChanges.lower_bound(info.cluster);
-				if (colorI != richStr.colorChanges.end()) {
+				// Apply an upcoming colour change if it's due.
+				if (colorI != richStr.colorChanges.end() && info.cluster >= colorI->first) {
 					auto change = colorI->second;
 					LatchCurrentColor(change);
+					++colorI;
 				}
-				f_glyphMapping_s gm{ info.fontId, info.glyphId };
+				
+				bool const isTab = chunk.size() == 1 && richStr.onlyText[chunk[0].cluster] == U'\t';
+				if (!isTab) {
+					f_glyphMapping_s gm{ info.fontId, info.glyphId };
 
-				auto sprite = stack->SpriteForGlyphMapping(gm);
-				if (sprite.tex) {
-					auto& extents = sprite.extents;
-					auto vp = renderer->curViewport;
-					float dstX0 = x + info.offX + extents.bitmap_left;
-					float dstX1 = dstX0 + extents.bitmap_width;
-					float dstY0 = y - info.offY - extents.bitmap_top;
-					float dstY1 = dstY0 + extents.bitmap_height;
-					renderer->curLayer->Bind(sprite.tex);
-					renderer->curLayer->Quad(
-						sprite.tcLeft, sprite.tcTop, dstX0, dstY0,
-						sprite.tcRight, sprite.tcTop, dstX1, dstY0,
-						sprite.tcRight, sprite.tcBottom, dstX1, dstY1,
-						sprite.tcLeft, sprite.tcBottom, dstX0, dstY1
-					);
+					auto sprite = stack->SpriteForGlyphMapping(gm);
+					if (sprite.tex) {
+						auto& extents = sprite.extents;
+						auto vp = renderer->curViewport;
+						float dstX0 = x + info.offX + extents.bitmap_left;
+						float dstX1 = dstX0 + extents.bitmap_width;
+						float dstY0 = y - info.offY - extents.bitmap_top;
+						float dstY1 = dstY0 + extents.bitmap_height;
+						renderer->curLayer->Bind(sprite.tex);
+						renderer->curLayer->Quad(
+							sprite.tcLeft, sprite.tcTop, dstX0, dstY0,
+							sprite.tcRight, sprite.tcTop, dstX1, dstY0,
+							sprite.tcRight, sprite.tcBottom, dstX1, dstY1,
+							sprite.tcLeft, sprite.tcBottom, dstX0, dstY1
+						);
+					}
 				}
 
 				x += info.advX;
@@ -999,8 +1010,6 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 	  differently for example (https://harfbuzz.github.io/working-with-harfbuzz-clusters.html)
 	*/
 
-	// TODO(LV): Handle tabs somewhere, either in rich text strings or layout code.
-
 	f_textLayout_s layout{};
 	// Segment and shape text
 	if (!richStr.onlyText.empty()) {
@@ -1073,6 +1082,17 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 					layout.AddChunk(std::move(*deferredChunk));
 				}
 				else if (auto* pSpan = std::get_if<PendingSpan>(&span)) {
+					std::stack<WorkSpan> newWork;
+
+					// If a tab is present, split the span and process only the head. More work is emitted after processing.
+					auto spanView = std::u32string_view((char32_t const*)textPtr + pSpan->clusterBase, pSpan->ClusterCount());
+					std::optional<PendingSpan> tailSpan;
+					if (auto tabOff = spanView.find(U'\t'); tabOff != spanView.npos) {
+						tailSpan = *pSpan;
+						tailSpan->clusterBase += (uint32_t)tabOff + 1;
+						pSpan->clusterEnd = pSpan->clusterBase + (uint32_t)tabOff;
+					}
+
 					hb_buffer_add_utf32(buf.get(), (uint32_t const*)textPtr, textLen, pSpan->clusterBase,
 						pSpan->ClusterCount());
 					hb_buffer_set_cluster_level(buf.get(), HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
@@ -1088,7 +1108,6 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 					auto glyphInfosEnd = glyphInfos + glyphCount;
 					auto glyphPositionsEnd = glyphPositions + glyphCount;
 
-					std::stack<WorkSpan> newWork;
 					bool seekingGood = true;
 					for (size_t glyphIdx = 0; glyphIdx < glyphCount;) {
 						auto giI = glyphInfos + glyphIdx;
@@ -1147,6 +1166,20 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 						}
 					}
 					hb_buffer_reset(buf.get());
+
+					// If a tab was encountered, push work for the tab chunk and the tail.
+					if (tailSpan) {
+						{
+							float tabWidth = stack->Font(0)->height * 1.0f; // arbitrary tab width guess
+							f_glyphLayout_s g{};
+							g.advX = tabWidth;
+							g.cluster = pSpan->clusterEnd;
+							f_textLayout_s::Chunk tabChunk(1, g);
+							newWork.push(std::move(tabChunk));
+						}
+						newWork.push(*tailSpan);
+					}
+
 					while (!newWork.empty()) {
 						spanProcessQueue.push_front(newWork.top());
 						newWork.pop();
@@ -1160,7 +1193,7 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 
 f_textLayout_s f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str)
 {
-	CacheKey key{ stack, str.onlyText };
+	CacheKey key{ stack, str.fullText };
 	auto I = cache.find(key);
 	if (I == cache.end()) {
 		CacheValue value{ LayoutRichTextLine(stack, str) };
