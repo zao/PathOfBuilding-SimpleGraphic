@@ -206,7 +206,6 @@ target_link_libraries(SimpleGraphic
     ${FRIBIDI_LIBRARY}
     glfw
     glm::glm
-    harfbuzz
     harfbuzz::harfbuzz
     imgui
     LuaJIT::LuaJIT
@@ -249,7 +248,6 @@ if (WIN32)
         CONFIGURATIONS Release MinSizeRel RelWithDebInfo
     )
 endif ()
-
 
 # lcurl module
 
