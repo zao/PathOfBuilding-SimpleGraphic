@@ -105,8 +105,10 @@ struct f_glyphLayout_s {
 struct f_textLayout_s {
 	using Chunk = std::vector<f_glyphLayout_s>;
 
-	static f_textLayout_s LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr);
-	static f_textLayout_s LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str);
+	static std::shared_ptr<f_textLayout_s> LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr);
+	static std::shared_ptr<f_textLayout_s> LayoutRichTextLineCached(const f_fontStack_c* stack, std::u32string_view view);
+	static std::shared_ptr<f_textLayout_s> LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str);
+	static void RunStatisticsUI(bool& show);
 	double TotalAdvanceX() const;
 
 	std::deque<Chunk> chunks;
@@ -114,11 +116,12 @@ struct f_textLayout_s {
 
 	struct CacheKey {
 		const f_fontStack_c* stack;
-		std::u32string plainText;
+		std::u32string fullText;
+	};
 
-		bool operator == (const CacheKey& rhs) const {
-			return stack == rhs.stack && plainText == rhs.plainText;
-		}
+	struct CacheKeyProxy {
+		const f_fontStack_c* stack;
+		std::u32string_view fullText;
 	};
 
 	struct CacheValue;
@@ -126,23 +129,44 @@ struct f_textLayout_s {
 private:
 	void AddChunk(Chunk&& chunk);
 
-	static std::unordered_map<CacheKey, CacheValue> cache;
+	// Despite the complexity class, `map` is faster than `unordered_map` here as we don't need to look at the whole string.
+	static std::map<CacheKey, CacheValue, std::less<>> cache;
 };
 
 struct f_textLayout_s::CacheValue
 {
-	f_textLayout_s layout;
+	std::shared_ptr<f_textLayout_s> layout;
 };
 
-namespace std {
-	template <> struct hash<f_textLayout_s::CacheKey> {
-		size_t operator()(const f_textLayout_s::CacheKey& x) const {
-			return hash<const f_fontStack_c*>()(x.stack) ^ hash<u32string>()(x.plainText);
-		}
-	};
+bool operator < (const f_textLayout_s::CacheKey& lhs, const f_textLayout_s::CacheKey& rhs) {
+	if (lhs.stack != rhs.stack) {
+		return std::less<const f_fontStack_c*>()(lhs.stack, rhs.stack);
+	}
+	return lhs.fullText < rhs.fullText;
 }
 
-std::unordered_map<f_textLayout_s::CacheKey, f_textLayout_s::CacheValue> f_textLayout_s::cache;
+bool operator < (const f_textLayout_s::CacheKey& lhs, const f_textLayout_s::CacheKeyProxy& rhs) {
+	if (lhs.stack != rhs.stack) {
+		return std::less<const f_fontStack_c*>()(lhs.stack, rhs.stack);
+	}
+	return lhs.fullText < rhs.fullText;
+}
+
+bool operator < (const f_textLayout_s::CacheKeyProxy& lhs, const f_textLayout_s::CacheKey& rhs) {
+	if (lhs.stack != rhs.stack) {
+		return std::less<const f_fontStack_c*>()(lhs.stack, rhs.stack);
+	}
+	return lhs.fullText < rhs.fullText;
+}
+
+bool operator < (const f_textLayout_s::CacheKeyProxy& lhs, const f_textLayout_s::CacheKeyProxy& rhs) {
+	if (lhs.stack != rhs.stack) {
+		return std::less<const f_fontStack_c*>()(lhs.stack, rhs.stack);
+	}
+	return lhs.fullText < rhs.fullText;
+}
+
+std::map<f_textLayout_s::CacheKey, f_textLayout_s::CacheValue, std::less<>> f_textLayout_s::cache;
 
 f_rectPackState_c::f_rectPackState_c(int textureWidth, int textureHeight)
 	: texWidth(textureWidth), texHeight(textureHeight), nodes(textureWidth) {
@@ -555,6 +579,7 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 		// Parse as new-style JSON
 		nlohmann::json doc = nlohmann::json::parse(tgf);
 
+		// TODO(LV): Add error handling/diagnostics for malformed font stack files.
 		auto docFonts = doc["fonts"];
 		if (docFonts.is_array()) {
 			for (auto docFont : docFonts) {
@@ -629,9 +654,8 @@ static std::string StripColorEscapes(const char* str) {
 int r_font_c::StringWidthInternal(f_fontStack_c* stack, std::u32string_view str)
 {
 	col3_t col{};
-	f_richTextString_c richStr(str);
-	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
-	return (int)std::ceil(layout.TotalAdvanceX());
+	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, str);
+	return (int)std::ceil(layout->TotalAdvanceX());
 }
 
 int r_font_c::StringWidth(int height, std::u32string_view str)
@@ -663,7 +687,7 @@ std::u32string_view r_font_c::StringCursorInternal(f_fontStack_c* stack, std::u3
 	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
 
 	float x{};
-	for (auto& chunk : layout.chunks) {
+	for (auto& chunk : layout->chunks) {
 		for (auto& glyph : chunk) {
 			if (curX >= x) {
 				x += glyph.advX;
@@ -866,7 +890,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	float y = pos[Y];
 	if (align != F_LEFT) {
 		// Calculate the real width of the string
-		float width = (float)layout.TotalAdvanceX();
+		float width = (float)layout->TotalAdvanceX();
 		switch (align) {
 		case F_CENTRE:
 			x = floor((renderer->VirtualScreenWidth() - width) / 2.0f + pos[X]);
@@ -896,7 +920,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		y += baseline;
 
 		auto colorI = richStr.colorChanges.begin();
-		for (auto& chunk : layout.chunks) {
+		for (auto& chunk : layout->chunks) {
 			for (auto& info : chunk) {
 				// Apply an upcoming colour change if it's due.
 				if (colorI != richStr.colorChanges.end() && info.cluster >= colorI->first) {
@@ -990,7 +1014,7 @@ inline f_glyphLayout_s::f_glyphLayout_s(uint32_t fontId, hb_glyph_info_t gi, hb_
 	: fontId(fontId), glyphId(gi.codepoint), advX(gp.x_advance / 64.0f), advY(gp.y_advance / 64.0f),
 	offX(gp.x_offset / 64.0f), offY(gp.y_offset / 64.0f), cluster(gi.cluster) {}
 
-f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr)
+std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr)
 {
 	/* TODO(LV) : For HarfBuzz shaped text, it makes more sense to layout once and interpret those measurements both
 	* for the string width needed for alignment and as the actual layout for drawing.
@@ -1009,8 +1033,9 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 	* respectively. We want cluster level 1 - HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS, allowing us to colour marks
 	  differently for example (https://harfbuzz.github.io/working-with-harfbuzz-clusters.html)
 	*/
-
-	f_textLayout_s layout{};
+	
+	auto ret = std::make_shared<f_textLayout_s>();
+	f_textLayout_s& layout = *ret;
 	// Segment and shape text
 	if (!richStr.onlyText.empty()) {
 		struct Segment {
@@ -1188,18 +1213,38 @@ f_textLayout_s f_textLayout_s::LayoutRichTextLine(const f_fontStack_c* stack, co
 			}
 		}
 	}
-	return layout;
+	return ret;
 }
 
-f_textLayout_s f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str)
+std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, std::u32string_view view)
 {
-	CacheKey key{ stack, str.fullText };
-	auto I = cache.find(key);
+	CacheKeyProxy proxy{ stack, view };
+	auto I = cache.find(proxy);
 	if (I == cache.end()) {
+		f_richTextString_c str(view);
 		CacheValue value{ LayoutRichTextLine(stack, str) };
+		CacheKey key{ stack, str.fullText };
 		I = cache.insert({ key, value }).first;
 	}
 	return I->second.layout;
+}
+
+std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str)
+{
+	CacheKeyProxy proxy{ stack, str.fullText };
+	auto I = cache.find(proxy);
+	if (I == cache.end()) {
+		CacheValue value{ LayoutRichTextLine(stack, str) };
+		CacheKey key{ stack, str.fullText };
+		I = cache.insert({ key, value }).first;
+	}
+	return I->second.layout;
+}
+
+void r_font_c::RunStatisticsUI(bool* show) {
+	if (ImGui::Begin("Font statistics", show)) {
+		ImGui::End();
+	}
 }
 
 double f_textLayout_s::TotalAdvanceX() const

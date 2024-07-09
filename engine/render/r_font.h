@@ -94,6 +94,8 @@ public:
 	void	FDraw(scp_t pos, int align, int height, col4_t col, const char* fmt, ...);
 	void	VDraw(scp_t pos, int align, int height, col4_t col, const char* fmt, va_list va);
 
+	static void RunStatisticsUI(bool* show);
+
 private:
 	friend f_fontStack_c;
 	int		StringWidthInternal(class f_fontStack_c* stack, std::u32string_view codepoints);

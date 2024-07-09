@@ -1244,6 +1244,8 @@ void r_renderer_c::EndFrame()
 	static bool showMetrics = false;
 	static bool showHash = false;
 	static bool showTiming = false;
+	static bool showFontStats = false;
+
 	if (debugImGui) {
 		if (ImGui::Begin("Debug Hub", &debugImGui)) {
 			if (ImGui::Button("ImGui Demo")) {
@@ -1254,6 +1256,9 @@ void r_renderer_c::EndFrame()
 			}
 			if (ImGui::Button("Layers")) {
 				debugLayers = true;
+			}
+			if (ImGui::Button("Font stats")) {
+				showFontStats = true;
 			}
 		}
 		ImGui::End();
@@ -1489,6 +1494,10 @@ void r_renderer_c::EndFrame()
 			stepStatsUi("EndFrame", frameStats.endFrameStepDurations);
 		}
 		ImGui::End();
+	}
+
+	if (showFontStats) {
+		r_font_c::RunStatisticsUI(&showFontStats);
 	}
 
 	ImGui::Render();
