@@ -664,16 +664,19 @@ int r_font_c::StringWidth(int height, std::u32string_view str)
 	std::u32string_view tail = str;
 	int max = 0;
 	while (!tail.empty()) {
-		if (tail[0] != U'\n') {
-			int lw = (int)(StringWidthInternal(stack, tail));
-			if (lw > max) max = lw;
-		}
-		size_t np = tail.find(L'\n');
+		std::u32string_view head;
+		auto np = tail.find(U'\n');
 		if (np != tail.npos) {
+			head = tail.substr(0, np);
 			tail = tail.substr(np + 1);
 		}
 		else {
-			break;
+			head = tail;
+			tail = tail.substr(0, 0);
+		}
+		if (!head.empty()) {
+			int lw = (int)(StringWidthInternal(stack, head));
+			if (lw > max) max = lw;
 		}
 	}
 	return max;
