@@ -14,8 +14,6 @@
     "nlohmann-json",
     "pkgconf",
     "re2",
-    "zlib",
-    "ztd-cuneicode",
-    "ztd-text"
+    "zlib"
   ]
 }

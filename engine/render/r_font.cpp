@@ -19,7 +19,6 @@
 #include <thread>
 #include <unordered_map>
 #include <variant>
-#include <ztd/text.hpp>
 
 #include "stb_image_write.h"
 
@@ -71,7 +70,6 @@ public:
 };
 
 struct f_richTextString_c {
-	f_richTextString_c(std::string_view str);
 	f_richTextString_c(std::u32string_view str);
 
 	size_t SegmentCount() const;
@@ -804,10 +802,6 @@ f_glyphSprite_s f_fontStack_c::SpriteForGlyphMapping(f_glyphMapping_s gm) const 
 f_glyphSprite_s f_fontStack_c::SpriteForChar(char32_t ch) const {
 	return SpriteForGlyphMapping(GlyphMappingFromChar(ch));
 };
-
-f_richTextString_c::f_richTextString_c(std::string_view str)
-	: f_richTextString_c(ztd::text::transcode(str, ztd::text::utf8, ztd::text::utf32))
-{}
 
 f_richTextString_c::f_richTextString_c(std::u32string_view str)
 	: fullText(str)
