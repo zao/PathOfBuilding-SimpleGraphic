@@ -222,19 +222,49 @@ if (WIN32)
     set(DEPS_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 
     if (NOT VCPKG_TARGET_TRIPLET MATCHES "-release")
+        find_file(BROTLICOMMON_DLL_DEBUG NAMES "brotlicommon.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+        find_file(BROTLIDEC_DLL_DEBUG NAMES "brotlidec.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+        find_file(BZIP2_DLL_DEBUG NAMES "bz2d.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+        find_file(FRIBIDI_DLL_DEBUG NAMES "fribidi-0.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+        find_file(HARFBUZZ_DLL_DEBUG NAMES "harfbuzz.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+        find_file(LIBPNG_DLL_DEBUG NAMES "libpng16d.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
         find_file(LuaJIT_DLL_DEBUG NAMES "lua51.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
         find_file(ZLIB_DLL_DEBUG NAMES "zlibd1.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
              
         install(FILES
+            ${BROTLICOMMON_DLL_DEBUG}
+            ${BROTLIDEC_DLL_DEBUG}
+            ${BZIP2_DLL_DEBUG}
+            ${FRIBIDI_DLL_DEBUG}
+            ${LIBPNG_DLL_DEBUG}
             ${LuaJIT_DLL_DEBUG}
+            ${HARFBUZZ_DLL_DEBUG}
             ${ZLIB_DLL_DEBUG}
             DESTINATION "."
             CONFIGURATIONS Debug
         )
     endif ()
 
+    find_file(BROTLICOMMON_DLL_RELEASE NAMES "brotlicommon.dll"
+        PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+    find_file(BROTLIDEC_DLL_RELEASE NAMES "brotlidec.dll"
+        PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+    find_file(BZIP2_DLL_RELEASE NAMES "bz2.dll"
+        PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+    find_file(FRIBIDI_DLL_RELEASE NAMES "fribidi-0.dll"
+        PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+    find_file(HARFBUZZ_DLL_RELEASE NAMES "harfbuzz.dll"
+        PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+    find_file(LIBPNG_DLL_RELEASE NAMES "libpng16.dll"
+        PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
     find_file(LuaJIT_DLL_RELEASE NAMES "lua51.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
     find_file(ZLIB_DLL_RELEASE NAMES "zlib1.dll"
@@ -242,6 +272,12 @@ if (WIN32)
     )
 
     install(FILES
+        ${BROTLICOMMON_DLL_RELEASE}
+        ${BROTLIDEC_DLL_RELEASE}
+        ${BZIP2_DLL_RELEASE}
+        ${FRIBIDI_DLL_RELEASE}
+        ${LIBPNG_DLL_RELEASE}
+        ${HARFBUZZ_DLL_RELEASE}
         ${LuaJIT_DLL_RELEASE}
         ${ZLIB_DLL_RELEASE}
         DESTINATION "."
