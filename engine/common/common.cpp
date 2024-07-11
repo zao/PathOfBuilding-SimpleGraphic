@@ -438,6 +438,7 @@ IndexedUTF32String IndexUTF8ToUTF32(std::string_view input)
 	auto& offsets = ret.sourceCodeUnitOffsets;
 	offsets.reserve(byteCount); // conservative reservation
 	std::vector<char32_t> codepoints;
+	codepoints.reserve(input.size());
 
 	auto bytes = (uint8_t const*)input.data();
 	for (size_t byteIdx = 0; byteIdx < byteCount;) {

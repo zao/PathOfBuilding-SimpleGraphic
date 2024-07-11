@@ -103,15 +103,6 @@ struct f_glyphLayout_s {
 struct f_textLayout_s {
 	using Chunk = std::vector<f_glyphLayout_s>;
 
-	static std::shared_ptr<f_textLayout_s> LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr);
-	static std::shared_ptr<f_textLayout_s> LayoutRichTextLineCached(const f_fontStack_c* stack, std::u32string_view view);
-	static std::shared_ptr<f_textLayout_s> LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str);
-	static void RunStatisticsUI(bool& show);
-	double TotalAdvanceX() const;
-
-	std::deque<Chunk> chunks;
-	double totalAdvanceX{};
-
 	struct CacheKey {
 		const f_fontStack_c* stack;
 		std::u32string fullText;
@@ -124,6 +115,15 @@ struct f_textLayout_s {
 
 	struct CacheValue;
 
+	static std::shared_ptr<f_textLayout_s> LayoutRichTextLine(const f_fontStack_c* stack, const f_richTextString_c& richStr);
+	static const CacheValue* LayoutRichTextLineCached(const f_fontStack_c* stack, std::u32string_view view);
+	static const CacheValue* LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str);
+	static void RunStatisticsUI(bool& show);
+	double TotalAdvanceX() const;
+
+	std::deque<Chunk> chunks;
+	double totalAdvanceX{};
+
 private:
 	void AddChunk(Chunk&& chunk);
 
@@ -133,6 +133,7 @@ private:
 
 struct f_textLayout_s::CacheValue
 {
+	f_richTextString_c text;
 	std::shared_ptr<f_textLayout_s> layout;
 };
 
@@ -652,7 +653,7 @@ static std::string StripColorEscapes(const char* str) {
 int r_font_c::StringWidthInternal(f_fontStack_c* stack, std::u32string_view str)
 {
 	col3_t col{};
-	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, str);
+	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, str)->layout;
 	return (int)std::ceil(layout->TotalAdvanceX());
 }
 
@@ -684,8 +685,7 @@ std::u32string_view r_font_c::StringCursorInternal(f_fontStack_c* stack, std::u3
 {
 	// TODO(LV): Implement this via f_textLayout_s queries for the horizontal section corresponding to the cluster. Also probably group characters as graphemes too.
 	col3_t col{};
-	f_richTextString_c richStr(str);
-	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
+	auto& [richStr, layout] = *f_textLayout_s::LayoutRichTextLineCached(stack, str);
 
 	float x{};
 	for (auto& chunk : layout->chunks) {
@@ -867,8 +867,9 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		renderer->curLayer->Color(col);
 		};
 
-	std::u32string_view tail(codepoints);
-	f_richTextString_c richStr(tail);
+	auto stack = FetchFontStack(height);
+	const auto& [richStr, layout] = *f_textLayout_s::LayoutRichTextLineCached(stack, codepoints);
+
 	// Check if the line is visible
 	if (pos[Y] >= renderer->sys->video->vid.size[1] || pos[Y] <= -height) {
 		// Just apply the final colour code
@@ -878,9 +879,6 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		}
 		return;
 	}
-
-	auto stack = FetchFontStack(height);
-	auto layout = f_textLayout_s::LayoutRichTextLineCached(stack, richStr);
 
 	// Calculate the string position
 	float x = pos[X];
@@ -904,7 +902,6 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 		}
 	}
 
-	std::u32string_view startText = tail;
 	float startX = x;
 	float startY = y;
 
@@ -925,7 +922,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 					LatchCurrentColor(change);
 					++colorI;
 				}
-				
+
 				bool const isTab = chunk.size() == 1 && richStr.onlyText[chunk[0].cluster] == U'\t';
 				if (!isTab) {
 					f_glyphMapping_s gm{ info.fontId, info.glyphId };
@@ -1030,7 +1027,7 @@ std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLine(const f_fontS
 	* respectively. We want cluster level 1 - HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS, allowing us to colour marks
 	  differently for example (https://harfbuzz.github.io/working-with-harfbuzz-clusters.html)
 	*/
-	
+
 	auto ret = std::make_shared<f_textLayout_s>();
 	f_textLayout_s& layout = *ret;
 	// Segment and shape text
@@ -1213,29 +1210,31 @@ std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLine(const f_fontS
 	return ret;
 }
 
-std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, std::u32string_view view)
+const f_textLayout_s::CacheValue* f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, std::u32string_view view)
 {
 	CacheKeyProxy proxy{ stack, view };
 	auto I = cache.find(proxy);
 	if (I == cache.end()) {
 		f_richTextString_c str(view);
-		CacheValue value{ LayoutRichTextLine(stack, str) };
+		auto layout = LayoutRichTextLine(stack, str);
+		CacheValue value{ str, layout };
 		CacheKey key{ stack, str.fullText };
 		I = cache.insert({ key, value }).first;
 	}
-	return I->second.layout;
+	return &I->second;
 }
 
-std::shared_ptr<f_textLayout_s> f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str)
+const f_textLayout_s::CacheValue* f_textLayout_s::LayoutRichTextLineCached(const f_fontStack_c* stack, const f_richTextString_c& str)
 {
 	CacheKeyProxy proxy{ stack, str.fullText };
 	auto I = cache.find(proxy);
 	if (I == cache.end()) {
-		CacheValue value{ LayoutRichTextLine(stack, str) };
+		auto layout = LayoutRichTextLine(stack, str);
+		CacheValue value{ str, layout };
 		CacheKey key{ stack, str.fullText };
 		I = cache.insert({ key, value }).first;
 	}
-	return I->second.layout;
+	return &I->second;
 }
 
 void r_font_c::RunStatisticsUI(bool* show) {
