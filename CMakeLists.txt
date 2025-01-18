@@ -3,6 +3,8 @@ project(SimpleGraphic C CXX)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 
+option(SG_IMGUI_TOOL "Dear ImGui-based introspection" OFF)
+
 if (APPLE)
     enable_language(OBJCXX)
 endif ()
@@ -207,7 +209,6 @@ target_link_libraries(SimpleGraphic
     glfw
     gli
     glm::glm
-    imgui
     LuaJIT::LuaJIT
     Microsoft.GSL::GSL
     re2::re2
@@ -216,6 +217,17 @@ target_link_libraries(SimpleGraphic
     ZLIB::ZLIB
     zstd::libzstd_shared
 )
+
+if (SG_IMGUI_TOOL)
+    target_compile_definitions(SimpleGraphic
+        PRIVATE
+        SG_IMGUI_TOOL=1
+    )
+    target_link_libraries(SimpleGraphic
+        PRIVATE
+        imgui
+    )
+endif ()
 
 install(FILES $<TARGET_RUNTIME_DLLS:SimpleGraphic> DESTINATION ".")
 install(TARGETS SimpleGraphic RUNTIME DESTINATION ".")

@@ -21,9 +21,11 @@
 #include <sstream>
 #include <vector>
 
+#if SG_IMGUI_TOOL
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_stdlib.h>
+#endif
 
 static uint64_t MurmurHash64A(void const* data, int len, uint64_t seed);
 
@@ -568,9 +570,11 @@ struct AdjacentMergeStrategy : RenderStrategy {
 		if (!batch_.batch.vertices.empty()) {
 			Dispatch();
 		}
+#if SG_IMGUI_TOOL
 		if (showStats_) {
 			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex);
 		}
+#endif
 	}
 
 private:
@@ -585,10 +589,12 @@ private:
 		auto& key = batch_.key;
 		auto& lastKey = lastDispatchKey_;
 
+#if SG_IMGUI_TOOL
 		if (showStats_) {
 			ImGui::Text("Batch %d", batchIndex);
 			ImGui::Text("%d verts", batch.vertices.size());
 		}
+#endif
 
 		{
 			auto& vid = renderer_->sys->video->vid;
@@ -601,9 +607,11 @@ private:
 			glUniformMatrix4fv(mvpMatrixLoc_, 1, GL_FALSE, mvpMatrix.data());
 		}
 		if (!lastKey || lastKey->blendMode != key.blendMode) {
+#if SG_IMGUI_TOOL
 			if (showStats_) {
 				ImGui::Text("New blend mode %s", s_blendModeString.at((r_blendMode_e)key.blendMode));
 			}
+#endif
 			switch (key.blendMode) {
 			case RB_ALPHA:
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -623,9 +631,11 @@ private:
 				if (i < textures.size()) {
 					auto tex = textures[i];
 					tex->Bind();
+#if SG_IMGUI_TOOL
 					if (showStats_) {
 						ImGui::Text("New tex %d (%s)", tex->texId, tex->fileName.c_str());
 					}
+#endif
 				}
 				else {
 					glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
@@ -691,6 +701,7 @@ void r_layer_c::Render()
 	}
 
 	if (strat) {
+#if SG_IMGUI_TOOL
 		bool showStats{};
 		if (renderer->debugLayers) {
 			if (ImGui::Begin("Layers", &renderer->debugLayers)) {
@@ -699,6 +710,7 @@ void r_layer_c::Render()
 			}
 		}
 		strat->SetShowStats(showStats);
+#endif
 
 		for (CmdHandle cmdH = GetFirstCommand(); cmdH.cmd != nullptr; GetNextCommand(cmdH)) {
 			strat->ProcessCommand(cmdH.cmd);
@@ -706,9 +718,11 @@ void r_layer_c::Render()
 
 		strat->Flush();
 
+#if SG_IMGUI_TOOL
 		if (renderer->debugLayers) {
 			ImGui::End();
 		}
+#endif
 	}
 
 	if (renderer->glPopGroupMarkerEXT) {
@@ -1072,11 +1086,13 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	whiteImage = RegisterShader("@white", 0);
 	blackImage = RegisterShader("@black", 0);
 
+#if SG_IMGUI_TOOL
 	imguiCtx = ImGui::CreateContext();
 	ImGui::SetCurrentContext(imguiCtx);
 
 	ImGui_ImplGlfw_InitForOpenGL((GLFWwindow*)sys->video->GetWindowHandle(), true);
 	ImGui_ImplOpenGL3_Init("#version 100");
+#endif
 
 	fonts[F_FIXED] = new r_font_c(this, "Bitstream Vera Sans Mono");
 	fonts[F_VAR] = new r_font_c(this, "Liberation Sans");
@@ -1091,9 +1107,11 @@ void r_renderer_c::Shutdown()
 
 	sys->con->Printf("Unloading resources...\n");
 
+#if SG_IMGUI_TOOL
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext(imguiCtx);
+#endif
 
 	delete whiteImage;
 
@@ -1148,9 +1166,11 @@ void r_renderer_c::PumpShaders()
 
 void r_renderer_c::BeginFrame()
 {
+#if SG_IMGUI_TOOL
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui_ImplGlfw_NewFrame();
 	ImGui::NewFrame();
+#endif
 	{
 		auto& vid = sys->video->vid;
 		int wNew = VirtualScreenWidth();
@@ -1211,6 +1231,7 @@ static int layerCompFunc(const void* va, const void* vb)
 	}
 }
 
+#if SG_IMGUI_TOOL
 void CVarSliderInt(char const* label, conVar_c* cvar) {
 	int curOpt = cvar->intVal;
 	if (ImGui::SliderInt(label, &curOpt, cvar->min, cvar->max, "%d", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput)) {
@@ -1248,6 +1269,7 @@ static std::string BinaryUnitPrefix(uint64_t quantity) {
 	}
 	return fmt::format("{:0.2f} Pi", quantity / 1024.0 / 1024.0 / 1024.0 / 1024.0 / 1024.0);
 }
+#endif
 
 void r_renderer_c::EndFrame()
 {
@@ -1257,6 +1279,7 @@ void r_renderer_c::EndFrame()
 	std::chrono::time_point endFrameTic = std::chrono::steady_clock::now();
 	frameStats.AppendDuration(&FrameStats::midFrameStepDurations, endFrameTic - beginFrameToc);
 
+#if SG_IMGUI_TOOL
 	static bool showDemo = false;
 	static bool showMetrics = false;
 	static bool showHash = false;
@@ -1282,6 +1305,7 @@ void r_renderer_c::EndFrame()
 	if (showMetrics) {
 		ImGui::ShowMetricsWindow(&showMetrics);
 	}
+#endif
 
 	r_layer_c** layerSort = new r_layer_c * [numLayer];
 	for (int l = 0; l < numLayer; l++) {
@@ -1308,6 +1332,7 @@ void r_renderer_c::EndFrame()
 	}
 
 	std::optional<std::pair<int, int>> layerBreak;
+#if SG_IMGUI_TOOL
 	if (debugLayers) {
 		if (ImGui::Begin("Layers", &debugLayers)) {
 			ImGui::Text("Layers: %d", numLayer);
@@ -1368,6 +1393,7 @@ void r_renderer_c::EndFrame()
 		}
 		ImGui::End();
 	}
+#endif
 
 	if (inhibitElision || elideFrames != !!r_elideFrames->intVal) {
 		elideFrames = !!r_elideFrames->intVal;
@@ -1484,6 +1510,7 @@ void r_renderer_c::EndFrame()
 		glUseProgram(0);
 	}
 
+#if SG_IMGUI_TOOL
 	if (showHash) {
 		if (ImGui::Begin("Hash")) {
 			char* b64{};
@@ -1494,10 +1521,12 @@ void r_renderer_c::EndFrame()
 		}
 		ImGui::End();
 	}
+#endif
 
 	std::chrono::time_point endFrameToc = std::chrono::steady_clock::now();
 	frameStats.AppendDuration(&FrameStats::endFrameStepDurations, endFrameToc - endFrameTic);
-	
+
+#if SG_IMGUI_TOOL
 	if (showTiming) {
 		if (ImGui::Begin("Timing")) {
 			auto stepStatsUi = [&](std::string label, auto& seq) {
@@ -1518,6 +1547,7 @@ void r_renderer_c::EndFrame()
 
 	ImGui::Render();
 	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#endif
 
 	// Swap output buffers
 	openGL->Swap();

@@ -13,7 +13,9 @@
 #include <array>
 #include <chrono>
 #include <deque>
+#if SG_IMGUI_TOOL
 #include <imgui.h>
+#endif
 #include <vector>
 
 // =======
@@ -137,7 +139,9 @@ public:
 	r_shaderHnd_c* whiteImage = nullptr;	// White image
 	r_shaderHnd_c* blackImage = nullptr;	// Black image
 
+#if SG_IMGUI_TOOL
 	ImGuiContext* imguiCtx = nullptr;
+#endif
 
 	r_font_c* fonts[F_NUMFONTS] = {}; // Font objects
 

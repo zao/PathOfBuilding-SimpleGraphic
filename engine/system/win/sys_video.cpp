@@ -17,7 +17,9 @@
 #include <optional>
 #include <utility>
 
+#if SG_IMGUI_TOOL
 #include <imgui.h>
+#endif
 #include <stb_image_resize.h>
 
 // ====================
@@ -507,9 +509,11 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			});
 		glfwSetCursorPosCallback(wnd, [](GLFWwindow* wnd, double x, double y) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
+#if SG_IMGUI_TOOL
 			if (ImGui::GetIO().WantCaptureMouse) {
 				return;
 			}
+#endif
 			auto video = (sys_video_c*)sys->video;
 			video->lastCursorPos = CursorPos{ (int)x, (int)y };
 			});
@@ -542,16 +546,20 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			});
 		glfwSetCharCallback(wnd, [](GLFWwindow* wnd, uint32_t codepoint) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
+#if SG_IMGUI_TOOL
 			if (ImGui::GetIO().WantCaptureKeyboard) {
 				return;
 			}
+#endif
 			sys->core->KeyEvent(codepoint, KE_CHAR);
 			});
 		glfwSetKeyCallback(wnd, [](GLFWwindow* wnd, int key, int scancode, int action, int mods) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
+#if SG_IMGUI_TOOL
 			if (ImGui::GetIO().WantCaptureKeyboard) {
 				return;
 			}
+#endif
 			if (byte k = sys->GlfwKeyToKey(key, scancode)) {
 				bool is_down = action == GLFW_PRESS || action == GLFW_REPEAT;
 				sys->heldKeyState[k] = is_down;
@@ -564,9 +572,11 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			});
 		glfwSetMouseButtonCallback(wnd, [](GLFWwindow* wnd, int button, int action, int mods) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
+#if SG_IMGUI_TOOL
 			if (ImGui::GetIO().WantCaptureMouse) {
 				return;
 			}
+#endif
 			auto video = (sys_video_c*)sys->video;
 			int sg_key;
 			switch (button) {
@@ -628,9 +638,11 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			});
 		glfwSetScrollCallback(wnd, [](GLFWwindow* wnd, double xoffset, double yoffset) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
+#if SG_IMGUI_TOOL
 			if (ImGui::GetIO().WantCaptureMouse) {
 				return;
 			}
+#endif
 			if (yoffset > 0) {
 				sys->core->KeyEvent(KEY_MWHEELUP, KE_KEYDOWN);
 				sys->core->KeyEvent(KEY_MWHEELUP, KE_KEYUP);
