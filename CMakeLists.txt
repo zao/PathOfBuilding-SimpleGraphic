@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 4.0)
 project(SimpleGraphic C CXX)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -237,7 +237,7 @@ target_link_libraries(SimpleGraphic
     LuaJIT::LuaJIT
     Microsoft.GSL::GSL
     re2::re2
-    sol2
+    sol2::sol2
     Threads::Threads
     WebP::webpdecoder
     ZLIB::ZLIB

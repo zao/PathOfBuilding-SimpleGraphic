@@ -1984,7 +1984,7 @@ void r_renderer_c::DoScreenshot(image_c* i, int type, const char* ext)
 	time_t curTime;
 	time(&curTime);
 	auto ssPath = std::filesystem::u8path(fmt::format(CFG_DATAPATH "Screenshots/{:%m%d%y_%H%M%S}.{}",
-		fmt::localtime(curTime), ext));
+		*std::localtime(&curTime), ext));
 
 	// Make folder if it doesn't exist
 	std::error_code ec;

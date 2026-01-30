@@ -319,6 +319,7 @@ bool ShouldIgnoreDpiScale() {
 		HKEY key{};
 
 		ScopedRegKey& operator = (ScopedRegKey const&) = delete;
+		ScopedRegKey() = default;
 		ScopedRegKey(ScopedRegKey const&) = delete;
 		~ScopedRegKey() {
 			if (key) { RegCloseKey(key); }

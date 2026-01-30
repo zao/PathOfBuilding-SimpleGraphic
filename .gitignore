@@ -1,3 +1,5 @@
 /build/
 /build-SimpleGraphic
 /.idea
+.vs
+out
