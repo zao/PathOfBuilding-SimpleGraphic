@@ -26,9 +26,13 @@
 #include "common/memtrak3.h"
 #endif
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+using namespace std::string_literals;
+using namespace std::string_view_literals;
 
 // =======
 // Classes
@@ -497,6 +501,7 @@ struct IndexedUTF32String {
 	std::vector<size_t> sourceCodeUnitOffsets;
 };
 
+IndexedUTF32String IndexUTF8ToUTF32(std::u8string_view str);
 IndexedUTF32String IndexUTF8ToUTF32(std::string_view str);
 
 #ifdef _WIN32
@@ -515,6 +520,9 @@ char* NarrowUTF8String(const wchar_t* str);
 #define _strnicmp strncasecmp
 #define _chdir chdir
 #endif
+
+const char* LegacyU8StringPointer(const std::u8string& str);
+std::string_view LegacyU8StringView(std::u8string_view usv);
 
 // =======
 // Headers

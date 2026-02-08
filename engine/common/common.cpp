@@ -430,6 +430,21 @@ char* NarrowUTF8String(const wchar_t* str)
 	return NarrowCodepageString(str, CP_UTF8);
 }
 
+const char* LegacyU8StringPointer(const std::u8string& str)
+{
+	return reinterpret_cast<const char*>(str.data());
+}
+
+std::string_view LegacyU8StringView(std::u8string_view usv)
+{
+	return std::string_view(reinterpret_cast<const char*>(usv.data()), usv.size());
+}
+
+IndexedUTF32String IndexUTF8ToUTF32(std::u8string_view input)
+{
+	return IndexUTF8ToUTF32(LegacyU8StringView(input));
+}
+
 IndexedUTF32String IndexUTF8ToUTF32(std::string_view input)
 {
 	IndexedUTF32String ret{};

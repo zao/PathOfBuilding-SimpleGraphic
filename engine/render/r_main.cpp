@@ -781,7 +781,7 @@ static std::string GetProgramInfoLog(GLuint id)
 	return std::string(msg.data(), msg.data() + len);
 }
 
-static char const* s_tintedTextureVertexSource = R"(#version 300 es
+static constexpr const auto s_tintedTextureVertexSource = R"(#version 300 es
 
 uniform mat4 mvp_matrix;
 
@@ -811,9 +811,9 @@ void main(void)
 	v_screenPos = pos.xy;
 	gl_Position = pos;
 }
-)";
+)"sv;
 
-static char const* s_tintedTextureFragmentTemplate = R"(#version 300 es
+static constexpr const auto s_tintedTextureFragmentTemplate = R"(#version 300 es
 precision mediump float;
 
 uniform highp sampler2DArray s_tex[{SG_TEXTURE_COUNT}];
@@ -840,9 +840,9 @@ void main(void)
 	{SG_TEXTURE_SWITCH}
 	f_fragColor = color * v_tint;
 }}
-)";
+)"sv;
 
-std::string const s_scaleVsSource = R"(#version 300 es
+static constexpr const auto s_scaleVsSource = R"(#version 300 es
 in vec4 a_position;
 in vec2 a_texcoord;
 
@@ -852,9 +852,9 @@ void main(void) {
 	gl_Position = a_position;
 	v_texcoord = a_texcoord;
 }
-)";
+)"sv;
 
-std::string const s_scaleFsSource = R"(#version 300 es
+static constexpr const auto s_scaleFsSource = R"(#version 300 es
 precision mediump float;
 
 uniform highp sampler2D s_tex;
@@ -867,7 +867,7 @@ void main(void) {
 	vec3 color = texture(s_tex, v_texcoord).rgb;
 	f_fragColor = vec4(color, 1.0);
 }
-)";
+)"sv;
 
 // =============
 // Init/Shutdown
@@ -959,7 +959,8 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		GLint success = GL_FALSE;
 		GLuint prog = glCreateProgram();
 		GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vs, 1, &s_tintedTextureVertexSource, nullptr);
+		const auto* vertSourcePtr = s_tintedTextureFragmentTemplate.data();
+		glShaderSource(vs, 1, &vertSourcePtr, nullptr);
 		glCompileShader(vs);
 		if (!GetShaderCompileSuccess(vs)) {
 			std::string log = GetShaderInfoLog(vs);
@@ -1998,7 +1999,7 @@ void r_renderer_c::DoScreenshot(image_c* i, int type, const char* ext)
 		sys->con->Print("Couldn't write screenshot!\n");
 		return;
 	}
-	sys->con->Print(fmt::format("Wrote screenshot to {}\n", ssPath.generic_u8string()).c_str());
+	sys->con->Print(fmt::format("Wrote screenshot to {}\n", LegacyU8StringView(ssPath.generic_u8string())).c_str());
 }
 
 r_renderer_c::RenderTarget& r_renderer_c::GetDrawRenderTarget()

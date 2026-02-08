@@ -140,7 +140,7 @@ std::optional<std::string> BuildGlobPattern(std::filesystem::path const& glob)
 {
 	using namespace std::literals::string_view_literals;
 	auto globStr = glob.generic_u8string();
-	auto globView = std::string_view(globStr);
+	auto globView = LegacyU8StringView(globStr);
 
 	// Deal with traditional "everything" wildcards.
 	if (globView == "*" || globView == "*.*") {
@@ -201,7 +201,7 @@ bool GlobMatch(std::optional<std::string> const& globPattern, std::filesystem::p
 	RE2 reGlob{globPattern.value(), reOpts};
 
 	auto fileStr = file.generic_u8string();
-	return RE2::FullMatch(fileStr, reGlob);
+	return RE2::FullMatch(LegacyU8StringView(fileStr), reGlob);
 }
 
 bool find_c::FindFirst(std::filesystem::path const&& fileSpec)
