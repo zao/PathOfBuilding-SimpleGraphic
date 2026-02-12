@@ -167,7 +167,7 @@ void ui_console_c::Render()
 	int memTotal = lua_gc(ui->L, LUA_GCCOUNT, 0);
 	for (dword i = 0; i < ui->subScriptSize; i++) {
 		if (ui->subScriptList[i]) {
-			memTotal+= ui->subScriptList[i]->GetScriptMemory();
+			memTotal+= static_cast<int>(ui->subScriptList[i]->GetScriptMemory());
 		}
 	}
 	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%dkB used by Lua", memTotal);

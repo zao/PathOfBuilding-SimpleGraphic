@@ -301,7 +301,7 @@ SG_LUA_CPP_FUN_BEGIN(NewArtHandle)
 
 	int n = lua_gettop(L);
 	ui->LExpect(L, n >= 1, "Usage: NewArtHandle(fileName)");
-	std::filesystem::path filePath = std::filesystem::u8path(reader.ArgToString(1));
+	std::filesystem::path filePath = std::filesystem::path(AsU8StringView(reader.ArgToString(1)));
 	if (filePath.is_relative())
 		filePath = ui->scriptWorkDir / filePath;
 	std::unique_ptr<image_c> img(image_c::LoaderForFile(ui->sys->con, filePath));
@@ -399,7 +399,7 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoad)
 	int n = lua_gettop(L);
 	ui->LExpect(L, n >= 1, "Usage: imgHandle:Load(fileName[, flag1[, flag2...]])");
 	ui->LExpect(L, lua_isstring(L, 1), "imgHandle:Load() argument 1: expected string, got %s", luaL_typename(L, 1));
-	auto fileName = std::filesystem::u8path(lua_tostring(L, 1));
+	auto fileName = std::filesystem::path(AsU8StringView(lua_tostring(L, 1)));
 	if (!fileName.is_absolute() && !ui->scriptWorkDir.empty()) {
 		fileName = ui->scriptWorkDir / fileName;
 	}
@@ -1092,8 +1092,8 @@ static int l_DrawString(lua_State* L)
 	static const char* alignMap[6] = { "LEFT", "CENTER", "RIGHT", "CENTER_X", "RIGHT_X", NULL };
 	static const char* fontMap[8] = { "FIXED", "VAR", "VAR BOLD", "FONTIN SC", "FONTIN SC ITALIC", "FONTIN", "FONTIN ITALIC", NULL };
 	const float dpiScale = ui->renderer->VirtualScreenScaleFactor();
-	const float left = lua_tonumber(L, 1) * dpiScale;
-	const float top = lua_tonumber(L, 2) * dpiScale;
+	const float left = static_cast<float>(lua_tonumber(L, 1)) * dpiScale;
+	const float top = static_cast<float>(lua_tonumber(L, 2)) * dpiScale;
 	const lua_Number logicalHeight = lua_tonumber(L, 4);
 	int scaledHeight = (int)std::lround(logicalHeight * dpiScale);
 	if (scaledHeight <= 1) {
@@ -1292,7 +1292,7 @@ SG_LUA_CPP_FUN_BEGIN(NewFileSearch)
 	ui->LExpect(L, n >= 1, "Usage: NewFileSearch(spec[, findDirectories])");
 	ui->LExpect(L, lua_isstring(L, 1), "NewFileSearch() argument 1: expected string, got %s", luaL_typename(L, 1));
 	find_c* find = new find_c();
-	auto path = std::filesystem::u8path(lua_tostring(L, 1));
+	auto path = std::filesystem::path(AsU8StringView(lua_tostring(L, 1)));
 	if (!find->FindFirst(std::move(path))) {
 		delete find;
 		return 0;
@@ -1451,7 +1451,7 @@ static int l_GetCloudProvider(lua_State* L) {
 	ui->LAssert(L, n >= 1, "Usage: GetCloudProvider(path)");
 	ui->LAssert(L, lua_isstring(L, 1), "GetCloudProvider() argument 1: expected string, got %s", luaL_typename(L, 1));
 
-	auto path = std::filesystem::u8path(lua_tostring(L, 1));
+	auto path = std::filesystem::path(AsU8StringView(lua_tostring(L, 1)));
 	auto info = GetCloudProviderInfo(path);
 	if (info) {
 		lua_pushstring(L, info->name.c_str());
@@ -1718,8 +1718,8 @@ static int l_MakeDir(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: MakeDir(path)");
 	ui->LAssert(L, lua_isstring(L, 1), "MakeDir() argument 1: expected string, got %s", luaL_typename(L, 1));
-	char const* givenPath = lua_tostring(L, 1);
-	auto path = std::filesystem::u8path(givenPath);
+	const auto givenPath = AsU8StringView(lua_tostring(L, 1));
+	auto path = std::filesystem::path(givenPath);
 	std::error_code ec;
 	if (!create_directory(path, ec)) {
 		lua_pushnil(L);
@@ -1738,8 +1738,8 @@ static int l_RemoveDir(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: l_RemoveDir(path, recurse)");
 	ui->LAssert(L, lua_isstring(L, 1), "l_RemoveDir() argument 1: expected string, got %s", luaL_typename(L, 1));
-	char const* givenPath = lua_tostring(L, 1);
-	auto path = std::filesystem::u8path(givenPath);
+	const auto givenPath = AsU8StringView(lua_tostring(L, 1));
+	auto path = std::filesystem::path(givenPath);
 	bool recursive = false;
 	if (n > 1) {
 		ui->LAssert(L, lua_isboolean(L, 2), "l_RemoveDir() argument 2: expected boolean, got %s", luaL_typename(L, 2));
@@ -1766,7 +1766,7 @@ SG_LUA_CPP_FUN_BEGIN(SetWorkDir)
 	int n = lua_gettop(L);
 	ui->LExpect(L, n >= 1, "Usage: SetWorkDir(path)");
 	ui->LExpect(L, lua_isstring(L, 1), "SetWorkDir() argument 1: expected string, got %s", luaL_typename(L, 1));
-	auto newWorkDir = std::filesystem::u8path(lua_tostring(L, 1));
+	auto newWorkDir = std::filesystem::path(AsU8StringView(lua_tostring(L, 1)));
 
 	if (!ui->sys->SetWorkDir(newWorkDir)) {
 		ui->scriptWorkDir = newWorkDir;
@@ -1851,8 +1851,8 @@ SG_LUA_CPP_FUN_BEGIN(LoadModule)
 	int n = lua_gettop(L);
 	ui->LExpect(L, n >= 1, "Usage: LoadModule(name[, ...])");
 	ui->LExpect(L, lua_isstring(L, 1), "LoadModule() argument 1: expected string, got %s", luaL_typename(L, 1));
-	const char* modName = lua_tostring(L, 1);
-	auto fileName = std::filesystem::u8path(modName);
+	const auto modName = AsU8StringView(lua_tostring(L, 1));
+	auto fileName = std::filesystem::path(modName);
 	if (!fileName.has_extension()) {
 		fileName.replace_extension(".lua");
 	}
@@ -1874,8 +1874,8 @@ SG_LUA_CPP_FUN_BEGIN(PLoadModule)
 	int n = lua_gettop(L);
 	ui->LExpect(L, n >= 1, "Usage: PLoadModule(name[, ...])");
 	ui->LExpect(L, lua_isstring(L, 1), "PLoadModule() argument 1: expected string, got %s", luaL_typename(L, 1));
-	const char* modName = lua_tostring(L, 1);
-	auto fileName = std::filesystem::u8path(modName);
+	const auto modName = AsU8StringView(lua_tostring(L, 1));
+	auto fileName = std::filesystem::path(modName);
 	if (!fileName.has_extension()) {
 		fileName.replace_extension(".lua");
 	}
@@ -2042,7 +2042,7 @@ static int l_SpawnProcess(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: SpawnProcess(cmdName[, args])");
 	ui->LAssert(L, lua_isstring(L, 1), "SpawnProcess() argument 1: expected string, got %s", luaL_typename(L, 1));
-	auto cmdPath = std::filesystem::u8path(lua_tostring(L, 1));
+	auto cmdPath = std::filesystem::path(AsU8StringView(lua_tostring(L, 1)));
 	auto args = lua_tostring(L, 2);
 	ui->sys->SpawnProcess(cmdPath, args);
 	return 0;

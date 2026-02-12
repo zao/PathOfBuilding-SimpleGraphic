@@ -348,7 +348,7 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	float y = std::floor(pos[Y]);
 	if (align != F_LEFT) {
 		// Calculate the real width of the string
-		float width = StringWidthInternal(fh, str, height, scale);
+		float width = static_cast<float>(StringWidthInternal(fh, str, height, scale));
 		switch (align) {
 		case F_CENTRE:
 			x = floor((renderer->VirtualScreenWidth() - width) / 2.0f + pos[X]);

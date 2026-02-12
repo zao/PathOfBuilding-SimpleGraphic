@@ -157,8 +157,8 @@ std::optional<std::string> BuildGlobPattern(std::filesystem::path const& glob)
 	// We use a regex rather than string comparisons to make it case-insensitive.
 	if (u32Str.text.find_first_of(U"?*") == std::u32string::npos) {
 		for (size_t offIdx = 0; offIdx < offsets.size(); ++offIdx) {
-			int byteOffset = offsets[offIdx];
-			int nextOffset = (offIdx + 1 < offsets.size()) ? offsets[offIdx + 1] : globStr.size();
+			const auto byteOffset = offsets[offIdx];
+			const auto nextOffset = (offIdx + 1 < offsets.size()) ? offsets[offIdx + 1] : globStr.size();
 			fmt::format_to(fmt::appender(buf), "[{}]", globView.substr(byteOffset, nextOffset - byteOffset));
 		}
 	}
@@ -560,7 +560,7 @@ std::filesystem::path FindBasePath()
 	std::filesystem::path progPath;
 #ifdef _WIN32
 	std::vector<wchar_t> basePath(1u << 16);
-	GetModuleFileNameW(NULL, basePath.data(), basePath.size());
+	GetModuleFileNameW(NULL, basePath.data(), static_cast<DWORD>(basePath.size()));
 	progPath = basePath.data();
 #elif __linux__
 	char basePath[PATH_MAX];

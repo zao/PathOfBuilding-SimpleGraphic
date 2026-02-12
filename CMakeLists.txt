@@ -8,7 +8,7 @@ if (APPLE)
 endif ()
 
 if (MSVC)
-    add_compile_options("/Zi")
+    add_compile_options("/Zi" "/permissive-")
     add_link_options("/DEBUG:FULL")
 endif ()
 
@@ -98,6 +98,11 @@ add_library(SimpleGraphic SHARED
     ${SIMPLEGRAPHIC_SOURCES}
     ${SIMPLEGRAPHIC_PLATFORM_SOURCES}
 )
+
+if (MSVC)
+    target_compile_options(SimpleGraphic PRIVATE /W3)
+endif()
+
 target_compile_definitions(SimpleGraphic
     PRIVATE
     "UNICODE"
@@ -196,7 +201,7 @@ if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     )
 endif ()
 
-if (WIN32)
+if (MSVC)
     target_compile_options(SimpleGraphic
         PRIVATE
         "/EHa"
@@ -284,6 +289,10 @@ set(LCURL_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs/Lua-cURLv3)
 file(GLOB LCURL_SOURCES ${LCURL_SOURCE_DIR}/src/**.c)
 add_library(lcurl SHARED ${LCURL_SOURCES})
 
+if (MSVC)
+    target_compile_options(lcurl PRIVATE /wd4716)
+endif()
+
 target_include_directories(lcurl
     PRIVATE
     ${LCURL_SOURCE_DIR}/src
@@ -301,6 +310,10 @@ install(FILES $<TARGET_RUNTIME_DLLS:lcurl> DESTINATION ".")
 # luautf8 module
 
 add_library(lua-utf8 SHARED libs/luautf8/lutf8lib.c)
+
+if (MSVC)
+    target_compile_options(lua-utf8 PRIVATE /wd4319)
+endif()
 
 target_compile_definitions(lua-utf8
     PRIVATE

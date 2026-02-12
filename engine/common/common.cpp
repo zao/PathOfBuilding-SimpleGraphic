@@ -440,6 +440,16 @@ std::string_view LegacyU8StringView(std::u8string_view usv)
 	return std::string_view(reinterpret_cast<const char*>(usv.data()), usv.size());
 }
 
+const char8_t* AsU8StringPointer(const char* lstr)
+{
+	return reinterpret_cast<const char8_t*>(lstr);
+}
+
+std::u8string_view AsU8StringView(std::string_view lsv)
+{
+	return std::u8string_view(reinterpret_cast<const char8_t*>(lsv.data()), lsv.size());
+}
+
 IndexedUTF32String IndexUTF8ToUTF32(std::u8string_view input)
 {
 	return IndexUTF8ToUTF32(LegacyU8StringView(input));

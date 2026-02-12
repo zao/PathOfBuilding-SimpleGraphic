@@ -53,7 +53,7 @@ bool Texture_c::Allocate(std::string_view format, int width, int height, int lay
 
 bool Texture_c::Load(const char* fileName)
 {
-	auto path = std::filesystem::u8path(fileName);
+	auto path = std::filesystem::path(AsU8StringView(fileName));
 	std::vector<char> fileData;
 	{
 		std::ifstream is(path, std::ios::binary);
@@ -82,7 +82,7 @@ bool Texture_c::Save(const char* fileName)
 
 	bool wantDds = false;
 	bool wantZstd = false;
-	auto path = std::filesystem::u8path(fileName);
+	auto path = std::filesystem::path(AsU8StringView(fileName));
 	auto subPath = path;
 	if (subPath.extension() == ".zst") {
 		wantZstd = true;

@@ -231,7 +231,7 @@ void core_config_c::ConPrintHook(const char* text)
 {
 	if (con_log->intVal) {
 		if (logOpen == false) {
-			logFile.FileOpen(std::filesystem::u8path(CFG_LOGFILE), false);
+			logFile.FileOpen(std::filesystem::path(u8"" CFG_LOGFILE), false);
 			logOpen = true;
 			logFile.FilePrintf("Log opened.\n");
 		}

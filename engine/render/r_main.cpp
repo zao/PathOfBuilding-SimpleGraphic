@@ -14,6 +14,7 @@
 #include <array>
 #include <filesystem>
 #include <fmt/chrono.h>
+#include <fmt/xchar.h>
 #include <future>
 #include <map>
 #include <numeric>
@@ -1984,8 +1985,8 @@ void r_renderer_c::DoScreenshot(image_c* i, int type, const char* ext)
 
 	time_t curTime;
 	time(&curTime);
-	auto ssPath = std::filesystem::u8path(fmt::format(CFG_DATAPATH "Screenshots/{:%m%d%y_%H%M%S}.{}",
-		*std::localtime(&curTime), ext));
+	auto ssPath = std::filesystem::path(fmt::format(u8"" CFG_DATAPATH "Screenshots/{:%m%d%y_%H%M%S}.{}",
+		*std::localtime(&curTime), AsU8StringView(ext)));
 
 	// Make folder if it doesn't exist
 	std::error_code ec;

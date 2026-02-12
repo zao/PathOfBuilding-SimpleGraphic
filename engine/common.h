@@ -523,6 +523,8 @@ char* NarrowUTF8String(const wchar_t* str);
 
 const char* LegacyU8StringPointer(const std::u8string& str);
 std::string_view LegacyU8StringView(std::u8string_view usv);
+const char8_t* AsU8StringPointer(const char* lstr);
+std::u8string_view AsU8StringView(std::string_view lsv);
 
 // =======
 // Headers

@@ -295,13 +295,13 @@ bool ShouldIgnoreDpiScale() {
 	std::wstring const subKey = LR"(Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers)";
 
 	std::vector<wchar_t> progStr(1 << 16);
-	GetModuleFileNameW(NULL, progStr.data(), progStr.size());
+	GetModuleFileNameW(NULL, progStr.data(), static_cast<DWORD>(progStr.size()));
 	std::filesystem::path progPath(progStr.data());
 	progPath = std::filesystem::canonical(progPath);
 
 	auto considerKey = [&](HKEY rootKey) -> std::optional<bool> {
 		std::vector<wchar_t> valData(1 << 16);
-		DWORD valType{}, valSize = valData.size() / 2;
+		DWORD valType{}, valSize = static_cast<DWORD>(valData.size() / 2);
 		LRESULT res = RegGetValueW(rootKey, subKey.c_str(), progPath.wstring().c_str(), RRF_RT_REG_SZ, &valType, valData.data(), &valSize);
 		if (res == ERROR_SUCCESS) {
 			std::wstring val = valData.data();

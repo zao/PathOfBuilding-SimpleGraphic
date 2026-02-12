@@ -570,7 +570,7 @@ void r_tex_c::LoadFile()
 	}
 
 	// Try to load image file using appropriate loader
-	auto path = std::filesystem::u8path(fileName);
+	auto path = std::filesystem::path(AsU8StringView(fileName));
 	img = std::unique_ptr<image_c>(image_c::LoaderForFile(renderer->sys->con, path));
 	if (img) {
 		auto sizeCallback = [this](int width, int height) {

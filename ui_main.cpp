@@ -221,7 +221,7 @@ static int l_panicFunc(lua_State* L)
 void ui_main_c::Init(int argc, char** argv)
 {
 	// Find paths
-	scriptName = std::filesystem::u8path(argv[0]);
+	scriptName = std::filesystem::path(AsU8StringView(argv[0]));
 	if (scriptName.is_relative()) {
 		scriptName = sys->basePath / scriptName;
 	}
