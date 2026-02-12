@@ -10,7 +10,7 @@ jobs:
       matrix:
         include:
           - platform: x64
-            os: windows-latest
+            os: windows-2025-vs2026
             triplet: x64-windows
     runs-on: ${{ matrix.os }}
     env:
@@ -22,7 +22,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: "recursive"
 
@@ -43,12 +43,13 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Obtain and run CMake
-        uses: threeal/cmake-action@v1.3.0
+        uses: threeal/cmake-action@v2.1.0
         with:
           source-dir: "."
           build-dir: "build"
-          generator: "Visual Studio 17 2022"
-          options: CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake CMAKE_INSTALL_PREFIX="${{ env.INST_DIR }}" VCPKG_TARGET_TRIPLET="${{ env.VCPKG_TARGET_TRIPLET }}"
+          generator: "Visual Studio 18 2026"
+          options: CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake CMAKE_INSTALL_PREFIX="${{ env.INST_DIR }}" "VCPKG_TARGET_TRIPLET=${{ env.VCPKG_TARGET_TRIPLET }}"
+          run-build: false
 
       - name: Build DLL
         run: "cmake --build build --config Release -t INSTALL"
@@ -62,19 +63,19 @@ jobs:
           } else { Write-Host "DLL not found" }
 
       - name: Archive DLL
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: SimpleGraphic-${{ matrix.triplet }}.dll
           path: "${{ env.INST_DIR }}/SimpleGraphic.dll"
 
       - name: Archive DLL symbols
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: SimpleGraphic-${{ matrix.triplet }}.pdb
           path: "${{ github.workspace }}/build/Release/SimpleGraphic.pdb"
 
       - name: Archive dependency DLLs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: SimpleGraphic-${{ matrix.triplet }}-deps.dll
           path: |
@@ -82,7 +83,7 @@ jobs:
             !${{ env.INST_DIR }}/SimpleGraphic.dll
 
       - name: Archive dependency DLL symbols
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: SimpleGraphic-${{ matrix.triplet }}-deps.pdb
           path: |
@@ -99,7 +100,7 @@ jobs:
 
       - name: Notify PathOfBuilding repo
         if: ${{ github.event_name == 'release' }}
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.WIRES77_PAT }}
           repository: ${{ github.repository_owner }}/PathOfBuilding
@@ -108,7 +109,7 @@ jobs:
 
       - name: Notify PathOfBuilding-PoE2 repo
         if: ${{ github.event_name == 'release' }}
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.WIRES77_PAT }}
           repository: ${{ github.repository_owner }}/PathOfBuilding-PoE2
