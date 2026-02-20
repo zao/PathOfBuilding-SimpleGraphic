@@ -105,6 +105,7 @@ target_compile_definitions(SimpleGraphic
     "_CRT_SECURE_NO_WARNINGS"
     "_SCL_SECURE_NO_DEPRECATE"
     "_SCL_SECURE_NO_WARNINGS"
+    "GLFW_EXPOSE_NATIVE_WIN32"
     "GLFW_INCLUDE_NONE"
     "GL_SILENCE_DEPRECATION"
     "SIMPLEGRAPHIC_EXPORTS"
@@ -159,11 +160,10 @@ add_library(imgui STATIC
     dep/imgui/imstb_rectpack.h
     dep/imgui/imstb_textedit.h
     dep/imgui/imstb_truetype.h
+    dep/imgui/backends/imgui_impl_dx11.cpp
+    dep/imgui/backends/imgui_impl_dx11.h
     dep/imgui/backends/imgui_impl_glfw.cpp
     dep/imgui/backends/imgui_impl_glfw.h
-    dep/imgui/backends/imgui_impl_opengl3.cpp
-    dep/imgui/backends/imgui_impl_opengl3.h
-    dep/imgui/backends/imgui_impl_opengl3_loader.h
     dep/imgui/misc/cpp/imgui_stdlib.cpp
     dep/imgui/misc/cpp/imgui_stdlib.h
 )
@@ -241,6 +241,10 @@ target_link_libraries(SimpleGraphic
     WebP::webpdecoder
     ZLIB::ZLIB
     zstd::libzstd_shared
+
+    "d3d11.lib"
+    "d3dcompiler.lib"
+    "dxgi.lib"
 )
 
 install(FILES $<TARGET_RUNTIME_DLLS:SimpleGraphic> DESTINATION ".")

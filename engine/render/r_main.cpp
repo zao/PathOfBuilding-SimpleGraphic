@@ -15,14 +15,23 @@
 #include <filesystem>
 #include <fmt/chrono.h>
 #include <future>
+#include <gsl/span>
 #include <map>
 #include <numeric>
 #include <random>
 #include <sstream>
 #include <vector>
 
+#include <d3d11_1.h>
+#include <dxgi.h>
+#include <d3dcompiler.h>
+#include <atlbase.h>
+#include <atlcom.h>
+#include <comdef.h>
+#include <glm/gtc/type_ptr.hpp>
+
 #include <imgui_impl_glfw.h>
-#include <imgui_impl_opengl3.h>
+#include <imgui_impl_dx11.h>
 #include <imgui_stdlib.h>
 
 static uint64_t MurmurHash64A(void const* data, int len, uint64_t seed);
@@ -327,88 +336,75 @@ struct Vertex {
 };
 
 struct Batch {
-	explicit Batch(GLuint prog);
+	explicit Batch(r_renderer_c::ShaderProgram& prog);
 	Batch(Batch&& rhs);
 	Batch& operator = (Batch&& rhs);
 	Batch(Batch const&) = delete;
 	Batch& operator = (Batch const&) = delete;
 	~Batch();
 
-	GLuint prog;
-	GLint xyAttr;
-	GLint uvAttr;
-	GLint tintAttr;
-	GLint viewportAttr;
-	GLint texIdAttr;
+	r_renderer_c::ShaderProgram* prog;
 
 	std::vector<Vertex> vertices;
+	CComPtr<ID3D11InputLayout> inputLayout;
 
-	void Execute(GLuint sharedVbo, size_t vertexBase);
+	void Execute();
 };
 
-Batch::Batch(GLuint prog)
-	: prog(prog)
+Batch::Batch(r_renderer_c::ShaderProgram& prog)
+	: prog(&prog)
 {
-	xyAttr = glGetAttribLocation(prog, "a_vertex");
-	uvAttr = glGetAttribLocation(prog, "a_texcoord");
-	tintAttr = glGetAttribLocation(prog, "a_tint");
-	viewportAttr = glGetAttribLocation(prog, "a_viewport");
-	texIdAttr = glGetAttribLocation(prog, "a_texId");
+	std::array<D3D11_INPUT_ELEMENT_DESC, 5> ieds{
+		D3D11_INPUT_ELEMENT_DESC{"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
+		D3D11_INPUT_ELEMENT_DESC{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, u), D3D11_INPUT_PER_VERTEX_DATA, 0},
+		D3D11_INPUT_ELEMENT_DESC{"TINT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0},
+		D3D11_INPUT_ELEMENT_DESC{"VIEWPORT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, viewX), D3D11_INPUT_PER_VERTEX_DATA, 0},
+		D3D11_INPUT_ELEMENT_DESC{"TEX_ID", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, texId), D3D11_INPUT_PER_VERTEX_DATA, 0},
+	};
+	prog.dx11->device->CreateInputLayout(ieds.data(), ieds.size(), prog.vsBytecode->GetBufferPointer(), prog.vsBytecode->GetBufferSize(), &inputLayout);
 }
 
 Batch::Batch(Batch&& rhs)
 	: prog(rhs.prog)
-	, xyAttr(rhs.xyAttr)
-	, uvAttr(rhs.uvAttr)
-	, tintAttr(rhs.tintAttr)
-	, viewportAttr(rhs.viewportAttr)
-	, texIdAttr(rhs.texIdAttr)
 	, vertices(std::move(rhs.vertices))
+	, inputLayout(inputLayout)
 {
 }
 
 Batch& Batch::operator = (Batch&& rhs) {
 	prog = rhs.prog;
-	xyAttr = rhs.xyAttr;
-	uvAttr = rhs.uvAttr;
-	tintAttr = rhs.tintAttr;
-	viewportAttr = rhs.viewportAttr;
-	texIdAttr = rhs.texIdAttr;
 	vertices = std::move(rhs.vertices);
+	inputLayout = rhs.inputLayout;
 
 	return *this;
 }
 
 Batch::~Batch() {}
 
-void Batch::Execute(GLuint sharedVbo, size_t vertexBase)
+void Batch::Execute()
 {
 	if (vertices.empty()) {
 		return;
 	}
 
-	glBindBuffer(GL_ARRAY_BUFFER, sharedVbo);
-	auto dataPtr = (uint8_t const*)vertices.data();
-	auto dataOff = vertexBase * sizeof(Vertex);
-	auto dataSize = vertices.size() * sizeof(Vertex);
-	glBufferSubData(GL_ARRAY_BUFFER, dataOff, dataSize, dataPtr);
-	glVertexAttribPointer(xyAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, x));
-	glVertexAttribPointer(uvAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, u));
-	glVertexAttribPointer(tintAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, r));
-	glVertexAttribPointer(viewportAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, viewX));
-	glVertexAttribPointer(texIdAttr, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, texId));
-	glEnableVertexAttribArray(xyAttr);
-	glEnableVertexAttribArray(uvAttr);
-	glEnableVertexAttribArray(tintAttr);
-	glEnableVertexAttribArray(viewportAttr);
-	glEnableVertexAttribArray(texIdAttr);
-	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size());
-	glDisableVertexAttribArray(xyAttr);
-	glDisableVertexAttribArray(uvAttr);
-	glDisableVertexAttribArray(tintAttr);
-	glDisableVertexAttribArray(viewportAttr);
-	glDisableVertexAttribArray(texIdAttr);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	auto* dev = prog->dx11->device.p;
+	auto* ctx = prog->dx11->ctx.p;
+	
+	gsl::span<const Vertex> verts = vertices;
+	D3D11_BUFFER_DESC vb_desc{};
+	vb_desc.ByteWidth = verts.size_bytes();
+	vb_desc.Usage = D3D11_USAGE_IMMUTABLE;
+	vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+	D3D11_SUBRESOURCE_DATA vb_srd{verts.data()};
+
+	CComPtr<ID3D11Buffer> vb;
+	dev->CreateBuffer(&vb_desc, &vb_srd, &vb);
+	const UINT stride = sizeof(Vertex);
+	const UINT offset = 0u;
+	ctx->IASetInputLayout(inputLayout);
+	ctx->IASetVertexBuffers(0, 1, &vb.p, &stride, &offset);
+	ctx->Draw(verts.size(), 0);
 	vertices.clear();
 }
 
@@ -430,23 +426,52 @@ static std::map<r_blendMode_e, char const*> const s_blendModeString{
 };
 
 struct AdjacentMergeStrategy : RenderStrategy {
-	AdjacentMergeStrategy(r_layer_c* layer, r_renderer_c* renderer, GLuint prog)
+	AdjacentMergeStrategy(r_layer_c* layer, r_renderer_c* renderer, r_renderer_c::ShaderProgram& prog)
 		: layer_(layer), renderer_(renderer), prog_(prog), batch_(prog)
 	{
-		for (size_t i = 0;; ++i) {
-			GLint loc = glGetUniformLocation(prog, fmt::format("s_tex[{}]", i).c_str());
-			if (loc == -1) {
-				break;
-			}
-			texLocs_.push_back(loc);
-		}
-		mvpMatrixLoc_ = glGetUniformLocation(prog_, "mvp_matrix");
+		D3D11_SHADER_INPUT_BIND_DESC tex_bind_desc{};
+		prog.psReflect->GetResourceBindingDescByName("s_tex", &tex_bind_desc);
+		texLocs_.push_back(tex_bind_desc.BindPoint);
 		batchTextureCap_ = texLocs_.size();
-		glGenBuffers(1, &vbo_);
+
+		D3D11_SHADER_INPUT_BIND_DESC vs_cb_bind_desc{};
+		prog.vsReflect->GetResourceBindingDescByName("CB", &vs_cb_bind_desc);
+		frameCbLoc_ = vs_cb_bind_desc.BindPoint;
+		struct FrameCbGpu
+		{
+			glm::mat4 mvpMatrix;
+		};
+		
+		FrameCbGpu frame_cb_gpu{};
+		{
+			auto& vid = renderer_->sys->video->vid;
+			float fbScaleX = vid.fbSize[0] / (float)vid.size[0];
+			float fbScaleY = vid.fbSize[1] / (float)vid.size[1];
+			int virtualW = renderer_->VirtualScreenWidth();
+			int virtualH = renderer_->VirtualScreenHeight();
+			// TODO(zao): set up render state like viewport
+			//glViewport(0, 0, virtualW, virtualH);
+			Mat4 mvpMatrix = OrthoMatrix(0, virtualW, virtualH, 0, -9999, 9999);
+			frame_cb_gpu.mvpMatrix = glm::make_mat4(mvpMatrix.data());
+		}
+		D3D11_BUFFER_DESC cb_desc{};
+		cb_desc.ByteWidth = sizeof(FrameCbGpu);
+		cb_desc.Usage = D3D11_USAGE_IMMUTABLE;
+		cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+		D3D11_SUBRESOURCE_DATA cb_srd{&frame_cb_gpu};
+		CComPtr<ID3D11Buffer> frame_cb;
+		auto* dev = renderer->dx11->device.p;
+		auto* ctx = renderer->dx11->ctx.p;
+		dev->CreateBuffer(&cb_desc, &cb_srd, &frame_cb);
+
+		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		ctx->VSSetConstantBuffers(frameCbLoc_, 1, &frame_cb.p);
+		ctx->VSSetShader(prog.vs, nullptr, 0);
+		ctx->PSSetShader(prog.ps, nullptr, 0);
 	}
 
 	~AdjacentMergeStrategy() {
-		glDeleteBuffers(1, &vbo_);
 	}
 
 	struct BatchKey {
@@ -574,87 +599,76 @@ struct AdjacentMergeStrategy : RenderStrategy {
 
 private:
 	void Dispatch() {
-		glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+		auto* dev = renderer_->dx11->device.p;
+		auto* ctx = renderer_->dx11->ctx.p;
+
 		auto& batch = batch_.batch;
 		auto& textures = batch_.textures;
 		size_t vertexCount = batch.vertices.size();
-		glBufferData(GL_ARRAY_BUFFER, vertexCount * sizeof(Vertex), nullptr, GL_STREAM_DRAW);
-		glUseProgram(prog_);
 
 		auto& key = batch_.key;
 		auto& lastKey = lastDispatchKey_;
 
 		if (showStats_) {
 			ImGui::Text("Batch %d", batchIndex);
-			ImGui::Text("%d verts", batch.vertices.size());
+			ImGui::Text("%d verts", vertexCount);
 		}
 
-		{
-			auto& vid = renderer_->sys->video->vid;
-			float fbScaleX = vid.fbSize[0] / (float)vid.size[0];
-			float fbScaleY = vid.fbSize[1] / (float)vid.size[1];
-			int virtualW = renderer_->VirtualScreenWidth();
-			int virtualH = renderer_->VirtualScreenHeight();
-			glViewport(0, 0, virtualW, virtualH);
-			Mat4 mvpMatrix = OrthoMatrix(0, virtualW, virtualH, 0, -9999, 9999);
-			glUniformMatrix4fv(mvpMatrixLoc_, 1, GL_FALSE, mvpMatrix.data());
-		}
+		// TODO(zao): set up blend mode
 		if (!lastKey || lastKey->blendMode != key.blendMode) {
 			if (showStats_) {
 				ImGui::Text("New blend mode %s", s_blendModeString.at((r_blendMode_e)key.blendMode));
 			}
-			switch (key.blendMode) {
-			case RB_ALPHA:
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				break;
-			case RB_PRE_ALPHA:
-				glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-				break;
-			case RB_ADDITIVE:
-				glBlendFunc(GL_ONE, GL_ONE);
-				break;
-			}
+			//switch (key.blendMode) {
+			//case RB_ALPHA:
+			//	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			//	break;
+			//case RB_PRE_ALPHA:
+			//	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+			//	break;
+			//case RB_ADDITIVE:
+			//	glBlendFunc(GL_ONE, GL_ONE);
+			//	break;
+			//}
 		}
 		{
+			const auto& dev_ctx = renderer_->dx11->ctx;
+			std::vector<ID3D11ShaderResourceView*> srvs(texLocs_.size());
 			for (size_t i = 0, numTex = texLocs_.size(); i < numTex; ++i) {
-				glUniform1i(texLocs_[i], (GLint)i);
-				glActiveTexture((GLenum)(GL_TEXTURE0 + i));
 				if (i < textures.size()) {
 					auto tex = textures[i];
-					tex->Bind();
+					srvs[i] = tex->GetShaderResourceView();
 					if (showStats_) {
 						ImGui::Text("New tex %d (%s)", tex->texId, tex->fileName.c_str());
 					}
 				}
-				else {
-					glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-				}
 			}
-			glActiveTexture(GL_TEXTURE0);
+			dev_ctx->PSSetShaderResources(0, (UINT)srvs.size(), srvs.data());
 		}
 
-		batch.Execute(vbo_, 0);
+		batch.Execute();
 
 		lastDispatchKey_ = key;
 		batch_.batch.vertices.clear();
 		batch_.textures.clear();
 
-		glUseProgram(0);
+		// TODO(zao): unbind stuff?
 
 		batchIndex += 1;
 	}
 
 	r_layer_c* layer_{};
 	r_renderer_c* renderer_{};
-	GLuint prog_{};
-	std::vector<GLint> texLocs_;
-	GLint mvpMatrixLoc_{};
+	r_renderer_c::ShaderProgram& prog_;
+	std::vector<UINT> texLocs_;
+	UINT frameCbLoc_{};
+
+	CComPtr<ID3D11Buffer> frameCb_;
 
 	size_t batchTextureCap_{};
-	GLuint vbo_{};
 
 	struct TexturedBatch {
-		explicit TexturedBatch(GLuint prog) : batch(prog) {
+		explicit TexturedBatch(r_renderer_c::ShaderProgram& prog) : batch(prog) {
 			textures.reserve(1ull << 20);
 		}
 
@@ -682,11 +696,11 @@ void r_layer_c::Render()
 
 	std::unique_ptr<RenderStrategy> strat(new AdjacentMergeStrategy(this, renderer, renderer->tintedTextureProgram));
 
-	if (renderer->glPushGroupMarkerEXT)
+	if (ID3DUserDefinedAnnotation* annotation = renderer->dx11->annotation; annotation && annotation->GetStatus())
 	{
-		std::ostringstream oss;
+		std::wostringstream oss;
 		oss << "Layer " << layer << ", sub-layer " << subLayer;
-		renderer->glPushGroupMarkerEXT(0, oss.str().c_str());
+		annotation->BeginEvent(oss.str().c_str());
 	}
 
 	if (strat) {
@@ -710,8 +724,9 @@ void r_layer_c::Render()
 		}
 	}
 
-	if (renderer->glPopGroupMarkerEXT) {
-		renderer->glPopGroupMarkerEXT();
+	if (ID3DUserDefinedAnnotation* annotation = renderer->dx11->annotation; annotation && annotation->GetStatus())
+	{
+		annotation->EndEvent();
 	}
 }
 
@@ -749,123 +764,104 @@ r_renderer_c::r_renderer_c(sys_IMain* sysHnd)
 	Cmd_Add("screenshot", 0, "[<format>]", this, &r_renderer_c::C_Screenshot);
 }
 
-static bool GetShaderCompileSuccess(GLuint id)
+static const std::string s_tintedTextureVertexSource = R"(// Vertex shader for tinted 2D sprites
+cbuffer FrameCB : register(b0)
 {
-	GLint success{};
-	glGetShaderiv(id, GL_COMPILE_STATUS, &success);
-	return success == GL_TRUE;
-}
+    float4x4 mvpMatrix;
+};
 
-static std::string GetShaderInfoLog(GLuint id)
+struct VSInput
 {
-	GLint len{};
-	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &len);
-	std::vector<char> msg(len);
-	glGetShaderInfoLog(id, (GLsizei)msg.size(), &len, msg.data());
-	return std::string(msg.data(), msg.data() + len);
-}
+    float2 vertex: POSIION0;
+    float2 texcoord : TEXCOORD0;
+    float4 tint : TINT;
+    float4 viewport : VIEWPORT;
+    float3 texId : TEX_ID;
+};
 
-static bool GetProgramLinkSuccess(GLuint id)
+struct PSInput
 {
-	GLint success{};
-	glGetProgramiv(id, GL_LINK_STATUS, &success);
-	return success == GL_TRUE;
-}
+    float4 screenPos : SV_Position;
+    float2 texcoord : TEXCOORD0;
+    float4 tint : TINT;
+    float4 viewport : VIEWPORT;
+    float3 texId : TEX_ID;
+};
 
-static std::string GetProgramInfoLog(GLuint id)
+PSInput VSMain(VSInput input)
 {
-	GLint len{};
-	glGetProgramiv(id, GL_INFO_LOG_LENGTH, &len);
-	std::vector<char> msg(len);
-	glGetProgramInfoLog(id, (GLsizei)msg.size(), &len, msg.data());
-	return std::string(msg.data(), msg.data() + len);
-}
+    PSInput result;
 
-static char const* s_tintedTextureVertexSource = R"(#version 300 es
-
-uniform mat4 mvp_matrix;
-
-in vec2 a_vertex;
-in vec2 a_texcoord;
-in vec4 a_tint;
-in vec4 a_viewport;
-in vec3 a_texId;
-
-out vec2 v_screenPos;
-out vec2 v_texcoord;
-out vec4 v_tint;
-out vec4 v_viewport;
-out vec3 v_texId;
-
-void main(void)
-{
-	v_texcoord = a_texcoord;
-	v_tint = a_tint;
-	v_texId = a_texId;
-	vec2 vp0 = a_viewport.xy + vec2(0.0, a_viewport.w);
-	vec2 vp1 = a_viewport.xy + vec2(a_viewport.z, 0.0);
-	v_viewport = vec4(
-		(mvp_matrix * vec4(vp0, 0.0, 1.0)).xy,
-		(mvp_matrix * vec4(vp1, 0.0, 1.0)).xy);
-	vec4 pos = mvp_matrix * vec4(a_vertex + a_viewport.xy, 0.0, 1.0);
-	v_screenPos = pos.xy;
-	gl_Position = pos;
+    result.texcoord = input.texcoord;
+    result.tint = input.tint;
+    result.texId = input.texId;
+    float2 vp0 = input.viewport.xy + float2(0.0, input.viewport.w);
+    float2 vp1 = input.viewport.xy + float2(input.viewport.z, 0.0);
+    result.viewport = float4(
+        mul(mvpMatrix, float4(vp0, 0.0, 1.0)).xy,
+        mul(mvpMatrix, float4(vp1, 0.0, 1.0)).xy);
+    float4 pos = mul(mvpMatrix, float4(input.vertex + input.viewport.xy, 0.0, 1.0));
+    result.screenPos = pos;
+    return result;
 }
 )";
 
-static char const* s_tintedTextureFragmentTemplate = R"(#version 300 es
-precision mediump float;
+static const std::string s_tintedTexturePixelSource = R"(// Pixel shader for tinted 2D sprites
+Texture2DArray s_tex : register(t0);
+SamplerState s_smp : register(s0);
 
-uniform highp sampler2DArray s_tex[{SG_TEXTURE_COUNT}];
-uniform vec4 i_tint;
+struct PSInput
+{
+    float4 screenPos : SV_Position;
+    float2 texcoord : TEXCOORD0;
+    float4 tint : TINT;
+    float4 viewport : VIEWPORT;
+    float3 texId : TEX_ID;
+};
 
-in vec2 v_screenPos;
-in vec2 v_texcoord;
-in vec4 v_tint;
-in vec4 v_viewport; // x0, y0, x1, y1
-in vec3 v_texId;
+float4 ShadeColor(Texture2DArray tex, SamplerState smp, float2 texcoord, float3 texId)
+{
+    float4 color = tex.Sample(smp, float3(texcoord, texId.y));
+    if (texId.z > -0.5)
+        color *= tex.Sample(smp, float3(texcoord, texId.z));
+    return color;
+}
 
-out vec4 f_fragColor;
+float4 PSMain(PSInput input) : SV_TARGET
+{
+    float x = input.screenPos.x, y = input.screenPos.y;
+    if (x < input.viewport[0] || y < input.viewport[1] || x >= input.viewport[2] || y >= input.viewport[3])
+        discard;
 
-void main(void)
-{{
-	float x = v_screenPos[0], y = v_screenPos[1];
-	if (x < v_viewport[0] ||
-	    y < v_viewport[1] ||
-	    x >= v_viewport[2] ||
-	    y >= v_viewport[3]) {{
-		discard;
-	}}
-	vec4 color;
-	{SG_TEXTURE_SWITCH}
-	f_fragColor = color * v_tint;
-}}
-)";
-
-std::string const s_scaleVsSource = R"(#version 300 es
-in vec4 a_position;
-in vec2 a_texcoord;
-
-out vec2 v_texcoord;
-
-void main(void) {
-	gl_Position = a_position;
-	v_texcoord = a_texcoord;
+    float4 color = ShadeColor(s_tex, s_smp, input.texcoord, input.texId);
+    return color * input.tint;
 }
 )";
 
-std::string const s_scaleFsSource = R"(#version 300 es
-precision mediump float;
+static const std::string s_scaleVsSource = R"(// Vertex shader for upscaling a render target
+struct PSOutput
+{
+    float4 position : SV_POSITION;
+    float2 texcoord : TEXCOORD0;
+};
 
-uniform highp sampler2D s_tex;
+PSOutput VSMain(float4 position : POSITION, float2 texcoord : TEXCOORD0)
+{
+	PSOutput result;
+    result.position = position;
+	result.texcoord = texcoord;
+    return result;
+}
+)";
 
-in vec2 v_texcoord;
+static const std::string s_scalePsSource = R"(// Pixel shader for upscaling a render target
+Texture2D s_tex;
+SamplerState s_smp;
 
-out vec4 f_fragColor;
-
-void main(void) {
-	vec3 color = texture(s_tex, v_texcoord).rgb;
-	f_fragColor = vec4(color, 1.0);
+float4 PSMain(float2 texcoord : TEXCOORD0) : SV_TARGET
+{
+	float3 color = s_tex.Sample(s_smp, texcoord).rgb;
+	return float4(color, 1.0);
 }
 )";
 
@@ -882,67 +878,17 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	timer_c timer;
 	timer.Start();
 
-	// Initialise OpenGL
-	openGL = sys_IOpenGL::GetHandle(sys);
-	sys_glSet_s set;
-	set.bColor = 32;
-	set.bDepth = 24;
-	set.bStencil = 0;
-	set.vsync = true;
-	if (openGL->Init(&set)) {
-		sys->Error("OpenGL initialisation failed");
+	// Initialise DX11
+	try
+	{
+		dx11 = std::make_shared<r_dx11_c>(sys);
+	}
+	catch (std::exception& e)
+	{
+		sys->Error(fmt::format("DX11 initialisation failed: {}", e.what()).c_str());
 	}
 
-	// Get strings
-	st_vendor = (const char*)glGetString(GL_VENDOR);
-	st_renderer = (const char*)glGetString(GL_RENDERER);
-	st_ver = (const char*)glGetString(GL_VERSION);
-	st_ext = (const char*)glGetString(GL_EXTENSIONS);
-
-	glGetIntegerv(GL_MAX_TEXTURE_SIZE, (int*)&texMaxDim);
-	sys->con->Printf("GL_MAX_TEXTURE_SIZE: %d\n", texMaxDim);
-
-	// Set default state
-	glClearColor(0.0, 0.0, 0.0, 1.0);
-	glEnable(GL_TEXTURE_2D);
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
-
-	// Load extensions
-	sys->con->Printf("Loading OpenGL extensions...\n");
-
-	if (strstr(st_ext, "GL_EXT_texture_compression_s3tc")) {
-		sys->con->Printf("using GL_EXT_texture_compression_s3tc\n");
-		glCompressedTexImage2D = (PFNGLCOMPRESSEDTEXIMAGE2DPROC)openGL->GetProc("glCompressedTexImage2D");
-	}
-	else {
-		sys->con->Printf("GL_EXT_texture_compression_s3tc not supported\n");
-		glCompressedTexImage2D = NULL;
-	}
-
-	if (strstr(st_ext, "GL_EXT_texture_compression_bptc")) {
-		sys->con->Printf("using GL_EXT_texture_compression_bptc\n");
-		texBC7 = true;
-	}
-	else {
-		sys->con->Printf("GL_EXT_texture_compression_bptc not supported\n");
-		texBC7 = false;
-	}
-
-	if (strstr(st_ext, "GL_EXT_debug_marker")) {
-		sys->con->Printf("using GL_EXT_debug_marker\n");
-		glInsertEventMarkerEXT = (PFNGLINSERTEVENTMARKEREXTPROC)openGL->GetProc("glInsertEventMarkerEXT");
-		glPushGroupMarkerEXT = (PFNGLPUSHGROUPMARKEREXTPROC)openGL->GetProc("glPushGroupMarkerEXT");
-		glPopGroupMarkerEXT = (PFNGLPOPGROUPMARKEREXTPROC)openGL->GetProc("glPopGroupMarkerEXT");
-	}
-	else {
-		sys->con->Printf("GL_EXT_debug_marker not supported\n");
-		glInsertEventMarkerEXT = NULL;
-		glPushGroupMarkerEXT = NULL;
-		glPopGroupMarkerEXT = NULL;
-	}
-
-	texNonPOT = true;
+	samplerStateCache.device = dx11->device;
 
 	// Initialise texture manager
 	texMan = r_ITexManager::GetHandle(this);
@@ -951,64 +897,59 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	numShader = 0;
 	memset(shaderList, 0, sizeof(shaderList));
 
-	GLint maxTextureImageUnits{};
-	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &maxTextureImageUnits);
+	const size_t maxTextureImageUnits = 32;
+
+	struct ShaderCompileResult
+	{
+		HRESULT hr{S_OK};
+		CComPtr<ID3DBlob> code_blob, error_blob;
+
+		bool Success() const noexcept { return SUCCEEDED(hr); }
+		_com_error Error() const { return hr; }
+		std::string_view CompileErrors() const
+		{
+			if (error_blob)
+				return static_cast<const char*>(error_blob->GetBufferPointer());
+			return "";
+		}
+	};
+
+	const auto CompileShaderSource = [&](std::string_view source, std::string filename, std::string entrypoint, std::string target_model) -> ShaderCompileResult
+		{
+			ShaderCompileResult ret{};
+			ret.hr = D3DCompile(source.data(), source.size(), filename.c_str(), nullptr, nullptr, entrypoint.c_str(), target_model.c_str(),
+				D3DCOMPILE_DEBUG | D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_ENABLE_STRICTNESS, 0, &ret.code_blob, &ret.error_blob);
+			return ret;
+		};
+
+	const auto ReflectBytecode = [&](const CComPtr<ID3DBlob>& blob) -> CComPtr<ID3D11ShaderReflection>
+		{
+			CComPtr<ID3D11ShaderReflection> ret;
+			D3DReflect(blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&ret));
+			return ret;
+		};
 
 	// Initialise vertex programs
 	{
-		GLint success = GL_FALSE;
-		GLuint prog = glCreateProgram();
-		GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vs, 1, &s_tintedTextureVertexSource, nullptr);
-		glCompileShader(vs);
-		if (!GetShaderCompileSuccess(vs)) {
-			std::string log = GetShaderInfoLog(vs);
-			sys->Error("Failed to compile vertex shader:\n%s", log.c_str());
-		}
-		GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-		std::string textureSwitch;
-		{
-			fmt::memory_buffer buf;
-			for (size_t i = 0; i < maxTextureImageUnits; ++i) {
-				if (i == 0) {
-					fmt::format_to(fmt::appender(buf), "if (v_texId.x < {}.5) ", i);
-				}
-				else if (i == maxTextureImageUnits - 1) {
-					fmt::format_to(fmt::appender(buf), "else ");
-				}
-				else {
-					fmt::format_to(fmt::appender(buf), "else if (v_texId.x < {}.5)", i);
-				}
-				fmt::format_to(fmt::appender(buf), R"( {{
-	color = texture(s_tex[{}], vec3(v_texcoord, v_texId.y));
-	if (v_texId.z > -0.5)
-		color *= texture(s_tex[{}], vec3(v_texcoord, v_texId.z));
-}}
-)", i, i);
-			}
-			textureSwitch = to_string(buf);
-		}
-		std::string fragSource = fmt::format(s_tintedTextureFragmentTemplate,
-			fmt::arg("SG_TEXTURE_COUNT", maxTextureImageUnits),
-			fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
-		char const* fragSourcePtr = fragSource.c_str();
-		glShaderSource(fs, 1, &fragSourcePtr, nullptr);
-		glCompileShader(fs);
-		if (!GetShaderCompileSuccess(fs)) {
-			std::string log = GetShaderInfoLog(fs);
-			sys->Error("Failed to compile fragment shader:\n%s", log.c_str());
-		}
+		auto& prog = tintedTextureProgram;
+		prog.dx11 = dx11.get();
+		const auto vertexResult = CompileShaderSource(s_tintedTextureVertexSource, "TintedTextureVS.hlsl", "VSMain", "vs_5_0");
+		const auto pixelResult = CompileShaderSource(s_tintedTexturePixelSource, "TintedTexturePS.hlsl", "PSMain", "ps_5_0");
+		if (!vertexResult.Success())
+			sys->Error(fmt::format("Failed to compile tinted vertex shader:\n{}", vertexResult.CompileErrors()).c_str());
+		if (!pixelResult.Success())
+			sys->Error(fmt::format("Failed to compile tinted pixel shader:\n{}", pixelResult.CompileErrors()).c_str());
 
-		glAttachShader(prog, vs);
-		glAttachShader(prog, fs);
-		glLinkProgram(prog);
-		if (!GetProgramLinkSuccess(prog)) {
-			std::string log = GetProgramInfoLog(prog);
-			sys->Error("Failed to link program:\n%s", log.c_str());
-		}
-		glDeleteShader(vs);
-		glDeleteShader(fs);
-		tintedTextureProgram = prog;
+		prog.vsBytecode = vertexResult.code_blob;
+
+		if (HRESULT hr = dx11->device->CreateVertexShader(prog.vsBytecode->GetBufferPointer(), prog.vsBytecode->GetBufferSize(), nullptr, &prog.vs); FAILED(hr))
+			sys->Error(fmt::format("Could not create tinted vertex shader:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+		if (HRESULT hr = dx11->device->CreatePixelShader(pixelResult.code_blob->GetBufferPointer(), pixelResult.code_blob->GetBufferSize(), nullptr, &prog.ps); FAILED(hr))
+			sys->Error(fmt::format("Could not create tinted pixel shader:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+
+		// TODO(zao): reflect information from VS/PS for binding
+		prog.vsReflect = ReflectBytecode(prog.vsBytecode);
+		prog.psReflect = ReflectBytecode(pixelResult.code_blob);
 	}
 
 	// Initialise layer array
@@ -1024,53 +965,48 @@ void r_renderer_c::Init(r_featureFlag_e features)
 
 	takeScreenshot = R_SSNONE;
 
+	D3D11_SAMPLER_DESC samplerDesc{};
+	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+	samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+	samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	samplerDesc.MinLOD = -FLT_MAX;
+	samplerDesc.MaxLOD = +FLT_MAX;
+	HRESULT hr = dx11->device->CreateSamplerState(&samplerDesc, &rttIntegerScalingSampler);
+	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+	hr = dx11->device->CreateSamplerState(&samplerDesc, &rttLinearScalingSampler);
+	
 	// Set up DPI-scaling render target
 	for (int i = 0; i < 2; ++i) {
 		auto& rtt = rttMain[i];
 		if (i > 0) {
 			rtt = rttMain[0]; // Reuse shared parts like dimensions and program/locations.
 		}
-		glGenFramebuffers(1, &rtt.framebuffer);
-		glGenTextures(1, &rtt.colorTexture);
 		
 		if (i == 0) {
-			auto compileShader = [](std::string_view src, GLenum type) -> GLuint {
-				GLuint id = glCreateShader(type);
-				auto sourcePtr = src.data();
-				glShaderSource(id, 1, &sourcePtr, nullptr);
-				glCompileShader(id);
-				return id;
-				};
+			const auto vertexResult = CompileShaderSource(s_scaleVsSource, "ScaleVS.hlsl", "VSMain", "vs_5_0");
+			const auto pixelResult = CompileShaderSource(s_scalePsSource, "ScalePS.hlsl", "PSMain", "ps_5_0");
+			if (!vertexResult.Success())
+				sys->Error(fmt::format("Failed to compile upscale vertex shader:\n{}", vertexResult.CompileErrors()).c_str());
+			if (!pixelResult.Success())
+				sys->Error(fmt::format("Failed to compile upscale pixel shader:\n{}", pixelResult.CompileErrors()).c_str());
 
-			auto vsId = compileShader(s_scaleVsSource, GL_VERTEX_SHADER);
-			if (!GetShaderCompileSuccess(vsId)) {
-				auto log = GetShaderInfoLog(vsId);
-				sys->con->Printf("Scaling VS compile failure: %s\n", log.c_str());
-			}
-			auto fsId = compileShader(s_scaleFsSource, GL_FRAGMENT_SHADER);
-			if (!GetShaderCompileSuccess(fsId)) {
-				auto log = GetShaderInfoLog(fsId);
-				sys->con->Printf("Scaling FS compile failure: %s\n", log.c_str());
-			}
+			if (HRESULT hr = dx11->device->CreateVertexShader(vertexResult.code_blob->GetBufferPointer(), vertexResult.code_blob->GetBufferSize(), nullptr, &rtt.vs); FAILED(hr))
+				sys->Error(fmt::format("Could not create upscale vertex shader:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			if (HRESULT hr = dx11->device->CreatePixelShader(pixelResult.code_blob->GetBufferPointer(), pixelResult.code_blob->GetBufferSize(), nullptr, &rtt.ps); FAILED(hr))
+				sys->Error(fmt::format("Could not create upscale pixel shader:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
 
-			GLuint prog = rtt.blitProg = glCreateProgram();
-			glAttachShader(prog, vsId);
-			glAttachShader(prog, fsId);
-			glLinkProgram(prog);
-			if (!GetProgramLinkSuccess(prog)) {
-				auto log = GetProgramInfoLog(prog);
-				sys->con->Printf("Scaling program link failure: %s\n", log.c_str());
-			}
-
-			GLint linked = GL_FALSE;
-			glGetProgramiv(prog, GL_LINK_STATUS, &linked);
-
-			glDeleteShader(vsId);
-			glDeleteShader(fsId);
-
-			rtt.blitAttribLocPos = glGetAttribLocation(prog, "a_position");
-			rtt.blitAttribLocTC = glGetAttribLocation(prog, "a_texcoord");
-			rtt.blitSampleLocColour = glGetUniformLocation(prog, "s_tex");
+			std::array<D3D11_INPUT_ELEMENT_DESC, 2> ieds{
+				D3D11_INPUT_ELEMENT_DESC{ "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+				D3D11_INPUT_ELEMENT_DESC{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+			};
+			if (HRESULT hr = dx11->device->CreateInputLayout(ieds.data(), ieds.size(), vertexResult.code_blob->GetBufferPointer(), vertexResult.code_blob->GetBufferSize(), &rtt.inputLayout); FAILED(hr))
+				sys->Error(fmt::format("Could not create upscale input layout:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			
+			const auto vsRefl = ReflectBytecode(pixelResult.code_blob);
+			if (HRESULT hr = vsRefl->GetResourceBindingDescByName("s_tex", &rtt.colorTextureBind); FAILED(hr))
+				sys->Error(fmt::format("Could not find upscale texture binding:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			if (HRESULT hr = vsRefl->GetResourceBindingDescByName("s_smp", &rtt.colorSamplerBind); FAILED(hr))
+				sys->Error(fmt::format("Could not find upscale sampler binding:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
 		}
 	}
 
@@ -1084,7 +1020,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	ImGui::SetCurrentContext(imguiCtx);
 
 	ImGui_ImplGlfw_InitForOpenGL((GLFWwindow*)sys->video->GetWindowHandle(), true);
-	ImGui_ImplOpenGL3_Init("#version 100");
+	ImGui_ImplDX11_Init(dx11->device, dx11->ctx);
 
 	fonts[F_FIXED] = new r_font_c(this, "Bitstream Vera Sans Mono");
 	fonts[F_VAR] = new r_font_c(this, "Liberation Sans");
@@ -1103,7 +1039,7 @@ void r_renderer_c::Shutdown()
 
 	sys->con->Printf("Unloading resources...\n");
 
-	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
 	ImGui::DestroyContext(imguiCtx);
 
@@ -1126,19 +1062,15 @@ void r_renderer_c::Shutdown()
 	}
 	delete layerCmdBin;
 
-	for (int i = 0; i < 2; ++i) {
-		auto& rtt = rttMain[i];
-		glDeleteTextures(1, &rtt.colorTexture);
-		glDeleteFramebuffers(1, &rtt.framebuffer);
+	for (auto& rtt : rttMain) {
+		rtt = {};
 	}
-	glDeleteProgram(rttMain[0].blitProg);
 
 	// Shutdown texture manager
 	r_ITexManager::FreeHandle(texMan);
 
 	// Shutdown OpenGL
-	openGL->Shutdown();
-	sys_IOpenGL::FreeHandle(openGL);
+	dx11.reset();
 
 	sys->con->Printf("Renderer shutdown complete.\n");
 }
@@ -1160,38 +1092,44 @@ void r_renderer_c::PumpShaders()
 
 void r_renderer_c::BeginFrame()
 {
-	ImGui_ImplOpenGL3_NewFrame();
+	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplGlfw_NewFrame();
 	ImGui::NewFrame();
 	{
 		auto& vid = sys->video->vid;
+
+		dx11->ResizeIfNeeded(glm::make_vec2(vid.fbSize));
+
 		int wNew = VirtualScreenWidth();
 		int hNew = VirtualScreenHeight();
 		bool const wantIntegerScaling = fmodf(vid.dpiScale, 1.0f) < 0.0005f;
 		for (int i = 0; i < 2; ++i) {
 			auto& rtt = rttMain[i];
 			if (rtt.width != wNew || rtt.height != hNew) {
-				GLint prevTex2D, prevFB;
-				glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex2D);
-				glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFB);
-				glBindTexture(GL_TEXTURE_2D, rtt.colorTexture);
-				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, wNew, hNew, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-				GLint const filterMode = wantIntegerScaling ? GL_NEAREST : GL_LINEAR;
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filterMode);
-				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filterMode);
+				HRESULT hr = S_OK;
+				rtt.colorTexture.Release();
+				rtt.srv.Release();
+				rtt.rtv.Release();
+
+				rtt.colorSampler = wantIntegerScaling ? rttIntegerScalingSampler : rttLinearScalingSampler;
+
+				D3D11_TEXTURE2D_DESC texDesc{};
+				texDesc.Width = wNew;
+				texDesc.Height = hNew;
+				texDesc.MipLevels = 1;
+				texDesc.ArraySize = 1;
+				texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				texDesc.SampleDesc = {1, 0};
+				texDesc.Usage = D3D11_USAGE_DEFAULT;
+				texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+				texDesc.CPUAccessFlags = 0;
+				texDesc.MiscFlags = 0;
+				hr = dx11->device->CreateTexture2D(&texDesc, nullptr, &rtt.colorTexture);
+				hr = dx11->device->CreateShaderResourceView(rtt.colorTexture, nullptr, &rtt.srv);
+				hr = dx11->device->CreateRenderTargetView(rtt.colorTexture, nullptr, &rtt.rtv);
 
 				rtt.width = wNew;
 				rtt.height = hNew;
-
-				glBindFramebuffer(GL_FRAMEBUFFER, rtt.framebuffer);
-				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rtt.colorTexture, 0);
-
-				glCheckFramebufferStatus(GL_FRAMEBUFFER);
-
-				glBindFramebuffer(GL_FRAMEBUFFER, prevFB);
-				glBindTexture(GL_TEXTURE_2D, prevTex2D);
 			}
 		}
 	}
@@ -1413,8 +1351,12 @@ void r_renderer_c::EndFrame()
 	bool decideDraw = false;
 	bool elideDraw = false;
 	{
-		glBindFramebuffer(GL_FRAMEBUFFER, GetDrawRenderTarget().framebuffer);
-		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+		auto* dev = dx11->device.p;
+		auto* ctx = dx11->ctx.p;
+		auto* rtv = GetDrawRenderTarget().rtv.p;
+		glm::vec4 clearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		ctx->ClearRenderTargetView(rtv, glm::value_ptr(clearColor));
+		ctx->OMSetRenderTargets(1, &GetDrawRenderTarget().rtv.p, nullptr);
 		int l{};
 		for (l = 0; l < numLayer; l++) {
 			if (!decideDraw && elidedFrameHashFut.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
@@ -1467,10 +1409,13 @@ void r_renderer_c::EndFrame()
 	delete[] layerSort;
 
 	{
+		auto* dev = dx11->device.p;
+		auto* ctx = dx11->ctx.p;
 		auto& rtt = GetPresentRenderTarget();
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+		glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
+		ctx->ClearRenderTargetView(dx11->swap_rtv.p, glm::value_ptr(clearColor));
+		ctx->OMSetRenderTargets(1, &dx11->swap_rtv.p, nullptr);
 
 		float blitTriPos[] = {
 			-1.0f, -1.0f, //
@@ -1483,17 +1428,20 @@ void r_renderer_c::EndFrame()
 			0.0f, 2.0f, //
 		};
 
-		glViewport(0, 0, sys->video->vid.fbSize[0], sys->video->vid.fbSize[1]);
-		glUseProgram(rtt.blitProg);
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, std::data(blitTriPos));
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, std::data(blitTriUV));
-		glEnableVertexAttribArray(0);
-		glEnableVertexAttribArray(1);
-		glBindTexture(GL_TEXTURE_2D, rtt.colorTexture);
-		glUniform1i(rtt.blitSampleLocColour, 0);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glUseProgram(0);
+		// TODO(zao):
+		// Blit current RT to swap-chain
+
+		//glViewport(0, 0, sys->video->vid.fbSize[0], sys->video->vid.fbSize[1]);
+		//glUseProgram(rtt.blitProg);
+		//glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, std::data(blitTriPos));
+		//glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, std::data(blitTriUV));
+		//glEnableVertexAttribArray(0);
+		//glEnableVertexAttribArray(1);
+		//glBindTexture(GL_TEXTURE_2D, rtt.colorTexture);
+		//glUniform1i(rtt.blitSampleLocColour, 0);
+		//glDrawArrays(GL_TRIANGLES, 0, 3);
+		//glBindTexture(GL_TEXTURE_2D, 0);
+		//glUseProgram(0);
 	}
 
 	if (showHash) {
@@ -1529,10 +1477,10 @@ void r_renderer_c::EndFrame()
 	}
 
 	ImGui::Render();
-	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
 	// Swap output buffers
-	openGL->Swap();
+	dx11->swap_chain->Present(1, 0);
 
 	// Take screenshot
 	switch (takeScreenshot) {
@@ -1666,11 +1614,6 @@ int r_renderer_c::GetTexAsyncCount()
 // ==========
 // 2D Drawing
 // ==========
-
-void r_renderer_c::SetClearColor(const col4_t col)
-{
-	glClearColor(col[0], col[1], col[2], col[3]);
-}
 
 void r_renderer_c::SetDrawLayer(int layer, int subLayer)
 {
@@ -1950,24 +1893,30 @@ void r_renderer_c::DoScreenshot(image_c* i, int type, const char* ext)
 	int const writeSize = xs * ys * 3;
 	std::vector<byte> sbuf(readSize);
 
+	CComPtr<ID3D11Texture2D> stageTex;
+	D3D11_TEXTURE2D_DESC stageDesc{};
+	stageDesc.Width = rt.width;
+	stageDesc.Height = rt.height;
+	stageDesc.MipLevels = 1;
+	stageDesc.ArraySize = 1;
+	stageDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	stageDesc.SampleDesc = {1, 0};
+	stageDesc.Usage = D3D11_USAGE_STAGING;
+	stageDesc.BindFlags = 0;
+	stageDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	stageDesc.MiscFlags = 0;
+	dx11->device->CreateTexture2D(&stageDesc, nullptr, &stageTex);
+
 	// Read the front buffer
-	GLint oldFb{};
-	GLenum oglErr = glGetError();
-	GLenum implColorReadFormat{}, implColorReadType{};
-	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFb);
-	glBindFramebuffer(GL_FRAMEBUFFER, rt.framebuffer);
-	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-	glReadPixels(0, 0, xs, ys, GL_RGBA, GL_UNSIGNED_BYTE, sbuf.data());
-	oglErr = glGetError();
-	glBindFramebuffer(GL_FRAMEBUFFER, oldFb);
+	dx11->ctx->CopyResource(stageTex.p, rt.colorTexture.p);
 
 	// Flip and convert the image to RGB
 	int const readSpan = xs * 4;
 	int	const writeSpan = xs * 3;
 	std::vector<byte> ss(writeSize);
 	byte* p1 = sbuf.data();
-	byte* p2 = ss.data() + writeSize - writeSpan;
-	for (int y = 0; y < ys; ++y, p2 -= writeSpan * 2) {
+	byte* p2 = ss.data();
+	for (int y = 0; y < ys; ++y) {
 		for (int x = 0; x < xs; ++x) {
 			*p2++ = *p1++; // R
 			*p2++ = *p1++; // G
@@ -2080,4 +2029,92 @@ uint64_t MurmurHash64A(const void* key, int len, uint64_t seed)
 	h ^= h >> r;
 
 	return h;
+}
+
+r_dx11_c::r_dx11_c(sys_IMain* sys)
+	: sys(sys)
+{
+	HRESULT hr = S_OK;
+	const UINT device_flags = 0u;
+	const std::array<D3D_FEATURE_LEVEL, 2> feature_levels{
+		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0
+	};
+
+	{
+		auto& video = sys->video;
+		auto& bd = scd.BufferDesc;
+		bd.Width = (UINT)video->vid.fbSize[0];
+		bd.Height = (UINT)video->vid.fbSize[1];
+		bd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+		auto& sd = scd.SampleDesc;
+		sd.Count = 1;
+
+		scd.BufferUsage = DXGI_USAGE_BACK_BUFFER | DXGI_USAGE_RENDER_TARGET_OUTPUT;
+		scd.BufferCount = 2;
+		scd.OutputWindow = (HWND)video->GetNativeWindowHandle();
+		scd.Windowed = TRUE;
+		scd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	};
+
+	auto TryCreate = [&](D3D_DRIVER_TYPE driver_type) -> HRESULT
+		{
+			return D3D11CreateDeviceAndSwapChain(nullptr, driver_type, nullptr, device_flags, feature_levels.data(), feature_levels.size(), D3D11_SDK_VERSION, &scd, &swap_chain, &device, &feature_level, &ctx);
+		};
+	hr = TryCreate(D3D_DRIVER_TYPE_HARDWARE);
+	if (!SUCCEEDED(hr)) {
+		hr = TryCreate(D3D_DRIVER_TYPE_WARP);
+		if (!SUCCEEDED(hr)) {
+			throw std::runtime_error(NarrowUTF8StringStd(_com_error(hr).ErrorMessage()));
+		}
+	}
+
+	hr = ctx.QueryInterface(&annotation);
+
+	ResizeIfNeeded({});
+}
+
+void r_dx11_c::ResizeIfNeeded(glm::ivec2 size)
+{
+	if (scd.BufferDesc.Width != size.x || scd.BufferDesc.Height != size.y) {
+		swap_rtv.Release();
+		swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, scd.Flags);
+		CComPtr<ID3D11Resource> back_buffer;
+		swap_chain->GetBuffer(0, IID_PPV_ARGS(&back_buffer));
+		device->CreateRenderTargetView(back_buffer.p, nullptr, &swap_rtv);
+	}
+}
+
+CComPtr<ID3D11SamplerState> r_renderer_c::SamplerStateCache::MakeState(r_renderer_c::SamplerStateCache::Parameters params)
+{
+	auto I = samplerStates.find(params);
+	if (I == samplerStates.end())
+	{
+		D3D11_SAMPLER_DESC desc{};
+		desc.Filter = params.Filter;
+		desc.AddressU = params.AddressU;
+		desc.AddressV = params.AddressV;
+		desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		desc.MipLODBias = 0.0f;
+		desc.MaxAnisotropy = params.MaxAnisotropy;
+		desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		std::fill_n(desc.BorderColor, 4, 0.0f);
+		desc.MinLOD = std::numeric_limits<float>::lowest();
+		desc.MaxLOD = std::numeric_limits<float>::max();
+
+		CComPtr<ID3D11SamplerState> state;
+		HRESULT hr = device->CreateSamplerState(&desc, &state);
+		if (!hr)
+			return {};
+		I = samplerStates.emplace(std::move(params), std::move(state)).first;
+	}
+	return I->second;
+}
+
+bool r_renderer_c::SamplerStateCache::Parameters::operator<(const Parameters& rhs) const noexcept
+{
+	if (Filter != rhs.Filter) return Filter < rhs.Filter;
+	if (AddressU != rhs.AddressU) return AddressU < rhs.AddressU;
+	if (AddressV != rhs.AddressV) return AddressV < rhs.AddressV;
+	return MaxAnisotropy < rhs.MaxAnisotropy;
 }

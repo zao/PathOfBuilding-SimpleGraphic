@@ -5,12 +5,11 @@
 // Platform: Windows
 //
 
-#include <glad/gles2.h>
-
 #include "sys_local.h"
 #include "core.h"
 
 #include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
 
 #include <deque>
 #include <map>
@@ -38,7 +37,8 @@ public:
 	void	SetVisible(bool vis);
 	bool	IsVisible();
 	void	SetTitle(const char* title);
-	void* GetWindowHandle();
+	void*	GetWindowHandle();
+	void*	GetNativeWindowHandle();
 	void	GetRelativeCursor(int& x, int& y);
 	void	SetRelativeCursor(int x, int y);
 	bool	IsCursorOverWindow();
@@ -106,17 +106,6 @@ sys_video_c::sys_video_c(sys_IMain* sysHnd)
 
 	strcpy(curTitle, CFG_TITLE);
 
-	int platformType = GLFW_ANGLE_PLATFORM_TYPE_NONE;
-#ifdef _WIN32
-	const std::string wineHost = GetWineHostVersion();
-	if (wineHost == "Linux")
-		platformType = GLFW_ANGLE_PLATFORM_TYPE_OPENGL;
-	else if (wineHost == "Darwin")
-		platformType = GLFW_ANGLE_PLATFORM_TYPE_D3D11;
-	else // Native Windows
-		platformType = GLFW_ANGLE_PLATFORM_TYPE_D3D11;
-#endif
-	glfwInitHint(GLFW_ANGLE_PLATFORM_TYPE, platformType);
 	glfwInit();
 }
 
@@ -455,12 +444,7 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		glfwWindowHint(GLFW_RESIZABLE, !!(cur.flags & VID_RESIZABLE));
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Start hidden to not flash the user with a stock window.
 		glfwWindowHint(GLFW_MAXIMIZED, GLFW_FALSE); // Start restored in order to position the window before maximizing.
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-		glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_EGL_CONTEXT_API);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-		glfwWindowHint(GLFW_DEPTH_BITS, 24);
-		//glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
 		wnd = glfwCreateWindow(cur.mode[0], cur.mode[1], curTitle, nullptr, nullptr);
 		if (!wnd) {
@@ -468,9 +452,6 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			glfwGetError(&errDesc);
 			sys->con->Printf("Could not create window, %s\n", errDesc);
 		}
-
-		glfwMakeContextCurrent(wnd);
-		gladLoadGLES2(glfwGetProcAddress);
 
 		// Set up all our window callbacks
 		glfwSetWindowUserPointer(wnd, sys);
@@ -638,12 +619,11 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		if (!!(cur.flags & VID_MAXIMIZE)) {
 			glfwMaximizeWindow(wnd);
 		}
+
 		glfwShowWindow(wnd);
 
 		// Clear early to avoid flash
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-		glfwSwapBuffers(wnd);
+		// TODO(zao): do this with D3D/DXGI?
 	}
 
 	glfwGetFramebufferSize(wnd, &vid.fbSize[0], &vid.fbSize[1]);
@@ -730,6 +710,11 @@ void sys_video_c::SetTitle(const char* title)
 void* sys_video_c::GetWindowHandle()
 {
 	return wnd;
+}
+
+void* sys_video_c::GetNativeWindowHandle()
+{
+	return glfwGetWin32Window(wnd);
 }
 
 void sys_video_c::GetRelativeCursor(int& x, int& y)

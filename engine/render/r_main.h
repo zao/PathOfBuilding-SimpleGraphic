@@ -14,7 +14,11 @@
 #include <chrono>
 #include <deque>
 #include <imgui.h>
+#include <map>
 #include <vector>
+
+#include <d3d11.h>
+#include <d3dcompiler.h>
 
 // =======
 // Classes
@@ -63,6 +67,25 @@ private:
 	struct r_layerCmd_s* NewCommand(size_t size);
 };
 
+class r_dx11_c
+{
+public:
+	r_dx11_c(sys_IMain* sys);
+
+	sys_IMain* sys{};
+
+	CComPtr<ID3D11Device> device;
+	CComPtr<ID3D11DeviceContext> ctx;
+	CComPtr<ID3DUserDefinedAnnotation> annotation;
+	CComPtr<IDXGISwapChain> swap_chain;
+	CComPtr<ID3D11RenderTargetView> swap_rtv;
+	D3D_FEATURE_LEVEL feature_level{};
+
+	DXGI_SWAP_CHAIN_DESC scd{};
+
+	void ResizeIfNeeded(glm::ivec2 size);
+};
+
 // Renderer Main Class
 class r_renderer_c: public r_IRenderer, public conCmdHandler_c {
 public:
@@ -81,7 +104,6 @@ public:
 	void	PurgeShaders();
 	int		GetTexAsyncCount();
 
-	void	SetClearColor(const col4_t col);
 	void	SetDrawLayer(int layer, int subLayer = 0);
 	void	SetDrawSubLayer(int subLayer);
 	int		GetDrawLayer();
@@ -112,23 +134,13 @@ public:
 
 	sys_IMain* sys = nullptr;
 
-	sys_IOpenGL* openGL = nullptr;
+	std::shared_ptr<r_dx11_c> dx11;
 
 	r_ITexManager* texMan = nullptr;	// Texture manager interface
 
-	const char*	st_vendor = nullptr;	// Vendor string
-	const char*	st_renderer = nullptr;	// Renderer string
-	const char*	st_ver = nullptr;		// Version string
-	const char*	st_ext = nullptr;		// Exntension string
-
-	bool	texNonPOT = false;			// Non power-of-2 textures supported?
-	dword	texMaxDim = 0;				// Maximum texture dimension
-	bool	texBC7 = true;				// BC7 textures supported?
-
-	PFNGLCOMPRESSEDTEXIMAGE2DPROC	glCompressedTexImage2D = nullptr;
-	PFNGLINSERTEVENTMARKEREXTPROC	glInsertEventMarkerEXT = nullptr;
-	PFNGLPUSHGROUPMARKEREXTPROC		glPushGroupMarkerEXT = nullptr;
-	PFNGLPOPGROUPMARKEREXTPROC		glPopGroupMarkerEXT = nullptr;
+	const bool	texNonPOT = true;			// Non power-of-2 textures supported?
+	const dword	texMaxDim = 16384u;				// Maximum texture dimension
+	const bool	texBC7 = true;				// BC7 textures supported?
 
 	conVar_c*	r_compress = nullptr;
 	conVar_c*	r_screenshotFormat = nullptr;
@@ -153,7 +165,19 @@ public:
 	int		numShader = 0;
 	class r_shader_c *shaderList[R_MAXSHADERS] = {};
 
-	int		tintedTextureProgram = 0;
+	struct ShaderProgram
+	{
+		r_dx11_c* dx11{};
+		CComPtr<ID3D11VertexShader> vs;
+		CComPtr<ID3D11PixelShader> ps;
+
+		// TODO(zao): store binding information here from reflection
+		CComPtr<ID3DBlob> vsBytecode;
+		CComPtr<ID3D11ShaderReflection> vsReflect, psReflect;
+		D3D11_SHADER_DESC vsDesc, psDesc;
+	};
+
+	ShaderProgram tintedTextureProgram{};
 
 	int		numLayer = 0;
 	int		layerListSize = 0;
@@ -166,18 +190,22 @@ public:
 
 	struct RenderTarget {
 		int		width = -1, height = -1;
-		GLuint	framebuffer = 0;
-		GLuint	colorTexture = 0;
+		CComPtr<ID3D11Texture2D> colorTexture;
+		CComPtr<ID3D11RenderTargetView> rtv;
+		CComPtr<ID3D11ShaderResourceView> srv;
+		CComPtr<ID3D11SamplerState> colorSampler;
 
-		GLuint	blitProg = 0;
-		GLuint	blitAttribLocPos = 0;
-		GLuint	blitAttribLocTC = 0;
-		GLuint  blitSampleLocColour = 0;
+		CComPtr<ID3D11VertexShader> vs;
+		CComPtr<ID3D11PixelShader> ps;
+		CComPtr<ID3D11InputLayout> inputLayout;
+		D3D11_SHADER_INPUT_BIND_DESC colorTextureBind;
+		D3D11_SHADER_INPUT_BIND_DESC colorSamplerBind;
 	};
 
 	bool apiDpiAware{};
 	int dpiScaleOverridePercent = 0;
 	RenderTarget rttMain[2];
+	CComPtr<ID3D11SamplerState> rttIntegerScalingSampler, rttLinearScalingSampler;
 	int	presentRtt = 0;
 
 	std::vector<uint8_t> lastFrameHash{};
@@ -200,6 +228,25 @@ public:
 			coll.push_back(duration.count());
 		}
 	};
+
+	struct SamplerStateCache
+	{
+		struct Parameters
+		{
+			D3D11_FILTER Filter;
+			D3D11_TEXTURE_ADDRESS_MODE AddressU;
+			D3D11_TEXTURE_ADDRESS_MODE AddressV;
+			UINT MaxAnisotropy;
+
+			bool operator < (const Parameters& rhs) const noexcept;
+		};
+		CComPtr<ID3D11SamplerState> MakeState(Parameters desc);
+
+		CComPtr<ID3D11Device> device;
+		std::map<Parameters, CComPtr<ID3D11SamplerState>> samplerStates;
+	};
+
+	SamplerStateCache samplerStateCache;
 
 	std::chrono::time_point<std::chrono::steady_clock> beginFrameToc;
 	FrameStats frameStats;

@@ -508,6 +508,8 @@ void FreeWideString(wchar_t* str);
 char* NarrowANSIString(const wchar_t* str);
 char* NarrowOEMString(const wchar_t* str);
 char* NarrowUTF8String(const wchar_t* str);
+
+std::string NarrowUTF8StringStd(std::wstring_view str);
 #endif
 
 #ifndef _WIN32

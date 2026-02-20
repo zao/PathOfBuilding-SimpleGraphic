@@ -5,6 +5,10 @@
 //
 
 #include <glm/vec2.hpp>
+#include <atlbase.h>
+#include <atlcom.h>
+#include <d3d11_1.h>
+#include <dxgi.h>
 
 // =======
 // Classes
@@ -88,7 +92,6 @@ public:
 	virtual void	PurgeShaders() = 0;
 	virtual int		GetTexAsyncCount() = 0;
 
-	virtual void	SetClearColor(const col4_t col) = 0;
 	virtual void	SetDrawLayer(int layer, int subLayer = 0) = 0;
 	virtual void	SetDrawSubLayer(int subLayer) = 0;
 	virtual int		GetDrawLayer() = 0;

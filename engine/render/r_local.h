@@ -9,9 +9,6 @@
 
 #include "render.h"
 
-#include <glad/gles2.h>
-#include <glad/egl.h>
-
 #include "core/core_image.h"
 
 #include "r_texture.h"

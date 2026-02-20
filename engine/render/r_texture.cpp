@@ -11,6 +11,7 @@
 
 #include "cmp_core.h"
 #include "stb_image_resize.h"
+#include <gli/dx.hpp>
 #include <gli/gl.hpp>
 #include <gli/generate_mipmaps.hpp>
 
@@ -320,7 +321,11 @@ r_tex_c::~r_tex_c()
 	if (status >= IN_QUEUE && status < DONE) {
 		manager->AsyncRemove(this);
 	}
-	glDeleteTextures(1, &texId);
+}
+
+ID3D11ShaderResourceView* r_tex_c::GetShaderResourceView() const
+{
+	return srv;
 }
 
 void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_flags)
@@ -335,31 +340,6 @@ void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_
 	fileName = i_fileName;
 	fileWidth = 0;
 	fileHeight = 0;
-}
-
-void r_tex_c::Bind()
-{
-	if (status == DONE) {
-		glBindTexture(target, texId);
-	} else {
-		manager->blackTex->Bind();
-	}
-}
-
-void r_tex_c::Unbind()
-{
-	glBindTexture(target, 0);
-}
-
-void r_tex_c::Enable()
-{	
-	glEnable(GL_TEXTURE_2D);
-}
-
-void r_tex_c::Disable()
-{
-	Unbind();
-	glDisable(GL_TEXTURE_2D);
 }
 
 void r_tex_c::StartLoad()
@@ -619,67 +599,36 @@ static std::atomic<size_t> uploadedBytes = 0;
 
 void r_tex_c::Upload(image_c& img, int flags)
 {
-	static gli::gl gl(gli::gl::PROFILE_ES30);
+	static gli::dx dx;
 
 	const auto& tex = img.tex;
-	target = gl.translate(tex.target());
-	const auto format = gl.translate(tex.format(), tex.swizzles());
+	const auto format = tex.format();
+	const auto dx_format = dx.translate(format);
 
-	// Find and bind texture name
-	glGenTextures(1, &texId);
-	glBindTexture(target, texId);
-
-	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-	glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, 0);
-	glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, (GLint)tex.levels());
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, format.Swizzles.r);
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, format.Swizzles.g);
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, format.Swizzles.b);
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, format.Swizzles.a);
+	auto& device = renderer->dx11->device;
+	auto& dev_ctx = renderer->dx11->ctx;
+	CComPtr<ID3D11Texture2D> tex2d;
+	HRESULT hr = S_OK;
+	
+	D3D11_TEXTURE2D_DESC tex_desc{};
+	tex_desc.Width = tex.extent().x;
+	tex_desc.Height = tex.extent().y;
+	tex_desc.MipLevels = tex.levels();
+	tex_desc.ArraySize = tex.layers();
+	static_assert(sizeof(tex_desc.Format) == sizeof(dx_format.DXGIFormat));
+	memcpy(&tex_desc.Format, &dx_format.DXGIFormat, sizeof(tex_desc.Format));
+	tex_desc.SampleDesc = {1, 0};
+	tex_desc.Usage = D3D11_USAGE_IMMUTABLE;
+	tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	tex_desc.CPUAccessFlags = 0;
+	tex_desc.MiscFlags = 0;
 
 	const int miplevels = (int)tex.levels();
-
-	// Set filters
-	if (miplevels == 1) {
-		glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	}
-	else {
-		glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	}
-	if (flags & TF_NEAREST) {
-		glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	}
-	else {
-		glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	}
-
-	constexpr float anisotropyCap = 16.0f;
-	static const float maxAnisotropy = [] {
-		float ret{};
-		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &ret);
-		return ret;
-		}();
-	glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY, (std::min)(maxAnisotropy, anisotropyCap));
-
-	// Set repeating
-	if (flags & TF_CLAMP) {
-		glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	}
-	else {
-		glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	}
-
 	const int layers = (int)tex.layers();
 	const auto extent = tex.extent();
-	const bool isTextureArray = target == GL_TEXTURE_2D_ARRAY;
 
-	if (isTextureArray)
-		glTexStorage3D(target, miplevels, format.Internal, extent.x, extent.y, layers);
-	else
-		glTexStorage2D(target, miplevels, format.Internal, extent.x, extent.y);
+	D3D11_SUBRESOURCE_DATA fill_srd{};
+	std::vector<D3D11_SUBRESOURCE_DATA> srds(layers * miplevels, fill_srd);
 
 	for (int layer = 0; layer < layers; ++layer) {
 		for (int miplevel = 0; miplevel < miplevels; ++miplevel) {
@@ -689,19 +638,40 @@ void r_tex_c::Upload(image_c& img, int flags)
 			const int up_w = extent.x;
 			const int up_h = extent.y;
 
+			auto& srd = srds[layer * miplevels + miplevel];
+			srd.pSysMem = tex.data(layer, 0, miplevel);
+			srd.SysMemPitch = gli::block_size(tex.format()) * up_w / gli::block_extent(tex.format()).x;
+
 			// Upload the mipmap
 			uploadedBytes += tex.size(miplevel);
-			const auto* data = tex.data(layer, 0, miplevel);
-			if (is_compressed(tex.format()))
-				if (isTextureArray)
-					glCompressedTexSubImage3D(target, miplevel, 0, 0, layer, extent.x, extent.y, 1, format.Internal, (GLsizei)tex.size(miplevel), data);
-				else
-					glCompressedTexSubImage2D(target, miplevel, 0, 0, extent.x, extent.y, format.Internal, (GLsizei)tex.size(miplevel), data);
-			else
-				if (isTextureArray)
-					glTexSubImage3D(target, miplevel, 0, 0, layer, extent.x, extent.y, 1, format.External, format.Type, data);
-				else
-					glTexSubImage2D(target, miplevel, 0, 0, extent.x, extent.y, format.External, format.Type, data);
 		}
+	}
+
+	if (hr = device->CreateTexture2D(&tex_desc, srds.data(), &tex2d); FAILED(hr)) {
+	}
+	if (hr = device->CreateShaderResourceView(tex2d, nullptr, &srv); FAILED(hr)) {
+	}
+
+	D3D11_SAMPLER_DESC sampler_desc{};
+
+	const bool unmipped = miplevels == 1;
+	const bool nearest_filter = !!(flags & TF_NEAREST);
+
+	sampler_desc.Filter = D3D11_FILTER_ANISOTROPIC;
+
+	// Set repeating
+	const bool clamp_uv = !!(flags & TF_CLAMP);
+	sampler_desc.AddressU = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+	sampler_desc.AddressV = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+	sampler_desc.AddressW = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+	
+	sampler_desc.MipLODBias = 0.0f;
+	sampler_desc.MaxAnisotropy = D3D11_MAX_MAXANISOTROPY;
+	sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	std::fill_n(sampler_desc.BorderColor, 4, 1.0f);
+	sampler_desc.MinLOD = -FLT_MAX;
+	sampler_desc.MaxLOD = +FLT_MAX;
+
+	if (hr = device->CreateSamplerState(&sampler_desc, &sampler_state)) {
 	}
 }

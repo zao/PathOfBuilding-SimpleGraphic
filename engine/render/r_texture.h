@@ -36,15 +36,18 @@ public:
 	std::atomic<dword> fileWidth;
 	std::atomic<dword> fileHeight;
 	std::unique_ptr<image_c> img;
-	GLenum target{};
+
+	CComPtr<ID3D11ShaderResourceView> srv;
+	CComPtr<ID3D11SamplerState> sampler_state;
+
 	size_t stackLayers = 1;
 
 	r_tex_c(class r_ITexManager* manager, std::string_view fileName, int flags);
 	r_tex_c(class r_ITexManager* manager, std::unique_ptr<image_c> img, int flags);
 	~r_tex_c();
 
-	void	Bind();
-	void	Unbind();
+	ID3D11ShaderResourceView* GetShaderResourceView() const;
+
 	void	Enable();
 	void	Disable();
 	void	StartLoad();

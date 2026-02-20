@@ -752,7 +752,9 @@ static int l_SetClearColor(lua_State* L)
 	else {
 		color[3] = 1.0;
 	}
-	ui->renderer->SetClearColor(color);
+
+	// NOTE: not setting render clear colour anymore, not used anywhere
+
 	return 0;
 }
 

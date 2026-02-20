@@ -386,24 +386,26 @@ wchar_t* WidenUTF8String(const char* str)
 	return WidenCodepageString(str, CP_UTF8);
 }
 
-char* NarrowCodepageString(const wchar_t* str, UINT codepage)
+char* NarrowCodepageString(const wchar_t* str, UINT codepage, std::optional<size_t> len = std::nullopt)
 {
 	if (!str) {
 		return nullptr;
 	}
-	if (!*str) {
+	if (!len) {
+		len = wcslen(str);
+	}
+	if (!*len) {
 		char* nstr = new char[1];
 		*nstr = '\0';
 		return nstr;
 	}
-	DWORD cch = (DWORD)wcslen(str);
-	int cb = WideCharToMultiByte(codepage, 0, str, cch, nullptr, 0, nullptr, nullptr);
+	int cb = WideCharToMultiByte(codepage, 0, str, (DWORD)*len, nullptr, 0, nullptr, nullptr);
 	if (cb == 0) {
 		// Invalid string or other error.
 		return nullptr;
 	}
 	char* nstr = new char[cb + 1];
-	WideCharToMultiByte(codepage, 0, str, cch, nstr, cb, nullptr, nullptr);
+	WideCharToMultiByte(codepage, 0, str, (DWORD)*len, nstr, cb, nullptr, nullptr);
 	nstr[cb] = '\0';
 	return nstr;
 }
@@ -428,6 +430,14 @@ char* NarrowOEMString(const wchar_t* str)
 char* NarrowUTF8String(const wchar_t* str)
 {
 	return NarrowCodepageString(str, CP_UTF8);
+}
+
+std::string NarrowUTF8StringStd(std::wstring_view str)
+{
+	const auto* narrow = NarrowCodepageString(str.data(), CP_UTF8, str.size());
+	std::string ret = narrow ? narrow : "";
+	FreeString(narrow);
+	return ret;
 }
 
 IndexedUTF32String IndexUTF8ToUTF32(std::string_view input)
