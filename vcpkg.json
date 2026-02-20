@@ -2,7 +2,6 @@
   "name": "path-of-building-simplegraphic",
   "version": "2.5",
   "dependencies": [
-    "angle",
     "curl",
     "fmt",
     "glfw3",

@@ -117,7 +117,6 @@ target_include_directories(SimpleGraphic
     "${CMAKE_CURRENT_SOURCE_DIR}/engine"
 )
 
-find_package(unofficial-angle CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -168,10 +167,6 @@ add_library(imgui STATIC
     dep/imgui/misc/cpp/imgui_stdlib.h
 )
 
-target_compile_definitions(imgui PUBLIC
-    "IMGUI_IMPL_OPENGL_ES2"
-)
-
 target_include_directories(imgui PUBLIC
     dep/imgui
     dep/imgui/backends
@@ -179,7 +174,6 @@ target_include_directories(imgui PUBLIC
 )
 
 target_link_libraries(imgui PUBLIC
-    unofficial::angle::libGLESv2
     glfw
 )
 
@@ -226,8 +220,6 @@ endif ()
 
 target_link_libraries(SimpleGraphic
     PRIVATE
-    unofficial::angle::libEGL
-    unofficial::angle::libGLESv2
     cmp_core
     fmt::fmt
     glfw
