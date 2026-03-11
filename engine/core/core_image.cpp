@@ -50,16 +50,22 @@ bool image_c::CopyRaw(int type, dword inWidth, dword inHeight, const byte* inDat
 
 	const int comp = type & 0xF;
 	size_t dataSize = extent.x * extent.y * comp;
+	std::optional<std::vector<byte>> rgbaData;
 
 	switch (comp) {
 	case 0:
 		tex = {};
 		return false;
 	case 1:
-		format = gli::format::FORMAT_L8_UNORM_PACK8;
+		// TODO(zao): maybe use R8 and a custom shader for these to save font VRAM
+		format = gli::format::FORMAT_RGBA8_UNORM_PACK8;
+		rgbaData = GrayToRgba(gsl::make_span(inDat, dataSize));
+		dataSize = rgbaData->size();
 		break;
 	case 3:
-		format = gli::format::FORMAT_RGB8_UNORM_PACK8;
+		format = gli::format::FORMAT_RGBA8_UNORM_PACK8;
+		rgbaData = RgbToRgba(gsl::make_span(inDat, dataSize));
+		dataSize = rgbaData->size();
 		break;
 	case 4:
 		format = gli::format::FORMAT_RGBA8_UNORM_PACK8;
@@ -68,10 +74,7 @@ bool image_c::CopyRaw(int type, dword inWidth, dword inHeight, const byte* inDat
 		return false;
 	}
 	tex = gli::texture2d_array(format, extent, 1, 1);
-	if (tex.size(0) == dataSize)
-		memcpy(tex.data(0, 0, 0), inDat, dataSize);
-	else
-		assert(tex.size(0) == dataSize);
+	memcpy(tex.data(0, 0, 0), rgbaData ? rgbaData->data() : inDat, dataSize);
 	return true;
 }
 
@@ -218,7 +221,6 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 				int rlen = ((rlehdr & 0x7F) + 1) * comp; 
 				if (x + rlen > rowSize) {
 					con->Warning("TGA '%s': invalid RLE coding (overlong row)", nameU8.c_str());
-					delete[] dat;
 					return true;
 				}
 				if (rlehdr & 0x80) {
@@ -524,4 +526,38 @@ bool webp_c::Save(std::filesystem::path const& fileName)
 {
 	// Nope.
 	return true;
+}
+
+std::vector<byte> GrayToRgba(gsl::span<const byte> data)
+{
+	const size_t nPix = data.size();
+	std::vector<byte> ret(nPix * 4);
+	auto* p1 = data.data();
+	auto* p2 = ret.data();
+	for (size_t i = 0; i < nPix; ++i, ++p1)
+	{
+		*p2++ = *p1;
+		*p2++ = *p1;
+		*p2++ = *p1;
+		*p2++ = 0xFF;
+	}
+	assert(p1 == data.data() + data.size_bytes());
+	return ret;
+}
+
+std::vector<byte> RgbToRgba(gsl::span<const byte> data)
+{
+	const size_t nPix = data.size() / 3;
+	std::vector<byte> ret(nPix * 4);
+	auto* p1 = data.data();
+	auto* p2 = ret.data();
+	for (size_t i = 0; i < nPix; ++i)
+	{
+		*p2++ = *p1++;
+		*p2++ = *p1++;
+		*p2++ = *p1++;
+		*p2++ = 0xFF;
+	}
+	assert(p1 == data.data() + data.size_bytes());
+	return ret;
 }

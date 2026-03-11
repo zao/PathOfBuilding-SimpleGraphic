@@ -48,8 +48,6 @@ public:
 
 	ID3D11ShaderResourceView* GetShaderResourceView() const;
 
-	void	Enable();
-	void	Disable();
 	void	StartLoad();
 	void	AbortLoad();
 	void	ForceLoad();

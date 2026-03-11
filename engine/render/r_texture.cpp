@@ -10,6 +10,7 @@
 #include "r_local.h"
 
 #include "cmp_core.h"
+#include "fmt/core.h"
 #include "stb_image_resize.h"
 #include <gli/dx.hpp>
 #include <gli/gl.hpp>
@@ -312,7 +313,7 @@ r_tex_c::r_tex_c(r_ITexManager* manager, std::unique_ptr<image_c> img, int flags
 	Init(manager, {}, flags);
 
 	// Direct upload
-	img = BuildMipSet(std::move(img));
+	this->img = BuildMipSet(std::move(img));
 	PerformUpload(this);
 }
 
@@ -615,6 +616,9 @@ void r_tex_c::Upload(image_c& img, int flags)
 	tex_desc.Height = tex.extent().y;
 	tex_desc.MipLevels = tex.levels();
 	tex_desc.ArraySize = tex.layers();
+	if (!(dx_format.DDPixelFormat & gli::dx::DDPF_FOURCC) || dx_format.D3DFormat != gli::dx::D3DFMT_DX10)
+		renderer->sys->Error(fmt::format("Non-DXGI format pf={}, d3d={} in \"{}\"",
+			(int)dx_format.DDPixelFormat, (int)dx_format.D3DFormat, this->fileName).c_str());
 	static_assert(sizeof(tex_desc.Format) == sizeof(dx_format.DXGIFormat));
 	memcpy(&tex_desc.Format, &dx_format.DXGIFormat, sizeof(tex_desc.Format));
 	tex_desc.SampleDesc = {1, 0};
@@ -657,21 +661,14 @@ void r_tex_c::Upload(image_c& img, int flags)
 	const bool unmipped = miplevels == 1;
 	const bool nearest_filter = !!(flags & TF_NEAREST);
 
-	sampler_desc.Filter = D3D11_FILTER_ANISOTROPIC;
 
 	// Set repeating
 	const bool clamp_uv = !!(flags & TF_CLAMP);
-	sampler_desc.AddressU = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
-	sampler_desc.AddressV = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
-	sampler_desc.AddressW = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
-	
-	sampler_desc.MipLODBias = 0.0f;
-	sampler_desc.MaxAnisotropy = D3D11_MAX_MAXANISOTROPY;
-	sampler_desc.ComparisonFunc = D3D11_COMPARISON_NEVER;
-	std::fill_n(sampler_desc.BorderColor, 4, 1.0f);
-	sampler_desc.MinLOD = -FLT_MAX;
-	sampler_desc.MaxLOD = +FLT_MAX;
+	r_renderer_c::SamplerStateCache::Parameters sampler_params{};
+	sampler_params.Filter = D3D11_FILTER_ANISOTROPIC;
+	sampler_params.AddressU = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+	sampler_params.AddressV = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+	sampler_params.MaxAnisotropy = D3D11_MAX_MAXANISOTROPY;
 
-	if (hr = device->CreateSamplerState(&sampler_desc, &sampler_state)) {
-	}
+	sampler_state = renderer->samplerStateCache.MakeState(sampler_params);
 }

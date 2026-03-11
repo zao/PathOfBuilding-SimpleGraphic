@@ -9,6 +9,7 @@
 // =============
 
 #define R_MAXSHADERS 65536
+constexpr const bool debug_d3d11 = false;
 
 #include <array>
 #include <chrono>
@@ -50,7 +51,7 @@ public:
 	void	Bind(r_tex_c* tex);
 	void	Color(col4_t col);
 	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer = 0, int maskLayer = -1);
-	void	Render();
+	void	Render(class RenderStrategy&);
 	void    Discard();
 
 	struct CmdHandle {
@@ -82,6 +83,7 @@ public:
 	D3D_FEATURE_LEVEL feature_level{};
 
 	DXGI_SWAP_CHAIN_DESC scd{};
+	std::unordered_map<r_blendMode_e, CComPtr<ID3D11BlendState>> blendStates;
 
 	void ResizeIfNeeded(glm::ivec2 size);
 };
@@ -159,7 +161,7 @@ public:
 
 	col4_t	drawColor = {};		// Current draw color
 
-	r_viewport_s curViewport; // Current viewport
+	r_viewport_s curViewport{}; // Current viewport
 	int		curBlendMode = 0;	// Current blend mode
 
 	int		numShader = 0;
@@ -200,6 +202,10 @@ public:
 		CComPtr<ID3D11InputLayout> inputLayout;
 		D3D11_SHADER_INPUT_BIND_DESC colorTextureBind;
 		D3D11_SHADER_INPUT_BIND_DESC colorSamplerBind;
+
+		CComPtr<ID3D11BlendState> blendState;
+		CComPtr<ID3D11DepthStencilState> depthState;
+		CComPtr<ID3D11RasterizerState> rasterState;
 	};
 
 	bool apiDpiAware{};

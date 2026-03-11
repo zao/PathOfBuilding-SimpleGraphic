@@ -9,6 +9,7 @@
 // =======
 
 #include <functional>
+#include <gsl/span>
 #include <optional>
 
 #include <gli/texture2d_array.hpp>
@@ -39,6 +40,9 @@ constexpr imageType_s g_imageTypeFromComp[]{
 	IMGTYPE_RGB,
 	IMGTYPE_RGBA,
 };
+
+std::vector<byte> GrayToRgba(gsl::span<const byte> data);
+std::vector<byte> RgbToRgba(gsl::span<const byte> data);
 
 // Image
 class image_c {

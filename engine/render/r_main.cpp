@@ -151,7 +151,7 @@ struct r_layerCmdViewport_s {
 
 struct r_layerCmdBlend_s {
 	r_layerCmd_s::Command cmd;
-	int blendMode;
+	r_blendMode_e blendMode;
 };
 
 struct r_layerCmdBind_s {
@@ -251,7 +251,7 @@ void r_layer_c::SetBlendMode(int mode)
 {
 	if (auto* cmd = (r_layerCmdBlend_s*)NewCommand(CommandSize(r_layerCmd_s::BLEND))) {
 		cmd->cmd = r_layerCmd_s::BLEND;
-		cmd->blendMode = mode;
+		cmd->blendMode = (r_blendMode_e)mode;
 	}
 }
 
@@ -293,7 +293,7 @@ struct r_aabb_s {
 	float hi[2];
 };
 
-r_aabb_s AabbFromCmdQuad(decltype(r_layerCmdQuad_s::quad)& q, r_viewport_s& vp)
+r_aabb_s AabbFromCmdQuad(const decltype(r_layerCmdQuad_s::quad)& q, r_viewport_s& vp)
 {
 	r_aabb_s r{
 		{+FLT_MAX, +FLT_MAX},
@@ -328,90 +328,23 @@ bool AabbAabbIntersects(r_aabb_s& a, r_aabb_s& b)
 }
 
 struct Vertex {
-	float x, y;
-	float u, v;
-	float r, g, b, a;
-	float viewX, viewY, viewW, viewH;
+	glm::vec2 pos;
+	glm::vec2 tc;
+	glm::vec4 color;
+	glm::vec2 viewPos, viewSize;
 	float texId, stackIdx, maskIdx;
+
+	Vertex&& Position(glm::vec2 val) && noexcept { pos = val; return std::move(*this); }
+	Vertex&& Texcoord(glm::vec2 val) && noexcept { tc = val; return std::move(*this); }
+	Vertex&& Color(glm::vec4 val) && noexcept { color = val; return std::move(*this); }
+	Vertex&& Viewport(glm::vec2 pos, glm::vec2 size) && noexcept { viewPos = pos; viewSize = size; return std::move(*this); }
+	Vertex&& Texture(float tex, float stack, float mask) && noexcept { texId = tex; stackIdx = stack; maskIdx = mask; return std::move(*this); }
 };
-
-struct Batch {
-	explicit Batch(r_renderer_c::ShaderProgram& prog);
-	Batch(Batch&& rhs);
-	Batch& operator = (Batch&& rhs);
-	Batch(Batch const&) = delete;
-	Batch& operator = (Batch const&) = delete;
-	~Batch();
-
-	r_renderer_c::ShaderProgram* prog;
-
-	std::vector<Vertex> vertices;
-	CComPtr<ID3D11InputLayout> inputLayout;
-
-	void Execute();
-};
-
-Batch::Batch(r_renderer_c::ShaderProgram& prog)
-	: prog(&prog)
-{
-	std::array<D3D11_INPUT_ELEMENT_DESC, 5> ieds{
-		D3D11_INPUT_ELEMENT_DESC{"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, x), D3D11_INPUT_PER_VERTEX_DATA, 0},
-		D3D11_INPUT_ELEMENT_DESC{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, u), D3D11_INPUT_PER_VERTEX_DATA, 0},
-		D3D11_INPUT_ELEMENT_DESC{"TINT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, r), D3D11_INPUT_PER_VERTEX_DATA, 0},
-		D3D11_INPUT_ELEMENT_DESC{"VIEWPORT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, viewX), D3D11_INPUT_PER_VERTEX_DATA, 0},
-		D3D11_INPUT_ELEMENT_DESC{"TEX_ID", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, texId), D3D11_INPUT_PER_VERTEX_DATA, 0},
-	};
-	prog.dx11->device->CreateInputLayout(ieds.data(), ieds.size(), prog.vsBytecode->GetBufferPointer(), prog.vsBytecode->GetBufferSize(), &inputLayout);
-}
-
-Batch::Batch(Batch&& rhs)
-	: prog(rhs.prog)
-	, vertices(std::move(rhs.vertices))
-	, inputLayout(inputLayout)
-{
-}
-
-Batch& Batch::operator = (Batch&& rhs) {
-	prog = rhs.prog;
-	vertices = std::move(rhs.vertices);
-	inputLayout = rhs.inputLayout;
-
-	return *this;
-}
-
-Batch::~Batch() {}
-
-void Batch::Execute()
-{
-	if (vertices.empty()) {
-		return;
-	}
-
-	auto* dev = prog->dx11->device.p;
-	auto* ctx = prog->dx11->ctx.p;
-	
-	gsl::span<const Vertex> verts = vertices;
-	D3D11_BUFFER_DESC vb_desc{};
-	vb_desc.ByteWidth = verts.size_bytes();
-	vb_desc.Usage = D3D11_USAGE_IMMUTABLE;
-	vb_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-
-	D3D11_SUBRESOURCE_DATA vb_srd{verts.data()};
-
-	CComPtr<ID3D11Buffer> vb;
-	dev->CreateBuffer(&vb_desc, &vb_srd, &vb);
-	const UINT stride = sizeof(Vertex);
-	const UINT offset = 0u;
-	ctx->IASetInputLayout(inputLayout);
-	ctx->IASetVertexBuffers(0, 1, &vb.p, &stride, &offset);
-	ctx->Draw(verts.size(), 0);
-	vertices.clear();
-}
 
 struct RenderStrategy {
 	virtual ~RenderStrategy() = default;
 
-	virtual void ProcessCommand(r_layerCmd_s* cmd) = 0;
+	virtual void ProcessCommand(const r_layerCmd_s* cmd) = 0;
 	virtual void Flush() = 0;
 	virtual void SetShowStats(bool showStats) { showStats_ = showStats; }
 
@@ -425,276 +358,286 @@ static std::map<r_blendMode_e, char const*> const s_blendModeString{
 	{RB_ADDITIVE, "RB_ADDITIVE"},
 };
 
-struct AdjacentMergeStrategy : RenderStrategy {
-	AdjacentMergeStrategy(r_layer_c* layer, r_renderer_c* renderer, r_renderer_c::ShaderProgram& prog)
-		: layer_(layer), renderer_(renderer), prog_(prog), batch_(prog)
+struct DirectBatching : RenderStrategy
+{
+	DirectBatching(r_layer_c* layer, r_renderer_c* renderer)
+		: renderer(renderer)
+		, prog(renderer->tintedTextureProgram)
 	{
-		D3D11_SHADER_INPUT_BIND_DESC tex_bind_desc{};
-		prog.psReflect->GetResourceBindingDescByName("s_tex", &tex_bind_desc);
-		texLocs_.push_back(tex_bind_desc.BindPoint);
-		batchTextureCap_ = texLocs_.size();
+		auto& vid = renderer->sys->video->vid;
+		auto& dx11 = prog.dx11;
 
-		D3D11_SHADER_INPUT_BIND_DESC vs_cb_bind_desc{};
-		prog.vsReflect->GetResourceBindingDescByName("CB", &vs_cb_bind_desc);
-		frameCbLoc_ = vs_cb_bind_desc.BindPoint;
+		std::array<D3D11_INPUT_ELEMENT_DESC, 5> ieds{
+			D3D11_INPUT_ELEMENT_DESC{"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
+			D3D11_INPUT_ELEMENT_DESC{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, tc), D3D11_INPUT_PER_VERTEX_DATA, 0},
+			D3D11_INPUT_ELEMENT_DESC{"TINT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+			D3D11_INPUT_ELEMENT_DESC{"VIEWPORT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, viewPos), D3D11_INPUT_PER_VERTEX_DATA, 0},
+			D3D11_INPUT_ELEMENT_DESC{"TEX_ID", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, texId), D3D11_INPUT_PER_VERTEX_DATA, 0},
+		};
+		HRESULT hr = dx11->device->CreateInputLayout(ieds.data(), ieds.size(), prog.vsBytecode->GetBufferPointer(), prog.vsBytecode->GetBufferSize(), &inputLayout);
+		if (FAILED(hr))
+			dx11->sys->Error("Could not create input layout for batch");
+
+		geomVs = prog.vs;
+		geomPs = prog.ps;
+
+		renderViewport = {0, 0, (float)vid.size[0], (float)vid.size[1], 0.0f, 1.0f};
+
+		D3D11_RASTERIZER_DESC rasterDesc{};
+		rasterDesc.FillMode = D3D11_FILL_SOLID;
+		rasterDesc.CullMode = D3D11_CULL_NONE;
+		if (HRESULT hr = dx11->device->CreateRasterizerState(&rasterDesc, &rasterState); FAILED(hr)) {
+			prog.dx11->sys->Error(fmt::format("Could not create batch rasteriser state:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+		}
+
+		NewBatch();
+	}
+
+	void ProcessCommand(const r_layerCmd_s* cmd) override
+	{
+		switch (cmd->cmd)
+		{
+		case r_layerCmd_s::BIND: {
+			auto* c = reinterpret_cast<const r_layerCmdBind_s*>(cmd);
+			auto [I, unknown] = texDedup.emplace(c->tex, textures.size());
+			if (unknown)
+				textures.emplace_back(c->tex);
+			latch.texSlot = I->second;
+		} break;
+		case r_layerCmd_s::BLEND: {
+			auto* c = reinterpret_cast<const r_layerCmdBlend_s*>(cmd);
+			if (latch.blend != c->blendMode && batches.back().ShouldDraw())
+				NewBatch();
+			latch.blend = c->blendMode;
+		} break;
+		case r_layerCmd_s::COLOR: {
+			auto* c = reinterpret_cast<const r_layerCmdColor_s*>(cmd);
+			latch.color = glm::make_vec4(c->col);
+		} break;
+		case r_layerCmd_s::QUAD: {
+			auto* c = reinterpret_cast<const r_layerCmdQuad_s*>(cmd);
+			auto& q = c->quad;
+
+			if (auto& b = batches.back(); b.vtxCount && b.texSlot != latch.texSlot)
+				NewBatch();
+
+			std::array<Vertex, 4> verts{};
+			for (size_t i = 0; i < 4; ++i) {
+				auto& v = verts[i];
+				v.pos = {q.x[i], q.y[i]};
+				v.tc = {q.s[i], q.t[i]};
+				v.color = latch.color;
+				v.viewPos = {latch.viewport.x, latch.viewport.y};
+				v.viewSize = {latch.viewport.width, latch.viewport.height};
+				v.texId = (float)latch.texSlot;
+				v.stackIdx = (float)c->quad.stackLayer;
+				v.maskIdx = (float)c->quad.maskLayer;
+			}
+			for (size_t idx : {0, 1, 2, 0, 2, 3})
+				verticesCpu.emplace_back(verts[idx]);
+			auto& b = batches.back();
+			b.texSlot = latch.texSlot;
+			b.vtxCount += 6;
+		} break;
+		case r_layerCmd_s::VIEWPORT: {
+			auto* c = reinterpret_cast<const r_layerCmdViewport_s*>(cmd);
+			latch.viewport = c->viewport;
+		} break;
+		}
+	}
+
+	void Flush() override
+	{
+		auto& dx11 = renderer->dx11;
+		auto* dev = dx11->device.p;
+		auto* ctx = dx11->ctx.p;
+
+		gsl::span<const Vertex> verts(verticesCpu);
+		if (verts.empty())
+			return;
+
+		D3D11_BUFFER_DESC vbDesc{};
+		vbDesc.ByteWidth = verts.size_bytes();
+		vbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+		vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+		D3D11_SUBRESOURCE_DATA vbSrd{};
+		vbSrd.pSysMem = verts.data();
+
+		HRESULT hr = dev->CreateBuffer(&vbDesc, &vbSrd, &verticesGpu);
+		if (FAILED(hr))
+			return;
+
+		// Common setup
+		ctx->IASetInputLayout(inputLayout.p);
+		ctx->IASetPrimitiveTopology(primitiveTopology);
+
+		// Input assembly
+		const UINT stride = sizeof(Vertex);
+		const UINT offset = 0;
+		ctx->IASetVertexBuffers(0, 1, &verticesGpu.p, &stride, &offset);
+		ctx->IASetIndexBuffer(indicesGpu.p, indexFormat, 0); // might be null of unknown format
+
+		// TODO(zao): set up constant buffers and stuff
 		struct FrameCbGpu
 		{
 			glm::mat4 mvpMatrix;
 		};
-		
+
+		D3D11_VIEWPORT viewport{};
 		FrameCbGpu frame_cb_gpu{};
 		{
-			auto& vid = renderer_->sys->video->vid;
+			auto& vid = renderer->sys->video->vid;
 			float fbScaleX = vid.fbSize[0] / (float)vid.size[0];
 			float fbScaleY = vid.fbSize[1] / (float)vid.size[1];
-			int virtualW = renderer_->VirtualScreenWidth();
-			int virtualH = renderer_->VirtualScreenHeight();
-			// TODO(zao): set up render state like viewport
-			//glViewport(0, 0, virtualW, virtualH);
+			int virtualW = renderer->VirtualScreenWidth();
+			int virtualH = renderer->VirtualScreenHeight();
 			Mat4 mvpMatrix = OrthoMatrix(0, virtualW, virtualH, 0, -9999, 9999);
 			frame_cb_gpu.mvpMatrix = glm::make_mat4(mvpMatrix.data());
-		}
-		D3D11_BUFFER_DESC cb_desc{};
-		cb_desc.ByteWidth = sizeof(FrameCbGpu);
-		cb_desc.Usage = D3D11_USAGE_IMMUTABLE;
-		cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 
-		D3D11_SUBRESOURCE_DATA cb_srd{&frame_cb_gpu};
-		CComPtr<ID3D11Buffer> frame_cb;
-		auto* dev = renderer->dx11->device.p;
-		auto* ctx = renderer->dx11->ctx.p;
-		dev->CreateBuffer(&cb_desc, &cb_srd, &frame_cb);
+			viewport = {0, 0, (float)vid.size[0], (float)vid.size[1], 0.0f, 1.0f};
 
-		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		ctx->VSSetConstantBuffers(frameCbLoc_, 1, &frame_cb.p);
-		ctx->VSSetShader(prog.vs, nullptr, 0);
-		ctx->PSSetShader(prog.ps, nullptr, 0);
-	}
+			D3D11_BUFFER_DESC cb_desc{};
+			cb_desc.ByteWidth = sizeof(FrameCbGpu);
+			cb_desc.Usage = D3D11_USAGE_IMMUTABLE;
+			cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 
-	~AdjacentMergeStrategy() {
-	}
-
-	struct BatchKey {
-		int blendMode = -1;
-
-		bool operator < (BatchKey const& rhs) const {
-			return blendMode < rhs.blendMode;
+			D3D11_SUBRESOURCE_DATA cb_srd{&frame_cb_gpu, sizeof(frame_cb_gpu)};
+			dev->CreateBuffer(&cb_desc, &cb_srd, &frameConstantsVsGpu.p);
 		}
 
-		bool operator == (BatchKey const& rhs) const {
-			return !(*this < rhs) && !(rhs < *this);
-		}
+		// Vertex shader
+		ctx->VSSetShader(geomVs.p, nullptr, 0);
+		ctx->VSSetConstantBuffers(FrameConstantSlot(ConstantScope::Frame, ConstantShaderType::Vertex), 1, &frameConstantsVsGpu.p);
 
-		bool operator != (BatchKey const& rhs) const {
-			return !(*this == rhs);
-		}
-	};
+		// Pixel shader
+		ctx->PSSetShader(geomPs.p, nullptr, 0);
+		ctx->PSSetConstantBuffers(FrameConstantSlot(ConstantScope::Frame, ConstantShaderType::Pixel), 1, &frameConstantsPsGpu.p);
 
-	void ProcessCommand(r_layerCmd_s* cmd) override {
-		switch (cmd->cmd) {
-		case r_layerCmd_s::VIEWPORT: {
-			auto* c = (r_layerCmdViewport_s*)cmd;
-			nextViewport_ = c->viewport;
-			if (showStats_) {
-				// ImGui::Text("VIEWPORT: %dx%d @ %d,%d", c->viewport.width, c->viewport.height, c->viewport.x, c->viewport.y);
-			}
-		} break;
-		case r_layerCmd_s::BLEND: {
-			auto* c = (r_layerCmdBlend_s*)cmd;
-			latchKey_.blendMode = c->blendMode;
-			if (showStats_) {
-				// ImGui::Text("BLEND: %s", s_blendModeString.at((r_blendMode_e)c->blendMode));
-			}
-		} break;
-		case r_layerCmd_s::BIND: {
-			auto* c = (r_layerCmdBind_s*)cmd;
-			nextTex_ = c->tex;
-			if (showStats_) {
-				// ImGui::Text("TEX: %s", c->tex->fileName.c_str());
-			}
-		} break;
-		case r_layerCmd_s::COLOR: {
-			auto* c = (r_layerCmdColor_s*)cmd;
-			std::copy_n(c->col, 4, tint_.data());
-		} break;
-		case r_layerCmd_s::QUAD: {
-			auto* c = (r_layerCmdQuad_s*)cmd;
-			if (showStats_) {
-				// ImGui::Text("QUAD");
-			}
+		// Rasteriser
+		ctx->RSSetViewports(1, &renderViewport);
+		ctx->RSSetState(rasterState);
 
-			// Cull the quad first before it influences any boundary cuts.
-			if (!!renderer_->r_drawCull->intVal) {
-				auto a = AabbFromCmdQuad(c->quad, nextViewport_);
-				auto b = AabbFromViewport(nextViewport_);
-				bool intersects = AabbAabbIntersects(a, b);
-				if (!intersects) {
-					break;
-				}
-			}
+		// Output merger
 
-			// If the current batch is incompatible key-wise, dispatch it to get a fresh
-			// batch to grow in.
-			if (!batch_.batch.vertices.empty() && batch_.key != latchKey_) {
-				Dispatch();
-			}
-			batch_.key = latchKey_;
-
-			// Check current (and only) batch if the texture set has the latched texture.
-			// If it's there, use its index as vertex attribute.
-			// If it's not, insert it if room, otherwise dispatch batch and prepare a fresh one.
-			size_t texSlot{};
-			{
-				auto& textures = batch_.textures;
-				auto texI = std::find(textures.begin(), textures.end(), nextTex_);
-				if (texI == textures.end()) {
-					if (textures.size() == batchTextureCap_) {
-						Dispatch();
-					}
-					texI = textures.insert(textures.end(), nextTex_);
-				}
-				texSlot = std::distance(textures.begin(), texI);
-			}
-
-			Vertex quad[4]{};
-			for (int v = 0; v < 4; v++) {
-				auto& q = quad[v];
-				auto& vp = nextViewport_;
-				q.u = c->quad.s[v];
-				q.v = c->quad.t[v];
-				q.x = c->quad.x[v];
-				q.y = c->quad.y[v];
-				q.r = tint_[0];
-				q.g = tint_[1];
-				q.b = tint_[2];
-				q.a = tint_[3];
-				q.viewX = (float)vp.x;
-				q.viewY = (float)vp.y;
-				q.viewW = (float)vp.width;
-				q.viewH = (float)vp.height;
-				q.texId = (float)texSlot;
-				q.stackIdx = (float)c->quad.stackLayer;
-				q.maskIdx = (float)c->quad.maskLayer;
-			}
-			// 3-2
-			// |/|
-			// 0-1
-			size_t indices[] = { 0, 1, 2, 0, 2, 3 };
-			for (auto idx : indices) {
-				batch_.batch.vertices.push_back(quad[idx]);
-			}
-			totalVertexCount_ += std::size(indices);
-		} break;
-		}
-	}
-
-	void Flush() {
-		if (!batch_.batch.vertices.empty()) {
-			Dispatch();
-		}
-		if (showStats_) {
-			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex);
-		}
-	}
-
-private:
-	void Dispatch() {
-		auto* dev = renderer_->dx11->device.p;
-		auto* ctx = renderer_->dx11->ctx.p;
-
-		auto& batch = batch_.batch;
-		auto& textures = batch_.textures;
-		size_t vertexCount = batch.vertices.size();
-
-		auto& key = batch_.key;
-		auto& lastKey = lastDispatchKey_;
-
-		if (showStats_) {
-			ImGui::Text("Batch %d", batchIndex);
-			ImGui::Text("%d verts", vertexCount);
-		}
-
-		// TODO(zao): set up blend mode
-		if (!lastKey || lastKey->blendMode != key.blendMode) {
-			if (showStats_) {
-				ImGui::Text("New blend mode %s", s_blendModeString.at((r_blendMode_e)key.blendMode));
-			}
-			//switch (key.blendMode) {
-			//case RB_ALPHA:
-			//	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-			//	break;
-			//case RB_PRE_ALPHA:
-			//	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-			//	break;
-			//case RB_ADDITIVE:
-			//	glBlendFunc(GL_ONE, GL_ONE);
-			//	break;
-			//}
-		}
+		// Now rapid-fire the batches
+		for (auto& batch : batches)
 		{
-			const auto& dev_ctx = renderer_->dx11->ctx;
-			std::vector<ID3D11ShaderResourceView*> srvs(texLocs_.size());
-			for (size_t i = 0, numTex = texLocs_.size(); i < numTex; ++i) {
-				if (i < textures.size()) {
-					auto tex = textures[i];
-					srvs[i] = tex->GetShaderResourceView();
-					if (showStats_) {
-						ImGui::Text("New tex %d (%s)", tex->texId, tex->fileName.c_str());
-					}
-				}
-			}
-			dev_ctx->PSSetShaderResources(0, (UINT)srvs.size(), srvs.data());
+			if (!batch.ShouldDraw())
+				continue;
+
+			// Vertex shader
+			ctx->VSSetConstantBuffers(FrameConstantSlot(ConstantScope::Batch, ConstantShaderType::Vertex), 1, &batch.constantsVsGpu.p);
+
+			// Pixel shader
+			auto* tex = textures[batch.texSlot];
+			std::array<ID3D11SamplerState*, 1> drawSamplers{tex->sampler_state.p};
+			std::array<ID3D11ShaderResourceView*, 1> drawResources{tex->srv.p};
+
+			ctx->PSSetConstantBuffers(FrameConstantSlot(ConstantScope::Batch, ConstantShaderType::Pixel), 1, &batch.constantsPsGpu.p);
+			ctx->PSSetSamplers(0, drawSamplers.size(), drawSamplers.data());
+			ctx->PSSetShaderResources(0, drawResources.size(), drawResources.data());
+
+			// Rasteriser
+			//ctx->RSSetScissorRects(1, batch.scissorRect);
+
+			// Output merger
+			ctx->OMSetBlendState(BlendState(batch.blendMode), glm::value_ptr(glm::vec4(1.0f)), D3D11_DEFAULT_SAMPLE_MASK);
+
+			// Draw the owl
+			if (IsIndexed())
+				// Expects a common index buffer and vertex buffer, drawing a subset of the indexes
+				// biasing by base vertex location for indices who don't already include the bias.
+				ctx->DrawIndexed(batch.idxCount, batch.idxOffset, batch.baseVertexLocation);
+			else
+				// Draw slice of common vertex buffer.
+				ctx->Draw(batch.vtxCount, batch.vtxOffset);
 		}
-
-		batch.Execute();
-
-		lastDispatchKey_ = key;
-		batch_.batch.vertices.clear();
-		batch_.textures.clear();
-
-		// TODO(zao): unbind stuff?
-
-		batchIndex += 1;
 	}
 
-	r_layer_c* layer_{};
-	r_renderer_c* renderer_{};
-	r_renderer_c::ShaderProgram& prog_;
-	std::vector<UINT> texLocs_;
-	UINT frameCbLoc_{};
+	bool IsIndexed() const noexcept
+	{
+		return indexFormat != DXGI_FORMAT_UNKNOWN;
+	}
 
-	CComPtr<ID3D11Buffer> frameCb_;
+	enum class ConstantScope { Frame, Batch };
+	enum class ConstantShaderType { Vertex, Pixel };
 
-	size_t batchTextureCap_{};
+	UINT FrameConstantSlot(ConstantScope scope, ConstantShaderType shaderType) const noexcept
+	{
+		return scope == ConstantScope::Frame ? 0 : 1;
+	}
 
-	struct TexturedBatch {
-		explicit TexturedBatch(r_renderer_c::ShaderProgram& prog) : batch(prog) {
-			textures.reserve(1ull << 20);
-		}
+	CComPtr<ID3D11BlendState> BlendState(r_blendMode_e mode) const noexcept
+	{
+		assert(mode <= 2);
+		return renderer->dx11->blendStates[mode];
+	}
 
-		BatchKey key{};
-		Batch batch;
-		std::vector<r_tex_c*> textures;
+	struct LatchingState
+	{
+		r_viewport_s viewport{};
+		r_blendMode_e blend = RB_ALPHA;
+		size_t texSlot{};
+		glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
 	};
 
-	BatchKey latchKey_{};
-	r_viewport_s nextViewport_{};
-	r_tex_c* nextTex_{};
-	std::optional<BatchKey> lastDispatchKey_;
-	TexturedBatch batch_;
+	LatchingState latch;
 
-	std::array<float, 4> tint_{ 1.0f, 1.0f, 1.0f, 1.0f };
+	r_renderer_c* renderer;
+	r_renderer_c::ShaderProgram& prog;
+	std::vector<r_tex_c*> textures;
+	std::map<r_tex_c*, size_t> texDedup;
+	std::vector<Vertex> verticesCpu;
 
-	size_t totalVertexCount_ = 0;
-	size_t batchIndex = 0;
+	struct Batch
+	{
+		size_t texSlot{};
+		r_blendMode_e blendMode = RB_ALPHA;
+
+		// Indexed draw, offset/count into common IB, all vertices in common VB
+		UINT idxOffset{};
+		UINT idxCount{};
+		INT baseVertexLocation{};
+
+		// Unindexed draw, offset/count into common VB
+		UINT vtxOffset{};
+		UINT vtxCount{};
+
+		CComPtr<ID3D11Buffer> constantsVsGpu;
+		CComPtr<ID3D11Buffer> constantsPsGpu;
+
+		bool ShouldDraw() const noexcept { return !!vtxCount; }
+	};
+
+	std::vector<Batch> batches;
+	Batch& NewBatch()
+	{
+		auto& b = batches.emplace_back();
+		b.vtxOffset = verticesCpu.size();
+		return b;
+	}
+
+	const D3D11_PRIMITIVE_TOPOLOGY primitiveTopology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	const DXGI_FORMAT indexFormat = DXGI_FORMAT_UNKNOWN;
+	CComPtr<ID3D11Buffer> indicesGpu;
+	CComPtr<ID3D11Buffer> verticesGpu;
+	CComPtr<ID3D11InputLayout> inputLayout;
+
+	CComPtr<ID3D11VertexShader> geomVs;
+	CComPtr<ID3D11Buffer> frameConstantsVsGpu;
+
+	CComPtr<ID3D11PixelShader> geomPs;
+	CComPtr<ID3D11Buffer> frameConstantsPsGpu;
+
+	D3D11_VIEWPORT renderViewport{};
+	CComPtr<ID3D11RasterizerState> rasterState;
 };
 
-void r_layer_c::Render()
+void r_layer_c::Render(RenderStrategy& strat)
 {
 	int const optLevel = renderer->r_layerOptimize->intVal;
 	bool const shuffle = renderer->r_layerShuffle->intVal == 1;
-
-	std::unique_ptr<RenderStrategy> strat(new AdjacentMergeStrategy(this, renderer, renderer->tintedTextureProgram));
 
 	if (ID3DUserDefinedAnnotation* annotation = renderer->dx11->annotation; annotation && annotation->GetStatus())
 	{
@@ -703,7 +646,7 @@ void r_layer_c::Render()
 		annotation->BeginEvent(oss.str().c_str());
 	}
 
-	if (strat) {
+	{
 		bool showStats{};
 		if (renderer->debugLayers) {
 			if (ImGui::Begin("Layers", &renderer->debugLayers)) {
@@ -711,13 +654,13 @@ void r_layer_c::Render()
 				showStats = ImGui::CollapsingHeader(heading.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 			}
 		}
-		strat->SetShowStats(showStats);
+		strat.SetShowStats(showStats);
 
 		for (CmdHandle cmdH = GetFirstCommand(); cmdH.cmd != nullptr; GetNextCommand(cmdH)) {
-			strat->ProcessCommand(cmdH.cmd);
+			strat.ProcessCommand(cmdH.cmd);
 		}
 
-		strat->Flush();
+		strat.Flush();
 
 		if (renderer->debugLayers) {
 			ImGui::End();
@@ -772,7 +715,7 @@ cbuffer FrameCB : register(b0)
 
 struct VSInput
 {
-    float2 vertex: POSIION0;
+    float2 vertex: POSITION0;
     float2 texcoord : TEXCOORD0;
     float4 tint : TINT;
     float4 viewport : VIEWPORT;
@@ -781,7 +724,8 @@ struct VSInput
 
 struct PSInput
 {
-    float4 screenPos : SV_Position;
+	float4 position : SV_Position;
+    float2 screenPos : SCREEN_POS;
     float2 texcoord : TEXCOORD0;
     float4 tint : TINT;
     float4 viewport : VIEWPORT;
@@ -801,7 +745,8 @@ PSInput VSMain(VSInput input)
         mul(mvpMatrix, float4(vp0, 0.0, 1.0)).xy,
         mul(mvpMatrix, float4(vp1, 0.0, 1.0)).xy);
     float4 pos = mul(mvpMatrix, float4(input.vertex + input.viewport.xy, 0.0, 1.0));
-    result.screenPos = pos;
+    result.screenPos = pos.xy;
+	result.position = pos;
     return result;
 }
 )";
@@ -812,7 +757,8 @@ SamplerState s_smp : register(s0);
 
 struct PSInput
 {
-    float4 screenPos : SV_Position;
+	float4 position : SV_Position;
+    float2 screenPos : SCREEN_POS;
     float2 texcoord : TEXCOORD0;
     float4 tint : TINT;
     float4 viewport : VIEWPORT;
@@ -841,15 +787,21 @@ float4 PSMain(PSInput input) : SV_TARGET
 static const std::string s_scaleVsSource = R"(// Vertex shader for upscaling a render target
 struct PSOutput
 {
-    float4 position : SV_POSITION;
+    float4 position : SV_Position;
     float2 texcoord : TEXCOORD0;
 };
 
-PSOutput VSMain(float4 position : POSITION, float2 texcoord : TEXCOORD0)
+PSOutput VSMain(uint vertexId : SV_VertexID)
 {
+    uint hor = vertexId & 1;
+    uint ver = vertexId / 2;
+	float x = lerp(-1.0, 3.0, hor);
+    float y = lerp(1.0, -3.0, ver);
+	float u = lerp(0.0, 2.0, hor);
+	float v = lerp(0.0, 2.0, ver);
 	PSOutput result;
-    result.position = position;
-	result.texcoord = texcoord;
+    result.position = float4(x, y, 0.0, 1.0);
+	result.texcoord = float2(u, v);
     return result;
 }
 )";
@@ -858,7 +810,7 @@ static const std::string s_scalePsSource = R"(// Pixel shader for upscaling a re
 Texture2D s_tex;
 SamplerState s_smp;
 
-float4 PSMain(float2 texcoord : TEXCOORD0) : SV_TARGET
+float4 PSMain(float4 screenPos : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
 	float3 color = s_tex.Sample(s_smp, texcoord).rgb;
 	return float4(color, 1.0);
@@ -983,30 +935,81 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		}
 		
 		if (i == 0) {
+			auto* dev = dx11->device.p;
+			auto* ctx = dx11->ctx.p;
 			const auto vertexResult = CompileShaderSource(s_scaleVsSource, "ScaleVS.hlsl", "VSMain", "vs_5_0");
 			const auto pixelResult = CompileShaderSource(s_scalePsSource, "ScalePS.hlsl", "PSMain", "ps_5_0");
-			if (!vertexResult.Success())
+			if (!vertexResult.Success()) {
 				sys->Error(fmt::format("Failed to compile upscale vertex shader:\n{}", vertexResult.CompileErrors()).c_str());
-			if (!pixelResult.Success())
+			}
+			if (!pixelResult.Success()) {
 				sys->Error(fmt::format("Failed to compile upscale pixel shader:\n{}", pixelResult.CompileErrors()).c_str());
+			}
 
-			if (HRESULT hr = dx11->device->CreateVertexShader(vertexResult.code_blob->GetBufferPointer(), vertexResult.code_blob->GetBufferSize(), nullptr, &rtt.vs); FAILED(hr))
+			if (HRESULT hr = dev->CreateVertexShader(vertexResult.code_blob->GetBufferPointer(), vertexResult.code_blob->GetBufferSize(), nullptr, &rtt.vs); FAILED(hr)) {
 				sys->Error(fmt::format("Could not create upscale vertex shader:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
-			if (HRESULT hr = dx11->device->CreatePixelShader(pixelResult.code_blob->GetBufferPointer(), pixelResult.code_blob->GetBufferSize(), nullptr, &rtt.ps); FAILED(hr))
+			}
+			if (HRESULT hr = dev->CreatePixelShader(pixelResult.code_blob->GetBufferPointer(), pixelResult.code_blob->GetBufferSize(), nullptr, &rtt.ps); FAILED(hr)) {
 				sys->Error(fmt::format("Could not create upscale pixel shader:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
-
-			std::array<D3D11_INPUT_ELEMENT_DESC, 2> ieds{
-				D3D11_INPUT_ELEMENT_DESC{ "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-				D3D11_INPUT_ELEMENT_DESC{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-			};
-			if (HRESULT hr = dx11->device->CreateInputLayout(ieds.data(), ieds.size(), vertexResult.code_blob->GetBufferPointer(), vertexResult.code_blob->GetBufferSize(), &rtt.inputLayout); FAILED(hr))
-				sys->Error(fmt::format("Could not create upscale input layout:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			}
 			
 			const auto vsRefl = ReflectBytecode(pixelResult.code_blob);
-			if (HRESULT hr = vsRefl->GetResourceBindingDescByName("s_tex", &rtt.colorTextureBind); FAILED(hr))
+			if (HRESULT hr = vsRefl->GetResourceBindingDescByName("s_tex", &rtt.colorTextureBind); FAILED(hr)) {
 				sys->Error(fmt::format("Could not find upscale texture binding:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
-			if (HRESULT hr = vsRefl->GetResourceBindingDescByName("s_smp", &rtt.colorSamplerBind); FAILED(hr))
+			}
+			if (HRESULT hr = vsRefl->GetResourceBindingDescByName("s_smp", &rtt.colorSamplerBind); FAILED(hr)) {
 				sys->Error(fmt::format("Could not find upscale sampler binding:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			}
+
+			r_renderer_c::SamplerStateCache::Parameters samplerParams{};
+			samplerParams.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+			samplerParams.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+			samplerParams.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+			samplerParams.MaxAnisotropy = 1;
+			rtt.colorSampler = samplerStateCache.MakeState(samplerParams);
+
+			D3D11_BLEND_DESC blendDesc{};
+			{
+				auto& rt = blendDesc.RenderTarget[0];
+				rt.BlendEnable = TRUE;
+				rt.SrcBlend = D3D11_BLEND_ONE;
+				rt.DestBlend = D3D11_BLEND_ZERO;
+				rt.BlendOp = D3D11_BLEND_OP_ADD;
+				rt.SrcBlendAlpha = D3D11_BLEND_ONE;
+				rt.DestBlendAlpha = D3D11_BLEND_ZERO;
+				rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+				rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+			}
+			if (HRESULT hr = dev->CreateBlendState(&blendDesc, &rtt.blendState); FAILED(hr)) {
+				sys->Error(fmt::format("Could not create blit blend state:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			}
+
+			D3D11_DEPTH_STENCIL_DESC depthDesc{};
+			depthDesc.DepthEnable = FALSE;
+			depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+			depthDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			depthDesc.StencilEnable = FALSE;
+			depthDesc.StencilReadMask = D3D11_DEFAULT_STENCIL_READ_MASK;
+			depthDesc.StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK;
+			{
+				auto& ff = depthDesc.FrontFace;
+				ff.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+				ff.StencilDepthFailOp = D3D11_STENCIL_OP_KEEP;
+				ff.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+				ff.StencilFunc = D3D11_COMPARISON_ALWAYS;
+				depthDesc.BackFace = ff;
+			}
+			if (HRESULT hr = dev->CreateDepthStencilState(&depthDesc, &rtt.depthState); FAILED(hr)) {
+				sys->Error(fmt::format("Could not create blit depth state:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			}
+
+			D3D11_RASTERIZER_DESC rasterDesc{};
+			rasterDesc.FillMode = D3D11_FILL_SOLID;
+			rasterDesc.CullMode = D3D11_CULL_BACK;
+			rasterDesc.FrontCounterClockwise = FALSE;
+			if (HRESULT hr = dev->CreateRasterizerState(&rasterDesc, &rtt.rasterState); FAILED(hr)) {
+				sys->Error(fmt::format("Could not create blit rasteriser state:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
+			}
 		}
 	}
 
@@ -1019,7 +1022,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	imguiCtx = ImGui::CreateContext();
 	ImGui::SetCurrentContext(imguiCtx);
 
-	ImGui_ImplGlfw_InitForOpenGL((GLFWwindow*)sys->video->GetWindowHandle(), true);
+	ImGui_ImplGlfw_InitForOther((GLFWwindow*)sys->video->GetWindowHandle(), true);
 	ImGui_ImplDX11_Init(dx11->device, dx11->ctx);
 
 	fonts[F_FIXED] = new r_font_c(this, "Bitstream Vera Sans Mono");
@@ -1354,7 +1357,7 @@ void r_renderer_c::EndFrame()
 		auto* dev = dx11->device.p;
 		auto* ctx = dx11->ctx.p;
 		auto* rtv = GetDrawRenderTarget().rtv.p;
-		glm::vec4 clearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glm::vec4 clearColor(0.1f, 0.2f, 0.3f, 1.0f);
 		ctx->ClearRenderTargetView(rtv, glm::value_ptr(clearColor));
 		ctx->OMSetRenderTargets(1, &GetDrawRenderTarget().rtv.p, nullptr);
 		int l{};
@@ -1381,7 +1384,9 @@ void r_renderer_c::EndFrame()
 				DebugBreak();
 #endif
 			}
-			layer->Render();
+
+			DirectBatching strat(layer, this);
+			layer->Render(strat);
 		}
 		if (!elideDraw) {
 			presentRtt = 1 - presentRtt;
@@ -1408,6 +1413,7 @@ void r_renderer_c::EndFrame()
 	}
 	delete[] layerSort;
 
+	// Draw render target scaled into backbuffer
 	{
 		auto* dev = dx11->device.p;
 		auto* ctx = dx11->ctx.p;
@@ -1417,31 +1423,20 @@ void r_renderer_c::EndFrame()
 		ctx->ClearRenderTargetView(dx11->swap_rtv.p, glm::value_ptr(clearColor));
 		ctx->OMSetRenderTargets(1, &dx11->swap_rtv.p, nullptr);
 
-		float blitTriPos[] = {
-			-1.0f, -1.0f, //
-			3.0f, -1.0f, //
-			-1.0f, 3.0f, //
-		};
-		float blitTriUV[] = {
-			0.0f, 0.0f, //
-			2.0f, 0.0f, //
-			0.0f, 2.0f, //
-		};
+		const auto& vid = sys->video->vid;
+		D3D11_VIEWPORT viewport{0.0f, 0.0f, (float)vid.fbSize[0], (float)vid.fbSize[1], 0.0f, 1.0f};
+		ctx->RSSetViewports(1, &viewport);
+		ctx->OMSetBlendState(rtt.blendState.p, nullptr, ~0u);
+		ctx->OMSetDepthStencilState(rtt.depthState, 0u);
+		ctx->RSSetState(rtt.rasterState.p);
+		ctx->IASetInputLayout(nullptr);
+		ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-		// TODO(zao):
-		// Blit current RT to swap-chain
-
-		//glViewport(0, 0, sys->video->vid.fbSize[0], sys->video->vid.fbSize[1]);
-		//glUseProgram(rtt.blitProg);
-		//glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, std::data(blitTriPos));
-		//glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, std::data(blitTriUV));
-		//glEnableVertexAttribArray(0);
-		//glEnableVertexAttribArray(1);
-		//glBindTexture(GL_TEXTURE_2D, rtt.colorTexture);
-		//glUniform1i(rtt.blitSampleLocColour, 0);
-		//glDrawArrays(GL_TRIANGLES, 0, 3);
-		//glBindTexture(GL_TEXTURE_2D, 0);
-		//glUseProgram(0);
+		ctx->VSSetShader(rtt.vs.p, nullptr, 0);
+		ctx->PSSetShader(rtt.ps.p, nullptr, 0);
+		ctx->PSSetSamplers(rtt.colorSamplerBind.BindPoint, 1, &rtt.colorSampler.p);
+		ctx->PSSetShaderResources(rtt.colorTextureBind.BindPoint, 1, &rtt.srv.p);
+		ctx->Draw(3, 0);
 	}
 
 	if (showHash) {
@@ -2035,7 +2030,9 @@ r_dx11_c::r_dx11_c(sys_IMain* sys)
 	: sys(sys)
 {
 	HRESULT hr = S_OK;
-	const UINT device_flags = 0u;
+	UINT device_flags = 0u;
+	if constexpr (debug_d3d11)
+		device_flags = D3D11_CREATE_DEVICE_DEBUG;
 	const std::array<D3D_FEATURE_LEVEL, 2> feature_levels{
 		D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0
 	};
@@ -2071,6 +2068,41 @@ r_dx11_c::r_dx11_c(sys_IMain* sys)
 
 	hr = ctx.QueryInterface(&annotation);
 
+	{
+		D3D11_BLEND_DESC bd{};
+		bd.AlphaToCoverageEnable = FALSE;
+		bd.IndependentBlendEnable = FALSE;
+		auto& rt = bd.RenderTarget[0];
+		rt.BlendEnable = TRUE;
+		rt.BlendOp = D3D11_BLEND_OP_ADD;
+		rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+
+		// RB_ALPHA
+		//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		rt.SrcBlend = D3D11_BLEND_SRC_ALPHA;
+		rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		rt.SrcBlendAlpha = rt.SrcBlend;
+		rt.DestBlendAlpha = rt.DestBlend;
+		hr = device->CreateBlendState(&bd, &blendStates[RB_ALPHA]);
+
+		// RB_PRE_ALPHA
+		//glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+		rt.SrcBlend = D3D11_BLEND_ONE;
+		rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		rt.SrcBlendAlpha = rt.SrcBlend;
+		rt.DestBlendAlpha = rt.DestBlend;
+		hr = device->CreateBlendState(&bd, &blendStates[RB_PRE_ALPHA]);
+
+		// RB_ADDITIVE
+		//glBlendFunc(GL_ONE, GL_ONE);
+		rt.SrcBlend = D3D11_BLEND_ONE;
+		rt.DestBlend = D3D11_BLEND_ONE;
+		rt.SrcBlendAlpha = rt.SrcBlend;
+		rt.DestBlendAlpha = rt.DestBlend;
+		hr = device->CreateBlendState(&bd, &blendStates[RB_ADDITIVE]);
+	}
+
 	ResizeIfNeeded({});
 }
 
@@ -2104,7 +2136,7 @@ CComPtr<ID3D11SamplerState> r_renderer_c::SamplerStateCache::MakeState(r_rendere
 
 		CComPtr<ID3D11SamplerState> state;
 		HRESULT hr = device->CreateSamplerState(&desc, &state);
-		if (!hr)
+		if (FAILED(hr))
 			return {};
 		I = samplerStates.emplace(std::move(params), std::move(state)).first;
 	}
