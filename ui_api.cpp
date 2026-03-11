@@ -6,10 +6,11 @@
 
 #include "ui_local.h"
 
+#include <cmath>
+#include <fmt/core.h>
 #include <filesystem>
 #include <fstream>
 #include <zlib.h>
-#include <cmath>
 
 #include "core/core_tex_manipulation.h"
 
@@ -2118,6 +2119,7 @@ static int l_SetForeground(lua_State* L)
 
 int ui_main_c::InitAPI(lua_State* L)
 {
+	auto* ui = GetUIPtr(L);
 	sol::state_view lua(L);
 	luaL_openlibs(L);
 
@@ -2125,12 +2127,22 @@ int ui_main_c::InitAPI(lua_State* L)
 	{
 		lua_getglobal(L, "package");
 		char const* tn = lua_typename(L, -1);
+
 		lua_getfield(L, -1, "path");
 		std::string old_path = lua_tostring(L, -1);
 		lua_pop(L, 1);
 		old_path += ";lua/?.lua";
 		lua_pushstring(L, old_path.c_str());
 		lua_setfield(L, -2, "path");
+
+		lua_getfield(L, -1, "cpath");
+		old_path = lua_tostring(L, -1);
+		lua_pop(L, 1);
+		std::string dllPathU8 = ui->sys->dllPath.generic_u8string();
+		old_path += fmt::format(";{}\\?.dll", (const char*)dllPathU8.c_str());
+		lua_pushstring(L, old_path.c_str());
+		lua_setfield(L, -2, "cpath");
+
 		lua_pop(L, 1);
 	}
 

@@ -575,8 +575,23 @@ std::filesystem::path FindBasePath()
 	proc_pidpath(pid, basePath, sizeof(basePath));
 	progPath = basePath;
 #endif
-	progPath = weakly_canonical(progPath);
-	return progPath.parent_path();
+	return weakly_canonical(progPath).parent_path();
+}
+
+std::filesystem::path FindDllPath()
+{
+	std::filesystem::path dllPath;
+#ifdef _WIN32
+	std::vector<wchar_t> basePath(1u << 16);
+	HMODULE dllModule{};
+	GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&FindDllPath, &dllModule);
+	GetModuleFileNameW(dllModule, basePath.data(), basePath.size());
+	dllPath = basePath.data();
+#else
+	//NOTE(zao): Separate shared library location not implemented for Linux/macOS.
+	return FindBasePath();
+#endif
+	return weakly_canonical(dllPath).parent_path();
 }
 
 std::tuple<std::optional<std::filesystem::path>, std::optional<std::string>> FindUserPath()
@@ -628,6 +643,7 @@ sys_main_c::sys_main_c()
 
 	// Set the local system information
 	basePath = FindBasePath();
+	dllPath = FindDllPath();
 	std::tie(userPath, userPathReason) = FindUserPath();
 }
 

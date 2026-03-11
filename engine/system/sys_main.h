@@ -68,6 +68,7 @@ public:
 	bool		debuggerRunning = false;
 	int			processorCount = 0;
 	std::filesystem::path basePath;
+	std::filesystem::path dllPath;
 	std::optional<std::filesystem::path> userPath;
 	std::optional<std::string> userPathReason;
 
