@@ -655,20 +655,4 @@ void r_tex_c::Upload(image_c& img, int flags)
 	}
 	if (hr = device->CreateShaderResourceView(tex2d, nullptr, &srv); FAILED(hr)) {
 	}
-
-	D3D11_SAMPLER_DESC sampler_desc{};
-
-	const bool unmipped = miplevels == 1;
-	const bool nearest_filter = !!(flags & TF_NEAREST);
-
-
-	// Set repeating
-	const bool clamp_uv = !!(flags & TF_CLAMP);
-	r_renderer_c::SamplerStateCache::Parameters sampler_params{};
-	sampler_params.Filter = D3D11_FILTER_ANISOTROPIC;
-	sampler_params.AddressU = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
-	sampler_params.AddressV = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
-	sampler_params.MaxAnisotropy = D3D11_MAX_MAXANISOTROPY;
-
-	sampler_state = renderer->samplerStateCache.MakeState(sampler_params);
 }

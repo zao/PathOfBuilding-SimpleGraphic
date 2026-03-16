@@ -7,6 +7,7 @@
 #define GLAD_GLES2_IMPLEMENTATION
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "r_local.h"
+#include "r_dx11_shaders.h"
 
 #include "common/base64.h"
 
@@ -331,14 +332,58 @@ struct Vertex {
 	glm::vec2 pos;
 	glm::vec2 tc;
 	glm::vec4 color;
-	glm::vec2 viewPos, viewSize;
-	float texId, stackIdx, maskIdx;
+	glm::ivec2 viewPos, viewSize;
 
 	Vertex&& Position(glm::vec2 val) && noexcept { pos = val; return std::move(*this); }
 	Vertex&& Texcoord(glm::vec2 val) && noexcept { tc = val; return std::move(*this); }
 	Vertex&& Color(glm::vec4 val) && noexcept { color = val; return std::move(*this); }
 	Vertex&& Viewport(glm::vec2 pos, glm::vec2 size) && noexcept { viewPos = pos; viewSize = size; return std::move(*this); }
-	Vertex&& Texture(float tex, float stack, float mask) && noexcept { texId = tex; stackIdx = stack; maskIdx = mask; return std::move(*this); }
+};
+
+struct Primitive
+{
+	Primitive&& TexId(int id) && noexcept {
+		texPack &= ~texBits;
+		texPack |= texBits & ((uint32_t)id << texShift);
+		return std::move(*this);
+	}
+
+	Primitive&& MaskId(int id) && noexcept {
+		texPack &= ~maskBits;
+		texPack |= maskBits & ((uint32_t)id << maskShift);
+		return std::move(*this);
+	}
+
+	Primitive&& StackId(int id) && noexcept {
+		texPack &= ~stackBits;
+		texPack |= stackBits & ((uint32_t)id << stackShift);
+		return std::move(*this);
+	}
+
+	Primitive&& Clamping(bool clamping) && noexcept {
+		texPack &= ~clampBits;
+		texPack |= clampBits & ((uint32_t)clamping << clampShift);
+		return std::move(*this);
+	}
+
+	Primitive&& Monochrome(bool mono) && noexcept {
+		texPack &= ~monoBits;
+		texPack |= monoBits & ((uint32_t)mono << monoShift);
+		return std::move(*this);
+	}
+
+	// C'TTTT'TTTT'MMMM'MMMM'SSSS'SSSS
+	static constexpr const uint32_t stackShift = 0;
+	static constexpr const uint32_t stackBits = 0b1111'1111 << stackShift;
+	static constexpr const uint32_t maskShift = stackShift + 8;
+	static constexpr const uint32_t maskBits = 0b1111'1111 << maskShift;
+	static constexpr const uint32_t texShift = maskShift + 8;
+	static constexpr const uint32_t texBits = 0b1111'1111 << texShift;
+	static constexpr const uint32_t clampShift = texShift + 8;
+	static constexpr const uint32_t clampBits = 0b1 << clampShift;
+	static constexpr const uint32_t monoShift = clampShift + 1;
+	static constexpr const uint32_t monoBits = 0b1 << monoShift;
+	uint32_t texPack{};
 };
 
 struct RenderStrategy {
@@ -367,12 +412,11 @@ struct DirectBatching : RenderStrategy
 		auto& vid = renderer->sys->video->vid;
 		auto& dx11 = prog.dx11;
 
-		std::array<D3D11_INPUT_ELEMENT_DESC, 5> ieds{
+		std::array<D3D11_INPUT_ELEMENT_DESC, 4> ieds{
 			D3D11_INPUT_ELEMENT_DESC{"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, pos), D3D11_INPUT_PER_VERTEX_DATA, 0},
 			D3D11_INPUT_ELEMENT_DESC{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(Vertex, tc), D3D11_INPUT_PER_VERTEX_DATA, 0},
 			D3D11_INPUT_ELEMENT_DESC{"TINT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
-			D3D11_INPUT_ELEMENT_DESC{"VIEWPORT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, viewPos), D3D11_INPUT_PER_VERTEX_DATA, 0},
-			D3D11_INPUT_ELEMENT_DESC{"TEX_ID", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, texId), D3D11_INPUT_PER_VERTEX_DATA, 0},
+			D3D11_INPUT_ELEMENT_DESC{"VIEWPORT", 0, DXGI_FORMAT_R32G32B32A32_SINT, 0, offsetof(Vertex, viewPos), D3D11_INPUT_PER_VERTEX_DATA, 0},
 		};
 		HRESULT hr = dx11->device->CreateInputLayout(ieds.data(), ieds.size(), prog.vsBytecode->GetBufferPointer(), prog.vsBytecode->GetBufferSize(), &inputLayout);
 		if (FAILED(hr))
@@ -390,6 +434,20 @@ struct DirectBatching : RenderStrategy
 			prog.dx11->sys->Error(fmt::format("Could not create batch rasteriser state:\n{}", NarrowUTF8StringStd(_com_error(hr).ErrorMessage())).c_str());
 		}
 
+		// Set repeating
+		auto MakeSamplerState = [&](bool clamp_uv) -> CComPtr<ID3D11SamplerState>
+			{
+				r_renderer_c::SamplerStateCache::Parameters sampler_params{};
+				sampler_params.Filter = D3D11_FILTER_ANISOTROPIC;
+				sampler_params.AddressU = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+				sampler_params.AddressV = clamp_uv ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_WRAP;
+				sampler_params.MaxAnisotropy = D3D11_MAX_MAXANISOTROPY;
+				return renderer->samplerStateCache.MakeState(sampler_params);
+			};
+
+		samplerWrap = MakeSamplerState(false);
+		samplerClamp = MakeSamplerState(true);
+
 		NewBatch();
 	}
 
@@ -406,8 +464,6 @@ struct DirectBatching : RenderStrategy
 		} break;
 		case r_layerCmd_s::BLEND: {
 			auto* c = reinterpret_cast<const r_layerCmdBlend_s*>(cmd);
-			if (latch.blend != c->blendMode && batches.back().ShouldDraw())
-				NewBatch();
 			latch.blend = c->blendMode;
 		} break;
 		case r_layerCmd_s::COLOR: {
@@ -418,8 +474,12 @@ struct DirectBatching : RenderStrategy
 			auto* c = reinterpret_cast<const r_layerCmdQuad_s*>(cmd);
 			auto& q = c->quad;
 
-			if (auto& b = batches.back(); b.vtxCount && b.texSlot != latch.texSlot)
-				NewBatch();
+			auto* tex = textures.at(latch.texSlot);
+
+			// Defer branch cut to here as latched state doesn't take effect until geometry comes in
+			if (auto& b = batches.back(); b.vtxCount > 0)
+				if (b.blendMode != latch.blend || !b.CanTakeTexture(latch.texSlot))
+					NewBatch();
 
 			std::array<Vertex, 4> verts{};
 			for (size_t i = 0; i < 4; ++i) {
@@ -429,14 +489,19 @@ struct DirectBatching : RenderStrategy
 				v.color = latch.color;
 				v.viewPos = {latch.viewport.x, latch.viewport.y};
 				v.viewSize = {latch.viewport.width, latch.viewport.height};
-				v.texId = (float)latch.texSlot;
-				v.stackIdx = (float)c->quad.stackLayer;
-				v.maskIdx = (float)c->quad.maskLayer;
 			}
 			for (size_t idx : {0, 1, 2, 0, 2, 3})
 				verticesCpu.emplace_back(verts[idx]);
+
 			auto& b = batches.back();
-			b.texSlot = latch.texSlot;
+			uint32_t texId = (uint32_t)std::distance(b.texSlots.begin(), std::find(b.texSlots.begin(), b.texSlots.end(), latch.texSlot));
+			if (texId == b.texSlots.size())
+				b.texSlots.push_back(latch.texSlot);
+
+			const auto prim = Primitive{}.TexId(texId).Clamping(tex->flags & TF_CLAMP).StackId((uint32_t)c->quad.stackLayer).MaskId((uint32_t)c->quad.maskLayer);
+			primitivesCpu.emplace_back(prim);
+			primitivesCpu.emplace_back(prim);
+
 			b.vtxCount += 6;
 		} break;
 		case r_layerCmd_s::VIEWPORT: {
@@ -468,6 +533,21 @@ struct DirectBatching : RenderStrategy
 		if (FAILED(hr))
 			return;
 
+		gsl::span<const Primitive> prims(primitivesCpu);
+
+		D3D11_BUFFER_DESC primDesc{};
+		primDesc.ByteWidth = prims.size_bytes();
+		primDesc.Usage = D3D11_USAGE_IMMUTABLE;
+		primDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		primDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		primDesc.StructureByteStride = sizeof(Primitive);
+
+		D3D11_SUBRESOURCE_DATA primSrd{};
+		primSrd.pSysMem = prims.data();
+
+		hr = dev->CreateBuffer(&primDesc, &primSrd, &primitivesGpu);
+		hr = dev->CreateShaderResourceView(primitivesGpu.p, nullptr, &primitivesSrv);
+
 		// Common setup
 		ctx->IASetInputLayout(inputLayout.p);
 		ctx->IASetPrimitiveTopology(primitiveTopology);
@@ -478,7 +558,6 @@ struct DirectBatching : RenderStrategy
 		ctx->IASetVertexBuffers(0, 1, &verticesGpu.p, &stride, &offset);
 		ctx->IASetIndexBuffer(indicesGpu.p, indexFormat, 0); // might be null of unknown format
 
-		// TODO(zao): set up constant buffers and stuff
 		struct FrameCbGpu
 		{
 			glm::mat4 mvpMatrix;
@@ -511,8 +590,10 @@ struct DirectBatching : RenderStrategy
 		ctx->VSSetConstantBuffers(FrameConstantSlot(ConstantScope::Frame, ConstantShaderType::Vertex), 1, &frameConstantsVsGpu.p);
 
 		// Pixel shader
+		std::array<ID3D11SamplerState*, 2> drawSamplers{samplerWrap, samplerClamp};
 		ctx->PSSetShader(geomPs.p, nullptr, 0);
 		ctx->PSSetConstantBuffers(FrameConstantSlot(ConstantScope::Frame, ConstantShaderType::Pixel), 1, &frameConstantsPsGpu.p);
+		ctx->PSSetSamplers(0, drawSamplers.size(), drawSamplers.data());
 
 		// Rasteriser
 		ctx->RSSetViewports(1, &renderViewport);
@@ -530,12 +611,22 @@ struct DirectBatching : RenderStrategy
 			ctx->VSSetConstantBuffers(FrameConstantSlot(ConstantScope::Batch, ConstantShaderType::Vertex), 1, &batch.constantsVsGpu.p);
 
 			// Pixel shader
-			auto* tex = textures[batch.texSlot];
-			std::array<ID3D11SamplerState*, 1> drawSamplers{tex->sampler_state.p};
-			std::array<ID3D11ShaderResourceView*, 1> drawResources{tex->srv.p};
+			std::vector<ID3D11ShaderResourceView*> drawResources;
+			drawResources.reserve(1 + batch.texSlots.size());
+
+			CComPtr<ID3D11ShaderResourceView> subPrimitives;
+			D3D11_SHADER_RESOURCE_VIEW_DESC subPrimDesc{};
+			subPrimDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+			subPrimDesc.Buffer.FirstElement = batch.vtxOffset / 3;
+			subPrimDesc.Buffer.NumElements = batch.vtxCount / 3;
+			hr = dev->CreateShaderResourceView(primitivesGpu.p, &subPrimDesc, &subPrimitives);
+			assert(SUCCEEDED(hr));
+
+			drawResources.push_back(subPrimitives.p);
+			for (const auto& slot : batch.texSlots)
+				drawResources.push_back(textures[slot]->srv.p);
 
 			ctx->PSSetConstantBuffers(FrameConstantSlot(ConstantScope::Batch, ConstantShaderType::Pixel), 1, &batch.constantsPsGpu.p);
-			ctx->PSSetSamplers(0, drawSamplers.size(), drawSamplers.data());
 			ctx->PSSetShaderResources(0, drawResources.size(), drawResources.data());
 
 			// Rasteriser
@@ -545,11 +636,11 @@ struct DirectBatching : RenderStrategy
 			ctx->OMSetBlendState(BlendState(batch.blendMode), glm::value_ptr(glm::vec4(1.0f)), D3D11_DEFAULT_SAMPLE_MASK);
 
 			// Draw the owl
-			if (IsIndexed())
-				// Expects a common index buffer and vertex buffer, drawing a subset of the indexes
-				// biasing by base vertex location for indices who don't already include the bias.
-				ctx->DrawIndexed(batch.idxCount, batch.idxOffset, batch.baseVertexLocation);
-			else
+			//if (IsIndexed())
+			//	// Expects a common index buffer and vertex buffer, drawing a subset of the indexes
+			//	// biasing by base vertex location for indices who don't already include the bias.
+			//	ctx->DrawIndexed(batch.idxCount, batch.idxOffset, batch.baseVertexLocation);
+			//else
 				// Draw slice of common vertex buffer.
 				ctx->Draw(batch.vtxCount, batch.vtxOffset);
 		}
@@ -588,11 +679,12 @@ struct DirectBatching : RenderStrategy
 	r_renderer_c::ShaderProgram& prog;
 	std::vector<r_tex_c*> textures;
 	std::map<r_tex_c*, size_t> texDedup;
-	std::vector<Vertex> verticesCpu;
+	std::vector<Vertex> verticesCpu; // per-vertex IA data
+	std::vector<Primitive> primitivesCpu; // per-triangle SB data
 
 	struct Batch
 	{
-		size_t texSlot{};
+		std::vector<size_t> texSlots;
 		r_blendMode_e blendMode = RB_ALPHA;
 
 		// Indexed draw, offset/count into common IB, all vertices in common VB
@@ -604,10 +696,21 @@ struct DirectBatching : RenderStrategy
 		UINT vtxOffset{};
 		UINT vtxCount{};
 
+		bool isClamping{};
 		CComPtr<ID3D11Buffer> constantsVsGpu;
 		CComPtr<ID3D11Buffer> constantsPsGpu;
 
 		bool ShouldDraw() const noexcept { return !!vtxCount; }
+		bool CanTakeTexture(size_t candSlot) const noexcept
+		{
+			if (texSlots.empty())
+				return true;
+			if (std::find(texSlots.begin(), texSlots.end(), candSlot) != texSlots.end())
+				return true;
+			if (texSlots.size() < 64)
+				return true;
+			return false;
+		}
 	};
 
 	std::vector<Batch> batches;
@@ -624,6 +727,9 @@ struct DirectBatching : RenderStrategy
 	CComPtr<ID3D11Buffer> verticesGpu;
 	CComPtr<ID3D11InputLayout> inputLayout;
 
+	CComPtr<ID3D11Buffer> primitivesGpu;
+	CComPtr<ID3D11ShaderResourceView> primitivesSrv;
+
 	CComPtr<ID3D11VertexShader> geomVs;
 	CComPtr<ID3D11Buffer> frameConstantsVsGpu;
 
@@ -632,6 +738,8 @@ struct DirectBatching : RenderStrategy
 
 	D3D11_VIEWPORT renderViewport{};
 	CComPtr<ID3D11RasterizerState> rasterState;
+
+	CComPtr<ID3D11SamplerState> samplerWrap, samplerClamp;
 };
 
 void r_layer_c::Render(RenderStrategy& strat)
@@ -706,83 +814,6 @@ r_renderer_c::r_renderer_c(sys_IMain* sysHnd)
 
 	Cmd_Add("screenshot", 0, "[<format>]", this, &r_renderer_c::C_Screenshot);
 }
-
-static const std::string s_tintedTextureVertexSource = R"(// Vertex shader for tinted 2D sprites
-cbuffer FrameCB : register(b0)
-{
-    float4x4 mvpMatrix;
-};
-
-struct VSInput
-{
-    float2 vertex: POSITION0;
-    float2 texcoord : TEXCOORD0;
-    float4 tint : TINT;
-    float4 viewport : VIEWPORT;
-    float3 texId : TEX_ID;
-};
-
-struct PSInput
-{
-	float4 position : SV_Position;
-    float2 screenPos : SCREEN_POS;
-    float2 texcoord : TEXCOORD0;
-    float4 tint : TINT;
-    float4 viewport : VIEWPORT;
-    float3 texId : TEX_ID;
-};
-
-PSInput VSMain(VSInput input)
-{
-    PSInput result;
-
-    result.texcoord = input.texcoord;
-    result.tint = input.tint;
-    result.texId = input.texId;
-    float2 vp0 = input.viewport.xy + float2(0.0, input.viewport.w);
-    float2 vp1 = input.viewport.xy + float2(input.viewport.z, 0.0);
-    result.viewport = float4(
-        mul(mvpMatrix, float4(vp0, 0.0, 1.0)).xy,
-        mul(mvpMatrix, float4(vp1, 0.0, 1.0)).xy);
-    float4 pos = mul(mvpMatrix, float4(input.vertex + input.viewport.xy, 0.0, 1.0));
-    result.screenPos = pos.xy;
-	result.position = pos;
-    return result;
-}
-)";
-
-static const std::string s_tintedTexturePixelSource = R"(// Pixel shader for tinted 2D sprites
-Texture2DArray s_tex : register(t0);
-SamplerState s_smp : register(s0);
-
-struct PSInput
-{
-	float4 position : SV_Position;
-    float2 screenPos : SCREEN_POS;
-    float2 texcoord : TEXCOORD0;
-    float4 tint : TINT;
-    float4 viewport : VIEWPORT;
-    float3 texId : TEX_ID;
-};
-
-float4 ShadeColor(Texture2DArray tex, SamplerState smp, float2 texcoord, float3 texId)
-{
-    float4 color = tex.Sample(smp, float3(texcoord, texId.y));
-    if (texId.z > -0.5)
-        color *= tex.Sample(smp, float3(texcoord, texId.z));
-    return color;
-}
-
-float4 PSMain(PSInput input) : SV_TARGET
-{
-    float x = input.screenPos.x, y = input.screenPos.y;
-    if (x < input.viewport[0] || y < input.viewport[1] || x >= input.viewport[2] || y >= input.viewport[3])
-        discard;
-
-    float4 color = ShadeColor(s_tex, s_smp, input.texcoord, input.texId);
-    return color * input.tint;
-}
-)";
 
 static const std::string s_scaleVsSource = R"(// Vertex shader for upscaling a render target
 struct PSOutput
@@ -885,8 +916,8 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	{
 		auto& prog = tintedTextureProgram;
 		prog.dx11 = dx11.get();
-		const auto vertexResult = CompileShaderSource(s_tintedTextureVertexSource, "TintedTextureVS.hlsl", "VSMain", "vs_5_0");
-		const auto pixelResult = CompileShaderSource(s_tintedTexturePixelSource, "TintedTexturePS.hlsl", "PSMain", "ps_5_0");
+		const auto vertexResult = CompileShaderSource(s_dx11_tintedTextureVertexSource, "TintedTextureVS.hlsl", "VSMain", "vs_5_0");
+		const auto pixelResult = CompileShaderSource(s_dx11_tintedTexturePixelSource, "TintedTexturePS.hlsl", "PSMain", "ps_5_0");
 		if (!vertexResult.Success())
 			sys->Error(fmt::format("Failed to compile tinted vertex shader:\n{}", vertexResult.CompileErrors()).c_str());
 		if (!pixelResult.Success())

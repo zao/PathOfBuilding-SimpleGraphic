@@ -38,7 +38,6 @@ public:
 	std::unique_ptr<image_c> img;
 
 	CComPtr<ID3D11ShaderResourceView> srv;
-	CComPtr<ID3D11SamplerState> sampler_state;
 
 	size_t stackLayers = 1;
 

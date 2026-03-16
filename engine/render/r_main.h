@@ -10,6 +10,7 @@
 
 #define R_MAXSHADERS 65536
 constexpr const bool debug_d3d11 = false;
+//constexpr const bool debug_d3d11 = true;
 
 #include <array>
 #include <chrono>

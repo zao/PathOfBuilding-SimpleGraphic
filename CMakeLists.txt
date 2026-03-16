@@ -48,6 +48,8 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/core/core_tex_manipulation.h"
     "engine/core/core_video.cpp"
     "engine/core/core_video.h"
+    "engine/render/r_dx11_shaders.cpp"
+    "engine/render/r_dx11_shaders.h"
     "engine/render/r_font.cpp"
     "engine/render/r_font.h"
     "engine/render/r_main.cpp"
