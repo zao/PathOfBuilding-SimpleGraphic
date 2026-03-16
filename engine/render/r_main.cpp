@@ -498,7 +498,12 @@ struct DirectBatching : RenderStrategy
 			if (texId == b.texSlots.size())
 				b.texSlots.push_back(latch.texSlot);
 
-			const auto prim = Primitive{}.TexId(texId).Clamping(tex->flags & TF_CLAMP).StackId((uint32_t)c->quad.stackLayer).MaskId((uint32_t)c->quad.maskLayer);
+			const auto prim = Primitive{}
+				.TexId(texId)
+				.Clamping(tex->flags & TF_CLAMP)
+				.Monochrome(tex->mono)
+				.StackId((uint32_t)c->quad.stackLayer)
+				.MaskId((uint32_t)c->quad.maskLayer);
 			primitivesCpu.emplace_back(prim);
 			primitivesCpu.emplace_back(prim);
 

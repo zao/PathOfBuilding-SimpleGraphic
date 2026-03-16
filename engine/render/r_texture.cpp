@@ -329,6 +329,11 @@ ID3D11ShaderResourceView* r_tex_c::GetShaderResourceView() const
 	return srv;
 }
 
+bool r_tex_c::IsMonochrome() const noexcept
+{
+	return mono;
+}
+
 void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_flags)
 {
 	manager = (t_manager_c*)i_manager;
@@ -336,7 +341,6 @@ void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_
 	error = 0;
 	status = INIT;
 	loadPri = 0;
-	texId = 0;
 	flags = i_flags;
 	fileName = i_fileName;
 	fileWidth = 0;
@@ -605,6 +609,8 @@ void r_tex_c::Upload(image_c& img, int flags)
 	const auto& tex = img.tex;
 	const auto format = tex.format();
 	const auto dx_format = dx.translate(format);
+
+	mono = gli::component_count(format) == 1;
 
 	auto& device = renderer->dx11->device;
 	auto& dev_ctx = renderer->dx11->ctx;

@@ -57,10 +57,8 @@ bool image_c::CopyRaw(int type, dword inWidth, dword inHeight, const byte* inDat
 		tex = {};
 		return false;
 	case 1:
-		// TODO(zao): maybe use R8 and a custom shader for these to save font VRAM
-		format = gli::format::FORMAT_RGBA8_UNORM_PACK8;
-		rgbaData = GrayToRgba(gsl::make_span(inDat, dataSize));
-		dataSize = rgbaData->size();
+		// Use R8 and shader adaptation for these to save VRAM
+		format = gli::format::FORMAT_R8_UNORM_PACK8;
 		break;
 	case 3:
 		format = gli::format::FORMAT_RGBA8_UNORM_PACK8;
@@ -73,6 +71,7 @@ bool image_c::CopyRaw(int type, dword inWidth, dword inHeight, const byte* inDat
 	default:
 		return false;
 	}
+
 	tex = gli::texture2d_array(format, extent, 1, 1);
 	memcpy(tex.data(0, 0, 0), rgbaData ? rgbaData->data() : inDat, dataSize);
 	return true;

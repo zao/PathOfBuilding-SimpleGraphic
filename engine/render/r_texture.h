@@ -30,7 +30,6 @@ public:
 	};
 	std::atomic<Status> status;
 	std::atomic<int> loadPri;
-	dword	texId;
 	int		flags;
 	std::string fileName;
 	std::atomic<dword> fileWidth;
@@ -38,6 +37,7 @@ public:
 	std::unique_ptr<image_c> img;
 
 	CComPtr<ID3D11ShaderResourceView> srv;
+	bool mono{};
 
 	size_t stackLayers = 1;
 
@@ -46,6 +46,7 @@ public:
 	~r_tex_c();
 
 	ID3D11ShaderResourceView* GetShaderResourceView() const;
+	bool IsMonochrome() const noexcept;
 
 	void	StartLoad();
 	void	AbortLoad();
