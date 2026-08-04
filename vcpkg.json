@@ -13,6 +13,7 @@
     "pkgconf",
     "re2",
     "sol2",
+    "xxhash",
     "zstd",
     "zlib"
   ]
