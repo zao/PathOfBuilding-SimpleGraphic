@@ -25,8 +25,6 @@
 #include <imgui_impl_opengl3.h>
 #include <imgui_stdlib.h>
 
-static uint64_t MurmurHash64A(void const* data, int len, uint64_t seed);
-
 // =======
 // Classes
 // =======
@@ -125,8 +123,9 @@ Mat4 OrthoMatrix(double left, double right, double bottom, double top, double ne
 // Layer queue class
 // =================
 
+#pragma pack(push, r_layerCmd, 1)
 struct r_layerCmd_s {
-	enum Command {
+	enum Command : uint8_t {
 		VIEWPORT,
 		BLEND,
 		BIND,
@@ -165,6 +164,7 @@ struct r_layerCmdQuad_s {
 		int stackLayer, maskLayer;
 	} quad;
 };
+#pragma pack(pop, r_layerCmd)
 
 r_layer_c::r_layer_c(r_renderer_c* renderer, int layer, int subLayer)
 	: renderer(renderer), layer(layer), subLayer(subLayer)
@@ -418,6 +418,7 @@ struct RenderStrategy {
 	virtual void ProcessCommand(r_layerCmd_s* cmd) = 0;
 	virtual void Flush() = 0;
 	virtual void SetShowStats(bool showStats) { showStats_ = showStats; }
+	virtual bool UsedIncompleteTextures() const { return false; }
 
 protected:
 	bool showStats_{};
@@ -572,6 +573,8 @@ struct AdjacentMergeStrategy : RenderStrategy {
 		}
 	}
 
+	bool UsedIncompleteTextures() const override { return usedIncompleteTextures; };
+
 private:
 	void Dispatch() {
 		glBindBuffer(GL_ARRAY_BUFFER, vbo_);
@@ -623,7 +626,10 @@ private:
 					auto tex = textures[i];
 					tex->Bind();
 					if (showStats_) {
-						ImGui::Text("New tex %d (%s)", tex->texId, tex->fileName.c_str());
+						ImGui::Text("New tex %d (%s) %d", tex->texId, tex->fileName.c_str(), tex->status.load());
+					}
+					if (!usedIncompleteTextures && tex->status != r_tex_c::Status::DONE) {
+						usedIncompleteTextures = true;
 					}
 				}
 				else {
@@ -655,7 +661,7 @@ private:
 
 	struct TexturedBatch {
 		explicit TexturedBatch(GLuint prog) : batch(prog) {
-			textures.reserve(1ull << 20);
+			textures.reserve(128);
 		}
 
 		BatchKey key{};
@@ -673,9 +679,11 @@ private:
 
 	size_t totalVertexCount_ = 0;
 	size_t batchIndex = 0;
+
+	bool usedIncompleteTextures = false;
 };
 
-void r_layer_c::Render()
+bool r_layer_c::Render()
 {
 	int const optLevel = renderer->r_layerOptimize->intVal;
 	bool const shuffle = renderer->r_layerShuffle->intVal == 1;
@@ -713,6 +721,8 @@ void r_layer_c::Render()
 	if (renderer->glPopGroupMarkerEXT) {
 		renderer->glPopGroupMarkerEXT();
 	}
+
+	return strat->UsedIncompleteTextures();
 }
 
 void r_layer_c::Discard()
@@ -876,6 +886,8 @@ void main(void) {
 void r_renderer_c::Init(r_featureFlag_e features)
 {
 	sys->con->PrintFunc("Render Init");
+
+	frameHashState.reset(XXH3_createState(), XXH3_freeState);
 
 	apiDpiAware = !!(features & F_DPI_AWARE);
 
@@ -1150,12 +1162,6 @@ void r_renderer_c::Shutdown()
 void r_renderer_c::PumpShaders()
 {
 	texMan->ProcessPendingTextureUploads();
-	for (size_t idx = 0; idx < numShader; ++idx)
-		if (auto* sh = shaderList[idx])
-			if (auto tex = sh->tex; tex && tex->status != r_tex_c::DONE) {
-				inhibitElision = true;
-				break;
-			}
 }
 
 void r_renderer_c::BeginFrame()
@@ -1331,20 +1337,18 @@ void r_renderer_c::EndFrame()
 			ImGui::EndDisabled();
 			CVarCheckbox("Draw command culling", r_drawCull);
 
-			size_t totalFootprint{}, totalDenseFootprint{};
+			size_t totalDenseFootprint{};
 			for (int l = 0; l < numLayer; ++l) {
 				size_t byteAcc{};
 				auto layer = layerSort[l];
 				size_t const numCmd = layer->numCmd;
-				totalFootprint += numCmd * sizeof(r_layerCmdQuad_s); // legacy footprint
 				totalDenseFootprint += layer->cmdCursor;
 			}
 
-			ImGui::Text("Total payload footprint: %sB", BinaryUnitPrefix(totalFootprint).c_str());
 			ImGui::Text("Total dense footprint: %sB", BinaryUnitPrefix(totalDenseFootprint).c_str());
 
 			size_t totalCmd{};
-			if (ImGui::BeginTable("Layer stats", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
+			if (ImGui::BeginTable("Layer stats", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
 				ImGui::TableSetupColumn("Index");
 				ImGui::TableSetupColumn("Layer");
 				ImGui::TableSetupColumn("Sublayer");
@@ -1383,83 +1387,46 @@ void r_renderer_c::EndFrame()
 
 	if (inhibitElision || elideFrames != !!r_elideFrames->intVal) {
 		elideFrames = !!r_elideFrames->intVal;
-		lastFrameHash.clear();
+		lastFrameHash = 0;
 	}
 
-	std::future<std::optional<std::vector<uint8_t>>> elidedFrameHashFut;
+	auto tic = std::chrono::high_resolution_clock::now();
+
+	uint64_t commandDigest = 0;
 	if (elideFrames) {
-		elidedFrameHashFut = std::async([&]() -> std::optional<std::vector<uint8_t>> {
-			std::vector<uint8_t> commandDigest;
+		auto* frameHasher = frameHashState.get();
+		XXH3_64bits_reset(frameHasher);
 
-			for (auto lIdx = 0; lIdx < numLayer; ++lIdx) {
-				auto layer = layerSort[lIdx];
-				uint64_t subHash = MurmurHash64A(layer->cmdStorage.data(), (int)layer->cmdCursor, 0ull);
-				uint8_t const* p = (uint8_t const*)&subHash;
-				commandDigest.insert(commandDigest.end(), p, p + sizeof(subHash));
-			}
+		for (auto lIdx = 0; lIdx < numLayer; ++lIdx) {
+			auto layer = layerSort[lIdx];
+			uint64_t subHash = XXH3_64bits(layer->cmdStorage.data(), (int)layer->cmdCursor);
+			XXH3_64bits_update(frameHasher, &subHash, sizeof(subHash));
+		}
 
-			return commandDigest;
-		});
+		commandDigest = XXH3_64bits_digest(frameHasher);
 	}
-	else {
-		std::promise<std::optional<std::vector<uint8_t>>> p;
-		elidedFrameHashFut = p.get_future();
-		p.set_value({});
-	}
-
-	elidedFrameHashFut.wait();
 
 	++totalFrames;
-	bool decideDraw = false;
-	bool elideDraw = false;
+	const bool elideDraw = lastFrameHash != 0 && lastFrameHash == commandDigest;
+	if (!elideDraw)
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, GetDrawRenderTarget().framebuffer);
 		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-		int l{};
-		for (l = 0; l < numLayer; l++) {
-			if (!decideDraw && elidedFrameHashFut.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-				decideDraw = true;
-				auto commandDigest = elidedFrameHashFut.get();
-				if (commandDigest) {
-					if (*commandDigest == lastFrameHash) {
-						elideDraw = true;
-						break;
-					}
-					else {
-						lastFrameHash = *commandDigest;
-					}
-				}
-				else {
-					lastFrameHash.clear();
-				}
-			}
+		for (int l = 0; l < numLayer; l++) {
 			auto& layer = layerSort[l];
 			if (layerBreak && layerBreak->first == layer->layer && layerBreak->second == layer->subLayer) {
 #ifdef _WIN32
 				DebugBreak();
 #endif
 			}
-			layer->Render();
+			inhibitElision = layer->Render() || inhibitElision;
 		}
-		if (!elideDraw) {
-			presentRtt = 1 - presentRtt;
-			++drawnFrames;
-		}
+		presentRtt = 1 - presentRtt;
+		++drawnFrames;
 	}
 
-	if (!decideDraw) {
-		if (auto commandDigest = elidedFrameHashFut.get()) {
-			lastFrameHash = *commandDigest;
-		}
-		else {
-			lastFrameHash.clear();
-		}
-	}
-
-	if (inhibitElision) {
-		// If we explicitly inhibited elision due to things like incomplete textures, make sure that the next frame is drawn.
-		lastFrameHash.clear();
-	}
+	// If we explicitly inhibited elision due to things like incomplete textures, make sure that the next frame is drawn.
+	lastFrameHash = inhibitElision ? 0 : commandDigest;
 
 	for (int l = 0; l < numLayer; ++l) {
 		layerSort[l]->Discard();
@@ -1500,7 +1467,7 @@ void r_renderer_c::EndFrame()
 		if (ImGui::Begin("Hash")) {
 			char* b64{};
 			size_t b64Len{};
-			Base64UrlEncode((char const*)lastFrameHash.data(), lastFrameHash.size(), &b64, &b64Len);
+			Base64UrlEncode((char const*)&lastFrameHash, sizeof(lastFrameHash), &b64, &b64Len);
 			ImGui::Text("%s", b64);
 			free(b64);
 		}
@@ -2009,75 +1976,4 @@ r_renderer_c::RenderTarget& r_renderer_c::GetDrawRenderTarget()
 r_renderer_c::RenderTarget& r_renderer_c::GetPresentRenderTarget()
 {
 	return rttMain[presentRtt];
-}
-
-// ===========================================================
-// MurmurHash implementation from public domain, obtained from
-// https://github.com/explosion/murmurhash/blob/9281c4825c24e64476457db89fb1d39bf09b3d23/murmurhash/MurmurHash2.cpp
-// ===========================================================
-
-#if _WIN32
-#define BIG_CONSTANT(x) (x)
-#else
-#define BIG_CONSTANT(x) (x##LLU)
-#endif
-
-static inline uint64_t MurmurHashGetBlock(const uint64_t* p)
-{
-#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
-	return *p;
-#else
-	const uint8_t* c = (const uint8_t*)p;
-	return (uint64_t)c[0] |
-		(uint64_t)c[1] << 8 |
-		(uint64_t)c[2] << 16 |
-		(uint64_t)c[3] << 24 |
-		(uint64_t)c[4] << 32 |
-		(uint64_t)c[5] << 40 |
-		(uint64_t)c[6] << 48 |
-		(uint64_t)c[7] << 56;
-#endif
-}
-
-uint64_t MurmurHash64A(const void* key, int len, uint64_t seed)
-{
-	const uint64_t m = BIG_CONSTANT(0xc6a4a7935bd1e995);
-	const int r = 47;
-
-	uint64_t h = seed ^ (len * m);
-
-	const uint64_t* data = (const uint64_t*)key;
-	const uint64_t* end = data + (len / 8);
-
-	while (data != end)
-	{
-		uint64_t k = MurmurHashGetBlock(data++);
-
-		k *= m;
-		k ^= k >> r;
-		k *= m;
-
-		h ^= k;
-		h *= m;
-	}
-
-	const unsigned char* data2 = (const unsigned char*)data;
-
-	switch (len & 7)
-	{
-	case 7: h ^= uint64_t(data2[6]) << 48;
-	case 6: h ^= uint64_t(data2[5]) << 40;
-	case 5: h ^= uint64_t(data2[4]) << 32;
-	case 4: h ^= uint64_t(data2[3]) << 24;
-	case 3: h ^= uint64_t(data2[2]) << 16;
-	case 2: h ^= uint64_t(data2[1]) << 8;
-	case 1: h ^= uint64_t(data2[0]);
-		h *= m;
-	};
-
-	h ^= h >> r;
-	h *= m;
-	h ^= h >> r;
-
-	return h;
 }
