@@ -50,7 +50,7 @@ private:
 	std::filesystem::directory_iterator iter;
 };
 
-std::string GetWineHostVersion();
+std::tuple<std::string, std::string> GetWineHostVersion();
 
 // ==========
 // Interfaces
