@@ -74,6 +74,7 @@ private:
 	std::vector<std::thread> workers;
 	std::vector<r_tex_c *> textureQueue;
 	std::mutex mutex;
+	std::condition_variable workCV;
 
 	std::vector<r_tex_c *> uploadQueue;
 	std::mutex uploadMutex;
@@ -115,9 +116,14 @@ t_manager_c::t_manager_c(r_renderer_c* renderer)
 
 t_manager_c::~t_manager_c()
 {
-	doRun = false;
+	{
+		std::unique_lock<std::mutex> lock(mutex);
+		doRun = false;
+	}
+	workCV.notify_all();
 	for (auto& worker : workers)
-		worker.join();
+		if( worker.joinable())
+			worker.join();
 
 	for (auto tex : textureQueue)
 		delete tex;
@@ -147,12 +153,15 @@ void t_manager_c::ProcessPendingTextureUploads()
 
 bool t_manager_c::AsyncAdd(r_tex_c* tex)
 {
-	std::lock_guard<std::mutex> lock( mutex );
-	if ( runnersRunning == 0 ) {
-		return true;
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		if (runnersRunning == 0) {
+			return true;
+		}
+		textureQueue.push_back(tex);
+		tex->status = r_tex_c::IN_QUEUE;
 	}
-	textureQueue.push_back( tex );
-	tex->status = r_tex_c::IN_QUEUE;
+	workCV.notify_one();
 	return false;
 }
 
@@ -170,11 +179,15 @@ bool t_manager_c::AsyncRemove(r_tex_c* tex)
 			}
 		}
 	}
-	while (tex->status == r_tex_c::PROCESSING || tex->status == r_tex_c::SIZE_KNOWN) {
-		renderer->sys->Sleep( 1 );
+	{
+		std::unique_lock lock(tex->statusMutex);
+		tex->statusCV.wait(lock, [tex] {
+			const auto status = tex->status.load(std::memory_order_relaxed);
+			return status != r_tex_c::PROCESSING && status != r_tex_c::SIZE_KNOWN;
+		});
 	}
 
-	if (tex->status == r_tex_c::PENDING_UPLOAD) {
+	if (tex->status.load(std::memory_order_relaxed) == r_tex_c::PENDING_UPLOAD) {
 		RemovePendingTextureUpload(tex);
 	}
 	
@@ -197,10 +210,14 @@ void t_manager_c::RemovePendingTextureUpload(r_tex_c* tex)
 void t_manager_c::ThreadProc()
 {
 	++runnersRunning;
-	while (doRun) {
+	while (true) {
 		r_tex_c *doTex = nullptr;
 		{
-			std::lock_guard<std::mutex> lock( mutex );
+			std::unique_lock<std::mutex> lock( mutex );
+			workCV.wait(lock, [this] { return !doRun || !textureQueue.empty(); });
+
+			if (!doRun)
+				break;
 
 			// Find a texture with the highest loading priority
 			int maxPri = 0;
@@ -216,7 +233,7 @@ void t_manager_c::ThreadProc()
 			if (doTexItr != textureQueue.end()) {
 				doTex = *doTexItr;
 				textureQueue.erase(doTexItr);
-				doTex->status = r_tex_c::PROCESSING;
+				doTex->SetStatus(r_tex_c::PROCESSING);
 			}
 		}
 	
@@ -224,9 +241,6 @@ void t_manager_c::ThreadProc()
 			// Load this texture
 			doTex->LoadFile();
 			doTex = nullptr;
-		} else {
-			// Idle
-			renderer->sys->Sleep(1);
 		}
 	}
 	--runnersRunning;
@@ -557,7 +571,7 @@ void r_tex_c::LoadFile()
 		auto raw = std::make_unique<image_c>();
 		raw->CopyRaw(IMGTYPE_GRAY, 8, 8, t_whiteImage);
 		Upload(*raw, TF_NOMIPMAP);
-		status = DONE;
+		SetStatus(DONE);
 		return;
 	}
 	else if (_stricmp(fileName.c_str(), "@black") == 0) {
@@ -565,7 +579,7 @@ void r_tex_c::LoadFile()
 		auto raw = std::make_unique<image_c>();
 		raw->CopyRaw(IMGTYPE_RGBA, 8, 8, t_blackImage);
 		Upload(*raw, TF_NOMIPMAP);
-		status = DONE;
+		SetStatus(DONE);
 		return;
 	}
 
@@ -576,7 +590,7 @@ void r_tex_c::LoadFile()
 		auto sizeCallback = [this](int width, int height) {
 			this->fileWidth = width;
 			this->fileHeight = height;
-			this->status = SIZE_KNOWN;
+			SetStatus(SIZE_KNOWN);
 		};
 		error = img->Load(path, sizeCallback);
 		if ( !error ) {
@@ -604,14 +618,23 @@ void r_tex_c::LoadFile()
 	auto raw = std::make_unique<image_c>();
 	raw->CopyRaw(IMGTYPE_GRAY, 8, 8, t_defaultTexture);
 	Upload(*raw, TF_NOMIPMAP);
-	status = DONE;
+	SetStatus(DONE);
+}
+
+void r_tex_c::SetStatus(Status newStatus)
+{
+	{
+		std::unique_lock statusLock(statusMutex);
+		status.store(newStatus, std::memory_order_release);
+	}
+	statusCV.notify_all();
 }
 
 void r_tex_c::PerformUpload(r_tex_c* tex)
 {
 	tex->Upload(*tex->img, tex->flags);
 	tex->img = {};
-	tex->status = DONE;
+	tex->SetStatus(DONE);
 }
 
 static std::atomic<size_t> inputBytes = 0;

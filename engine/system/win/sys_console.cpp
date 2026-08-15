@@ -42,8 +42,9 @@ public:
 
 	static LRESULT __stdcall WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-	volatile bool doRun;
-	volatile bool isRunning;
+	HANDLE threadStartedEvent{};
+	HANDLE threadShouldStopEvent{};
+	HANDLE threadExitedEvent{};
 
 	void	RunMessages(HWND hwnd = nullptr);
 	void	ThreadProc();
@@ -68,11 +69,12 @@ void sys_IConsole::FreeHandle(sys_IConsole* hnd)
 sys_console_c::sys_console_c(sys_IMain* sysHnd)
 	: conPrintHook_c(sysHnd->con), sys((sys_main_c*)sysHnd), thread_c(sysHnd)
 {
-	isRunning = false;
-	doRun = true;
+	threadStartedEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	threadShouldStopEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	threadExitedEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
 	ThreadStart(true);
-	while ( !isRunning );
+	WaitForSingleObject(threadStartedEvent, INFINITE);
 }
 
 void sys_console_c::RunMessages(HWND hwnd)
@@ -154,10 +156,9 @@ void sys_console_c::ThreadProc()
 
 	InstallPrintHook();
 	
-	isRunning = true;
-	while (doRun) {
+	SetEvent(threadStartedEvent);
+	while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &threadShouldStopEvent, FALSE, INFINITE, QS_ALLINPUT)) {
 		RunMessages(hwMain);
-		sys->Sleep(1);
 	}
 
 	RemovePrintHook();
@@ -170,16 +171,19 @@ void sys_console_c::ThreadProc()
 	DestroyWindow(hwMain);
 	UnregisterClass(CFG_SCON_TITLE " Class", sys->hinst);
 
-	isRunning = false;
-
 	// Flush windowless messages (Like WM_QUIT)
 	RunMessages();
+
+	SetEvent(threadExitedEvent);
 }
 
 sys_console_c::~sys_console_c()
 {
-	doRun = false;
-	while (isRunning);
+	SetEvent(threadShouldStopEvent);
+	WaitForSingleObject(threadExitedEvent, INFINITE);
+	DeleteObject(threadStartedEvent);
+	DeleteObject(threadShouldStopEvent);
+	DeleteObject(threadExitedEvent);
 }
 
 // ========================
@@ -204,7 +208,7 @@ LRESULT __stdcall sys_console_c::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPA
 		}
 	case WM_CLOSE:
 		// Quit
-		conWin->doRun = false;
+		SetEvent(conWin->threadShouldStopEvent);
 		PostQuitMessage(0);
 		return FALSE;
 	}

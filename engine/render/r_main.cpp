@@ -1628,9 +1628,9 @@ void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& heigh
 {
 	if (hnd)
 	{
-		while (hnd->sh->tex->status < r_tex_c::SIZE_KNOWN) {
-			Sleep(1);
-		}
+		auto* tex = hnd->sh->tex;
+		std::unique_lock lock(tex->statusMutex);
+		tex->statusCV.wait(lock, [tex] { return tex->status.load(std::memory_order_relaxed) >= r_tex_c::SIZE_KNOWN; });
 		width = hnd->sh->tex->fileWidth;
 		height = hnd->sh->tex->fileHeight;
 	}

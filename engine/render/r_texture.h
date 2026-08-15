@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 
 class image_c;
@@ -28,6 +29,8 @@ public:
 		PENDING_UPLOAD,
 		DONE,
 	};
+	std::mutex statusMutex;
+	std::condition_variable statusCV;
 	std::atomic<Status> status;
 	std::atomic<int> loadPri;
 	dword	texId;
@@ -51,6 +54,8 @@ public:
 	void	AbortLoad();
 	void	ForceLoad();
 	void	LoadFile();
+
+	void	SetStatus(Status newStatus);
 
 	static void PerformUpload(r_tex_c*);
 
