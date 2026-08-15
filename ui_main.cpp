@@ -317,9 +317,6 @@ void ui_main_c::ScriptInit()
 	if (err) sys->Error("Error initialising Lua environment: \n%s\n", lua_tostring(L, -1));
 	lua_gc(L, LUA_GCRESTART, -1);
 
-	// Setup debug system
-	debug = ui_IDebug::GetHandle(this);
-
 	// Setup subscript system
 	subScriptSize = 16;
 	subScriptList = new ui_ISubScript*[subScriptSize];
@@ -453,14 +450,13 @@ void ui_main_c::ScriptShutdown()
 		PCall(extraArgs, 0);
 	}
 
-	// Shutdown subscript and debug systems
+	// Shutdown subscript system
 	for (dword i = 0; i < subScriptSize; i++) {
 		if (subScriptList[i]) {
 			ui_ISubScript::FreeHandle(subScriptList[i]);
 		}
 	}
 	delete subScriptList;
-	ui_IDebug::FreeHandle(debug);
 
 	// Shutdown Lua
 	L = NULL;
@@ -532,11 +528,6 @@ void ui_main_c::KeyEvent(int key, int type)
 		case KEY_F10:
 			renderer->ToggleDebugImGui();
 			break;
-		case KEY_PAUSE:
-			if (sys->IsKeyDown(KEY_SHIFT)) {
-				debug->ToggleProfiling();
-				break;
-			}
 		default:
 			CallKeyHandler("OnKeyUp", key, false);
 			break;

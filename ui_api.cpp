@@ -2118,10 +2118,6 @@ static int l_OpenURL(lua_State* L)
 
 static int l_SetProfiling(lua_State* L)
 {
-	ui_main_c* ui = GetUIPtr(L);
-	int n = lua_gettop(L);
-	ui->LAssert(L, n >= 1, "Usage: SetProfiling(isEnabled)");
-	ui->debug->SetProfiling(lua_toboolean(L, 1) == 1);
 	return 0;
 }
 

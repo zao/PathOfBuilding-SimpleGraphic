@@ -16,7 +16,6 @@
 #include <sol/sol.hpp>
 
 #include "ui_console.h"
-#include "ui_debug.h"
 #include "ui_subscript.h"
 
 #include "ui_main.h"

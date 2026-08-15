@@ -29,7 +29,6 @@ public:
 	r_IRenderer* renderer = nullptr;
 
 	ui_IConsole* conUI = nullptr;
-	ui_IDebug* debug = nullptr;
 
 	dword	subScriptSize = 0;
 	ui_ISubScript** subScriptList = nullptr;

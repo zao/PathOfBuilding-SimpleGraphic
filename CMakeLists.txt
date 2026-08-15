@@ -68,8 +68,6 @@ set(SIMPLEGRAPHIC_SOURCES
     "ui_api.cpp"
     "ui_console.cpp"
     "ui_console.h"
-    "ui_debug.cpp"
-    "ui_debug.h"
     "ui_local.h"
     "ui_main.cpp"
     "ui_main.h"
