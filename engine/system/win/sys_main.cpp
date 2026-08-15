@@ -485,7 +485,8 @@ const char* PlatformOpenURL(const char* url)
 		return AllocString("Did not open URL, length likely too long for pre-8.17 Wine versions.");
 	}
 	auto retVal = (INT_PTR)ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWDEFAULT);
-	if (retVal)
+	// "If the function succeeds, it returns a value greater than 32"
+	if (retVal <= 32)
 	{
 		return AllocString("Opening URL failed.");
 	}
