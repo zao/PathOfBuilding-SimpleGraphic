@@ -11,6 +11,7 @@
 
 #include "cmp_core.h"
 #include "stb_image_resize.h"
+#include <fmt/core.h>
 #include <gli/gl.hpp>
 #include <gli/generate_mipmaps.hpp>
 
@@ -104,7 +105,8 @@ t_manager_c::t_manager_c(r_renderer_c* renderer)
 
 	for (int i = 0; i < runnersWanted; ++i)
 	{
-		workers.emplace_back([this] {
+		workers.emplace_back([this, i] {
+			PerformanceAPI_SetCurrentThreadName(fmt::format("Tex{}", i).c_str());
 			ThreadProc();
 			});
 	}

@@ -13,6 +13,7 @@ if (MSVC)
 endif ()
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/dep/superluminal/API")
 
 include(${PROJECT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake)
 
@@ -108,6 +109,7 @@ target_compile_definitions(SimpleGraphic
     "GLFW_INCLUDE_NONE"
     "GL_SILENCE_DEPRECATION"
     "SIMPLEGRAPHIC_EXPORTS"
+    "PERFORMANCEAPI_ENABLED=$<BOOL:${SuperluminalAPI_FOUND}>"
 )
 
 target_include_directories(SimpleGraphic
@@ -126,6 +128,7 @@ find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
+find_package(SuperluminalAPI)
 find_package(Threads REQUIRED)
 find_package(zstd REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -187,6 +190,7 @@ target_include_directories(SimpleGraphic
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/dep/glad/include
     ${CMAKE_CURRENT_SOURCE_DIR}/dep/stb
+    ${CMAKE_CURRENT_SOURCE_DIR}/dep/superluminal/API/include
 )
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -212,6 +216,13 @@ if (WIN32)
         PRIVATE
         "winmm.lib"
     )
+    
+    if (SuperluminalAPI_FOUND)
+        target_link_libraries(SimpleGraphic
+            PRIVATE
+            SuperluminalAPI
+        )
+    endif ()
 endif ()
 
 if (APPLE)

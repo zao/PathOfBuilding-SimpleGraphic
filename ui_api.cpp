@@ -1909,6 +1909,7 @@ SG_LUA_CPP_FUN_BEGIN(LoadModule)
 	if (!fileName.has_extension()) {
 		fileName.replace_extension(".lua");
 	}
+	PERFORMANCEAPI_INSTRUMENT_DATA("[API]LoadModule", fileName.generic_string().c_str());
 
 	ui->sys->SetWorkDir(ui->scriptPath);
 	auto fileStr = fileName.generic_u8string();
@@ -1932,6 +1933,7 @@ SG_LUA_CPP_FUN_BEGIN(PLoadModule)
 	if (!fileName.has_extension()) {
 		fileName.replace_extension(".lua");
 	}
+	PERFORMANCEAPI_INSTRUMENT_DATA("[API]PLoadModule", fileName.generic_string().c_str());
 
 	ui->sys->SetWorkDir(ui->scriptPath);
 	int err = luaL_loadfile(L, fileName.generic_u8string().c_str());

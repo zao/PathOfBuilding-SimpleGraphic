@@ -372,6 +372,7 @@ void ui_subscript_c::Stop()
 
 void ui_subscript_c::ThreadProc()
 {
+	PerformanceAPI_SetCurrentThreadName("Subscript");
 	int numarg = (int)lua_tointeger(L, -1);
 	lua_pop(L, 1);
 	if (lua_pcall(L, numarg, LUA_MULTRET, 1)) {

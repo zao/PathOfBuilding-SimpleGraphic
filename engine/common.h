@@ -22,6 +22,8 @@
 #include <errno.h>
 #include <stdbool.h>
 
+#include <Superluminal/PerformanceAPI.h>
+
 #ifdef _DEBUG
 #include "common/memtrak3.h"
 #endif

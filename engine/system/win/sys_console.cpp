@@ -92,6 +92,7 @@ void sys_console_c::RunMessages(HWND hwnd)
 
 void sys_console_c::ThreadProc()
 {
+	PerformanceAPI_SetCurrentThreadName("SysConsole");
 	// Get info of the monitor containing the mouse cursor
 	POINT curPos;
 	GetCursorPos(&curPos);

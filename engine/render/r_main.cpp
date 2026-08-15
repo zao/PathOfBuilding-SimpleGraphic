@@ -1578,6 +1578,7 @@ r_shaderHnd_c* r_renderer_c::RegisterShader(std::string_view shname, int flags)
 	}
 
 	std::string name(shname);
+	PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(name.c_str());
 	dword nameHash = StringHash(name, 0xFFFF);
 	int newId = -1;
 	for (int s = 0; s < numShader; s++) {
@@ -1626,6 +1627,7 @@ r_shaderHnd_c* r_renderer_c::RegisterShaderFromImage(std::unique_ptr<image_c> im
 
 void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& height)
 {
+	PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(hnd->sh->name.c_str());
 	if (hnd)
 	{
 		auto* tex = hnd->sh->tex;
