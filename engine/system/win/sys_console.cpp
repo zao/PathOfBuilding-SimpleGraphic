@@ -182,9 +182,9 @@ sys_console_c::~sys_console_c()
 {
 	SetEvent(threadShouldStopEvent);
 	WaitForSingleObject(threadExitedEvent, INFINITE);
-	DeleteObject(threadStartedEvent);
-	DeleteObject(threadShouldStopEvent);
-	DeleteObject(threadExitedEvent);
+	CloseHandle(threadStartedEvent);
+	CloseHandle(threadShouldStopEvent);
+	CloseHandle(threadExitedEvent);
 }
 
 // ========================
