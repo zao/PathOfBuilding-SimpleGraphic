@@ -21,6 +21,22 @@ set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
 include(InstallRequiredSystemLibraries)
 add_subdirectory(dep/glm)
 
+find_package(unofficial-angle CONFIG REQUIRED)
+find_package(CURL CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(gli CONFIG REQUIRED)
+find_package(LuaJIT REQUIRED)
+find_package(Microsoft.GSL CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+find_package(re2 CONFIG REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
+find_package(SuperluminalAPI)
+find_package(Threads REQUIRED)
+find_package(zstd REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(WebP)
+
 set(SIMPLEGRAPHIC_SOURCES
     "config.h"
     "dep/stb/stb_image.h"
@@ -115,22 +131,6 @@ target_include_directories(SimpleGraphic
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine"
 )
-
-find_package(unofficial-angle CONFIG REQUIRED)
-find_package(CURL CONFIG REQUIRED)
-find_package(fmt CONFIG REQUIRED)
-find_package(glfw3 CONFIG REQUIRED)
-find_package(gli CONFIG REQUIRED)
-find_package(LuaJIT REQUIRED)
-find_package(Microsoft.GSL CONFIG REQUIRED)
-find_package(PkgConfig REQUIRED)
-find_package(re2 CONFIG REQUIRED)
-find_package(sol2 CONFIG REQUIRED)
-find_package(SuperluminalAPI)
-find_package(Threads REQUIRED)
-find_package(zstd REQUIRED)
-find_package(ZLIB REQUIRED)
-find_package(WebP)
 
 add_library(cmp_core STATIC
     dep/compressonator/cmp_core/source/cmp_core.cpp

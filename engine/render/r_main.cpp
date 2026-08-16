@@ -1627,9 +1627,9 @@ r_shaderHnd_c* r_renderer_c::RegisterShaderFromImage(std::unique_ptr<image_c> im
 
 void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& height)
 {
-	PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(hnd->sh->name.c_str());
-	if (hnd)
+	if (hnd && hnd->sh)
 	{
+		PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(hnd->sh->name.size() ? hnd->sh->name.c_str() : "<nameless>");
 		auto* tex = hnd->sh->tex;
 		std::unique_lock lock(tex->statusMutex);
 		tex->statusCV.wait(lock, [tex] { return tex->status.load(std::memory_order_relaxed) >= r_tex_c::SIZE_KNOWN; });
