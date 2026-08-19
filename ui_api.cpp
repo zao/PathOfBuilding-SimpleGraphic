@@ -404,6 +404,7 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoad)
 		fileName = ui->scriptWorkDir / fileName;
 	}
 	delete imgHandle->hnd;
+	imgHandle->hnd = nullptr;
 	int flags = TF_NOMIPMAP;
 	for (int f = 2; f <= n; f++) {
 		if (!lua_isstring(L, f)) {

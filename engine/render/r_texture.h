@@ -17,8 +17,16 @@ class image_c;
 class mip_set_c;
 
 // Texture
-class r_tex_c {
+class r_tex_c : public std::enable_shared_from_this<r_tex_c> {
+	struct CreateToken {};
+
+	void Kick();
+
 public:
+	r_tex_c(CreateToken, class r_ITexManager* manager, std::string_view fileName, int flags);
+	r_tex_c(CreateToken, class r_ITexManager* manager, std::unique_ptr<image_c> img, int flags);
+	~r_tex_c();
+
 	int		error;
 	enum Status
 	{
@@ -29,8 +37,8 @@ public:
 		PENDING_UPLOAD,
 		DONE,
 	};
-	std::mutex statusMutex;
-	std::condition_variable statusCV;
+	mutable std::mutex statusMutex;
+	mutable std::condition_variable statusCV;
 	std::atomic<Status> status;
 	std::atomic<int> loadPri;
 	dword	texId;
@@ -42,22 +50,22 @@ public:
 	GLenum target{};
 	size_t stackLayers = 1;
 
-	r_tex_c(class r_ITexManager* manager, std::string_view fileName, int flags);
-	r_tex_c(class r_ITexManager* manager, std::unique_ptr<image_c> img, int flags);
-	~r_tex_c();
+	static std::shared_ptr<r_tex_c> CreateFromPath(class r_ITexManager* manager, std::string_view fileName, int flags);
+	static std::shared_ptr<r_tex_c> CreateFromImage(class r_ITexManager* manager, std::unique_ptr<image_c> img, int flags);
 
-	void	Bind();
-	void	Unbind();
-	void	Enable();
-	void	Disable();
-	void	StartLoad();
-	void	AbortLoad();
-	void	ForceLoad();
-	void	LoadFile();
+	void Bind();
+	void Unbind();
+	void Enable();
+	void Disable();
 
-	void	SetStatus(Status newStatus);
+	void AbortLoad();
+	void LoadFile();
 
-	static void PerformUpload(r_tex_c*);
+	[[nodiscard]] Status GetStatus() const noexcept;
+	void SetStatus(Status newStatus);
+	void WaitOnStatusAtLeast(Status bound) const noexcept;
+
+	void PerformUpload();
 
 private:
 	class t_manager_c* manager;

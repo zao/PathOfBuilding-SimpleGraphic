@@ -29,7 +29,7 @@ struct f_glyph_s {
 
 // Font height info
 struct f_fontHeight_s {
-	r_tex_c* tex;
+	std::shared_ptr<r_tex_c> tex;
 	int		height;
 	int		numGlyph;
 	f_glyph_s glyphs[128];
@@ -75,7 +75,8 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 			fh = new f_fontHeight_s;
 			fontHeights[numFontHeight++] = fh;
 			std::string tgaName = fmt::format("{}.{}.tga", fileNameBase, h);
-			fh->tex = new r_tex_c(renderer->texMan, tgaName.c_str(), TF_NOMIPMAP);
+			fh->tex = r_tex_c::CreateFromPath(renderer->texMan, tgaName.c_str(), TF_ASYNC|TF_NOMIPMAP);
+			fh->tex->WaitOnStatusAtLeast(r_tex_c::SIZE_KNOWN);
 			fh->height = h;
 			if (h > maxHeight) {
 				maxHeight = h;
@@ -118,7 +119,7 @@ r_font_c::~r_font_c()
 {
 	// Delete textures
 	for (int i = 0; i < numFontHeight; i++) {
-		delete fontHeights[i]->tex;
+		fontHeights[i]->tex.reset();
 		delete fontHeights[i];
 	}
 	delete fontHeightMap;
@@ -368,13 +369,13 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 	// Snap the starting x position to the pixel grid so the leading glyph isn't blurred.
 	x = std::round(x);
 
-	r_tex_c* curTex{};
+	std::shared_ptr<r_tex_c> curTex{};
 
 	auto drawCodepoint = [this, &curTex, &x, y](f_fontHeight_s* fh, int height, float scale, int yShift, char32_t cp) {
 		float cpY = y + yShift;
 		if (curTex != fh->tex) {
 			curTex = fh->tex;
-			renderer->curLayer->Bind(fh->tex);
+			renderer->curLayer->Bind(curTex);
 		}
 		auto& glyph = fh->Glyph((char)(unsigned char)cp);
 		x += glyph.spLeft * scale;

@@ -48,13 +48,11 @@ class r_shader_c {
 public:
 	r_renderer_c* renderer;
 	std::string name;
-	dword		nameHash;
-	int			refCount;
-	r_tex_c* tex;
+	dword nameHash;
+	std::shared_ptr<r_tex_c> tex;
 
 	r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags);
 	r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags, std::unique_ptr<image_c> img);
-	~r_shader_c();
 };
 
 r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags)
@@ -62,8 +60,7 @@ r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flag
 {
 	name = shname;
 	nameHash = StringHash(name.c_str(), 0xFFFF);
-	refCount = 0;
-	tex = new r_tex_c(renderer->texMan, name, flags);
+	tex = r_tex_c::CreateFromPath(renderer->texMan, name, flags);
 	if (tex->error) {
 		renderer->sys->con->Warning("couldn't load texture '%s'", name.c_str());
 	}
@@ -74,31 +71,16 @@ r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flag
 {
 	name = shname;
 	nameHash = StringHash(name.c_str(), 0xFFFF);
-	refCount = 0;
-	tex = new r_tex_c(renderer->texMan, std::move(img), flags);
-}
-
-r_shader_c::~r_shader_c()
-{
-	delete tex;
+	tex = r_tex_c::CreateFromImage(renderer->texMan, std::move(img), flags);
 }
 
 // ===================
 // Shader Handle Class
 // ===================
 
-r_shaderHnd_c::r_shaderHnd_c(r_shader_c* sh)
+r_shaderHnd_c::r_shaderHnd_c(std::shared_ptr<r_shader_c>&& sh)
 	: sh(sh)
 {
-	sh->refCount++;
-}
-
-r_shaderHnd_c::~r_shaderHnd_c()
-{
-	sh->refCount--;
-	if (sh->refCount == 0) {
-		sh->tex->AbortLoad();
-	}
 }
 
 struct Mat4 {
@@ -250,11 +232,13 @@ void r_layer_c::SetBlendMode(int mode)
 	}
 }
 
-void r_layer_c::Bind(r_tex_c* tex)
+void r_layer_c::Bind(const std::shared_ptr<r_tex_c>& tex)
 {
 	if (auto* cmd = (r_layerCmdBind_s*)NewCommand(CommandSize(r_layerCmd_s::BIND))) {
 		cmd->cmd = r_layerCmd_s::BIND;
-		cmd->tex = tex;
+		cmd->tex = tex.get();
+		if (!referencedTextures.count(tex))
+			referencedTextures.emplace(tex);
 	}
 }
 
@@ -733,6 +717,7 @@ void r_layer_c::Discard()
 {
 	cmdCursor = 0;
 	numCmd = 0;
+	referencedTextures.clear();
 }
 
 // =====================
@@ -961,10 +946,6 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	// Initialise texture manager
 	texMan = r_ITexManager::GetHandle(this);
 
-	// Initialise shader array
-	numShader = 0;
-	memset(shaderList, 0, sizeof(shaderList));
-
 	GLint maxTextureImageUnits{};
 	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &maxTextureImageUnits);
 
@@ -1127,9 +1108,7 @@ void r_renderer_c::Shutdown()
 		delete fonts[f];
 	}
 
-	for (int s = 0; s < numShader; s++) {
-		delete shaderList[s];
-	}
+	shaderList.clear();
 
 	for (int l = 0; l < numLayer; l++) {
 		delete layerList[l];
@@ -1555,7 +1534,7 @@ void r_renderer_c::EndFrame()
 
 std::optional<int> r_shaderHnd_c::StackCount() const
 {
-	if (!sh || sh->tex->status != r_tex_c::Status::DONE)
+	if (!sh || sh->tex->GetStatus() != r_tex_c::Status::DONE)
 		return {};
 	return (int)sh->tex->stackLayers;
 }
@@ -1563,12 +1542,7 @@ std::optional<int> r_shaderHnd_c::StackCount() const
 void r_renderer_c::PurgeShaders()
 {
 	// Delete released shaders
-	for (int s = 0; s < numShader; s++) {
-		if (shaderList[s] && shaderList[s]->refCount == 0 && shaderList[s]->tex->status == r_tex_c::DONE) {
-			delete shaderList[s];
-			shaderList[s] = NULL;
-		}
-	}
+	shaderList.erase(std::remove_if(shaderList.begin(), shaderList.end(), [](const std::weak_ptr<r_shader_c>& entry) { return entry.expired(); }), shaderList.end());
 }
 
 r_shaderHnd_c* r_renderer_c::RegisterShader(std::string_view shname, int flags)
@@ -1581,48 +1555,29 @@ r_shaderHnd_c* r_renderer_c::RegisterShader(std::string_view shname, int flags)
 	PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(name.c_str());
 	dword nameHash = StringHash(name, 0xFFFF);
 	int newId = -1;
-	for (int s = 0; s < numShader; s++) {
-		if (!shaderList[s]) {
-			newId = s;
-		}
-		else if (shaderList[s]->nameHash == nameHash && _stricmp(name.c_str(), shaderList[s]->name.c_str()) == 0 && shaderList[s]->tex->flags == flags) {
-			// Shader already exists, return a new handle for it
-			// Ensure texture is loaded as soon as possible
-			shaderList[s]->tex->ForceLoad();
-			return new r_shaderHnd_c(shaderList[s]);
-		}
+	auto found = std::find_if(shaderList.begin(), shaderList.end(), [&name, &nameHash, &flags](const auto& entry) {
+		if (std::shared_ptr<r_shader_c> sp = entry.lock())
+			return sp->nameHash == nameHash && sp->name == name && sp->tex->flags == flags;
+		return false;
+	});
+	std::shared_ptr<r_shader_c> sp;
+	if (found != shaderList.end()) {
+		// Shader already exists, return a new handle for it
+		sp = found->lock();
 	}
-	if (newId == -1) {
-		if (numShader == R_MAXSHADERS) {
-			sys->con->Warning("shader limit reached");
-			return NULL;
-		}
-		newId = numShader++;
+	else {
+		sp = std::make_shared<r_shader_c>(this, shname, flags);
+		shaderList.push_back(sp);
 	}
-	shaderList[newId] = new r_shader_c(this, shname, flags);
-	return new r_shaderHnd_c(shaderList[newId]);
+	return new r_shaderHnd_c(std::move(sp));
 }
 
 r_shaderHnd_c* r_renderer_c::RegisterShaderFromImage(std::unique_ptr<image_c> img, int flags)
 {
-	int newId = -1;
-	for (int s = 0; s < numShader; s++) {
-		if (!shaderList[s]) {
-			newId = s;
-			break;
-		}
-	}
-	if (newId == -1) {
-		if (numShader == R_MAXSHADERS) {
-			sys->con->Warning("shader limit reached");
-			return NULL;
-		}
-		newId = numShader++;
-	}
-	char shname[32];
-	sprintf(shname, "data:%d", newId);
-	shaderList[newId] = new r_shader_c(this, shname, flags, std::move(img));
-	return new r_shaderHnd_c(shaderList[newId]);
+	std::string shname = fmt::format("data:%d", shaderList.size());
+	std::shared_ptr sp = std::make_shared<r_shader_c>(this, shname, flags, std::move(img));
+	shaderList.push_back(sp);
+	return new r_shaderHnd_c(std::move(sp));
 }
 
 void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& height)
@@ -1630,11 +1585,10 @@ void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& heigh
 	if (hnd && hnd->sh)
 	{
 		PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(hnd->sh->name.size() ? hnd->sh->name.c_str() : "<nameless>");
-		auto* tex = hnd->sh->tex;
-		std::unique_lock lock(tex->statusMutex);
-		tex->statusCV.wait(lock, [tex] { return tex->status.load(std::memory_order_relaxed) >= r_tex_c::SIZE_KNOWN; });
-		width = hnd->sh->tex->fileWidth;
-		height = hnd->sh->tex->fileHeight;
+		auto& tex = *hnd->sh->tex;
+		tex.WaitOnStatusAtLeast(r_tex_c::SIZE_KNOWN);
+		width = tex.fileWidth;
+		height = tex.fileHeight;
 	}
 	else {
 		width = 0;

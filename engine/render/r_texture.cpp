@@ -59,25 +59,25 @@ public:
 
 	r_renderer_c* renderer;
 
-	r_tex_c* whiteTex;
-	r_tex_c* blackTex;
+	std::shared_ptr<r_tex_c> whiteTex;
+	std::shared_ptr<r_tex_c> blackTex;
 
-	bool	AsyncAdd(r_tex_c* tex);
-	bool	AsyncRemove(r_tex_c* tex);
+	bool	AsyncAdd(const std::shared_ptr<r_tex_c>& tex);
+	bool	AsyncRemove(r_tex_c& tex);
 
-	void	EnqueueTextureUpload(r_tex_c* tex);
-	void	RemovePendingTextureUpload(r_tex_c* tex);
+	void	EnqueueTextureUpload(const std::shared_ptr<r_tex_c>& tex);
+	void	RemovePendingTextureUpload(const r_tex_c& tex);
 
 private:
 	std::atomic<bool> doRun;
 	std::atomic<int> runnersRunning;
 
 	std::vector<std::thread> workers;
-	std::vector<r_tex_c *> textureQueue;
+	std::vector<std::shared_ptr<r_tex_c>> textureQueue;
 	std::mutex mutex;
 	std::condition_variable workCV;
 
-	std::vector<r_tex_c *> uploadQueue;
+	std::vector<std::shared_ptr<r_tex_c>> uploadQueue;
 	std::mutex uploadMutex;
 
 	void	ThreadProc() override;
@@ -96,8 +96,8 @@ void r_ITexManager::FreeHandle(r_ITexManager* hnd)
 t_manager_c::t_manager_c(r_renderer_c* renderer)
 	: thread_c(renderer->sys), renderer(renderer)
 {
-	whiteTex = new r_tex_c(this, "@white", 0);
-	blackTex = new r_tex_c(this, "@black", 0);
+	whiteTex = r_tex_c::CreateFromPath(this, "@white", 0);
+	blackTex = r_tex_c::CreateFromPath(this, "@black", 0);
 
 	doRun = true;
 	runnersRunning = 0;
@@ -110,7 +110,7 @@ t_manager_c::t_manager_c(r_renderer_c* renderer)
 			ThreadProc();
 			});
 	}
-	//ThreadStart();
+
 	while (runnersRunning < runnersWanted) {
 		renderer->sys->Sleep( 1 );
 	}
@@ -126,12 +126,6 @@ t_manager_c::~t_manager_c()
 	for (auto& worker : workers)
 		if( worker.joinable())
 			worker.join();
-
-	for (auto tex : textureQueue)
-		delete tex;
-
-	delete whiteTex;
-	delete blackTex;
 }
 
 // =====================
@@ -147,13 +141,13 @@ int t_manager_c::GetAsyncCount()
 void t_manager_c::ProcessPendingTextureUploads()
 {
 	std::unique_lock lk(uploadMutex);
-	for (auto tex : uploadQueue) {
-		r_tex_c::PerformUpload(tex);
+	for (const auto& tex : uploadQueue) {
+		tex->PerformUpload();
 	}
 	uploadQueue.clear();
 }
 
-bool t_manager_c::AsyncAdd(r_tex_c* tex)
+bool t_manager_c::AsyncAdd(const std::shared_ptr<r_tex_c>& tex)
 {
 	{
 		std::lock_guard<std::mutex> lock(mutex);
@@ -161,51 +155,51 @@ bool t_manager_c::AsyncAdd(r_tex_c* tex)
 			return true;
 		}
 		textureQueue.push_back(tex);
-		tex->status = r_tex_c::IN_QUEUE;
+		tex->SetStatus(r_tex_c::IN_QUEUE);
 	}
 	workCV.notify_one();
 	return false;
 }
 
-bool t_manager_c::AsyncRemove(r_tex_c* tex)
+bool t_manager_c::AsyncRemove(r_tex_c& tex)
 {
 	{
 		std::lock_guard<std::mutex> lock( mutex );
-		if (tex->status == r_tex_c::IN_QUEUE) {
+		if (tex.GetStatus() == r_tex_c::IN_QUEUE) {
 			for (auto itr = textureQueue.begin(); itr != textureQueue.end(); ++itr) {
-				if (*itr == tex) {
+				if (itr->get() == &tex) {
 					textureQueue.erase( itr );
-					tex->status = r_tex_c::INIT;
+					tex.SetStatus(r_tex_c::INIT);
 					return false;
 				}
 			}
 		}
 	}
 	{
-		std::unique_lock lock(tex->statusMutex);
-		tex->statusCV.wait(lock, [tex] {
-			const auto status = tex->status.load(std::memory_order_relaxed);
+		std::unique_lock lock(tex.statusMutex);
+		tex.statusCV.wait(lock, [&tex] {
+			const auto status = tex.status.load(std::memory_order_relaxed);
 			return status != r_tex_c::PROCESSING && status != r_tex_c::SIZE_KNOWN;
 		});
 	}
 
-	if (tex->status.load(std::memory_order_relaxed) == r_tex_c::PENDING_UPLOAD) {
+	if (tex.GetStatus() == r_tex_c::PENDING_UPLOAD) {
 		RemovePendingTextureUpload(tex);
 	}
 	
 	return true;
 }
 
-void t_manager_c::EnqueueTextureUpload(r_tex_c* tex)
+void t_manager_c::EnqueueTextureUpload(const std::shared_ptr<r_tex_c>& tex)
 {
 	std::scoped_lock lk(uploadMutex);
 	uploadQueue.push_back(tex);
 }
 
-void t_manager_c::RemovePendingTextureUpload(r_tex_c* tex)
+void t_manager_c::RemovePendingTextureUpload(const r_tex_c& tex)
 {
 	std::scoped_lock lk(uploadMutex);
-	if (auto I = std::find(uploadQueue.begin(), uploadQueue.end(), tex); I != uploadQueue.end())
+	if (auto I = std::find_if(uploadQueue.begin(), uploadQueue.end(), [p = &tex](const auto& e) { return e.get() == p; }); I != uploadQueue.end())
 		uploadQueue.erase(I);
 }
 
@@ -213,7 +207,7 @@ void t_manager_c::ThreadProc()
 {
 	++runnersRunning;
 	while (true) {
-		r_tex_c *doTex = nullptr;
+		std::shared_ptr<r_tex_c> doTex;
 		{
 			std::unique_lock<std::mutex> lock( mutex );
 			workCV.wait(lock, [this] { return !doRun || !textureQueue.empty(); });
@@ -225,7 +219,7 @@ void t_manager_c::ThreadProc()
 			int maxPri = 0;
 			auto doTexItr = textureQueue.end();
 			for (auto curTexItr = textureQueue.begin(); curTexItr != textureQueue.end(); ++curTexItr) {
-				auto curTex = *curTexItr;
+				const auto& curTex = *curTexItr;
 				if (doTexItr == textureQueue.end() || curTex->loadPri > maxPri) {
 					maxPri = curTex->loadPri;
 					doTexItr = curTexItr;
@@ -242,7 +236,6 @@ void t_manager_c::ThreadProc()
 		if (doTex != nullptr) {
 			// Load this texture
 			doTex->LoadFile();
-			doTex = nullptr;
 		}
 	}
 	--runnersRunning;
@@ -311,32 +304,38 @@ static void T_ResampleImage(byte* in, dword in_w, dword in_h, int in_comp, byte*
 // OpenGL Texture Class
 // ====================
 
-r_tex_c::r_tex_c(r_ITexManager* manager, std::string_view fileName, int flags)
+r_tex_c::r_tex_c(CreateToken, r_ITexManager* manager, std::string_view fileName, int flags)
 {
 	Init(manager, fileName, flags);
-
-	StartLoad();
-	if (status == INIT) {
-		// Load it now
-		LoadFile();
-	}
 }
 
-r_tex_c::r_tex_c(r_ITexManager* manager, std::unique_ptr<image_c> img, int flags)
+r_tex_c::r_tex_c(CreateToken, r_ITexManager* manager, std::unique_ptr<image_c> newImg, int flags)
 {
 	Init(manager, {}, flags);
 
-	// Direct upload
-	img = BuildMipSet(std::move(img));
-	PerformUpload(this);
+	const auto extent = newImg->tex.extent();
+	fileWidth = extent.x;
+	fileHeight = extent.y;
+	SetStatus(SIZE_KNOWN);
+	img = std::move(newImg);
 }
 
 r_tex_c::~r_tex_c()
 {
 	if (status >= IN_QUEUE && status < DONE) {
-		manager->AsyncRemove(this);
+		manager->AsyncRemove(*this);
 	}
 	glDeleteTextures(1, &texId);
+}
+
+void r_tex_c::Kick()
+{
+	if (flags & TF_ASYNC)
+		manager->AsyncAdd(shared_from_this());
+	else if (img || fileName.size()) {
+		// Load it now
+		LoadFile();
+	}
 }
 
 void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_flags)
@@ -351,6 +350,21 @@ void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_
 	fileName = i_fileName;
 	fileWidth = 0;
 	fileHeight = 0;
+
+}
+
+std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(r_ITexManager* manager, std::string_view fileName, int flags)
+{
+	auto ptr = std::make_shared<r_tex_c>(CreateToken{}, manager, fileName, flags);
+	ptr->Kick();
+	return ptr;
+}
+
+std::shared_ptr<r_tex_c> r_tex_c::CreateFromImage(r_ITexManager* manager, std::unique_ptr<image_c> img, int flags)
+{
+	auto ptr = std::make_shared<r_tex_c>(CreateToken{}, manager, std::move(img), flags);
+	ptr->Kick();
+	return ptr;
 }
 
 void r_tex_c::Bind()
@@ -378,25 +392,9 @@ void r_tex_c::Disable()
 	glDisable(GL_TEXTURE_2D);
 }
 
-void r_tex_c::StartLoad()
-{
-	if (flags & TF_ASYNC)
-		manager->AsyncAdd(this);
-}
-
 void r_tex_c::AbortLoad()
 {
-	manager->AsyncRemove(this);
-}
-
-void r_tex_c::ForceLoad()
-{
-	if (status == INIT) {
-		LoadFile();
-	} else if (fileWidth == 0) {
-		// Load not pending, do it now
-		LoadFile();
-	}
+	manager->AsyncRemove(*this);
 }
 
 std::unique_ptr<image_c> r_tex_c::BuildMipSet(std::unique_ptr<image_c> img)
@@ -404,7 +402,6 @@ std::unique_ptr<image_c> r_tex_c::BuildMipSet(std::unique_ptr<image_c> img)
 	const auto format = img->tex.format();
 
 	const bool blockCompressed = is_compressed(format);
-	const bool isAsync = !!(flags & TF_ASYNC);
 	const bool hasExistingMips = img->tex.layers() > 1;
 
 	auto extent = img->tex.extent();
@@ -472,7 +469,6 @@ std::unique_ptr<image_c> r_tex_c::BuildMipSet(std::unique_ptr<image_c> img)
 						comp, hasAlpha ? 3 : STBIR_ALPHA_CHANNEL_NONE, 0, STBIR_EDGE_CLAMP);
 				}
 			}
-			//newTex = gli::generate_mipmaps(newTex, gli::FILTER_LINEAR);
 			img->tex = newTex;
 		}
 	}
@@ -566,61 +562,93 @@ static gli::texture2d_array TranscodeTexture(gli::texture2d_array src, gli::form
 	return dst;
 }
 
+struct BuiltinImageSpec
+{
+	const std::string_view name;
+	const imageType_s imageType;
+	const byte* imageData;
+	const int width;
+	const int height;
+};
+
+static const std::array builtinImages{
+	BuiltinImageSpec{ "@default", IMGTYPE_GRAY, t_defaultTexture, 8, 8},
+	BuiltinImageSpec{ "@white", IMGTYPE_GRAY, t_whiteImage, 8, 8},
+	BuiltinImageSpec{ "@black", IMGTYPE_RGBA, t_blackImage, 8, 8},
+};
+
 void r_tex_c::LoadFile()
 {
-	if (_stricmp(fileName.c_str(), "@white") == 0) {
-		// Upload an 8x8 white image
-		auto raw = std::make_unique<image_c>();
-		raw->CopyRaw(IMGTYPE_GRAY, 8, 8, t_whiteImage);
-		Upload(*raw, TF_NOMIPMAP);
-		SetStatus(DONE);
-		return;
-	}
-	else if (_stricmp(fileName.c_str(), "@black") == 0) {
-		// Upload an 8x8 black image
-		auto raw = std::make_unique<image_c>();
-		raw->CopyRaw(IMGTYPE_RGBA, 8, 8, t_blackImage);
-		Upload(*raw, TF_NOMIPMAP);
-		SetStatus(DONE);
-		return;
-	}
+	// Four cases:
+	// - from existing image data
+	// - virtual @black or @white
+	// - from file
+	// - fallback to gray default texture
 
-	// Try to load image file using appropriate loader
-	auto path = std::filesystem::u8path(fileName);
-	img = std::unique_ptr<image_c>(image_c::LoaderForFile(renderer->sys->con, path));
-	if (img) {
-		auto sizeCallback = [this](int width, int height) {
-			this->fileWidth = width;
-			this->fileHeight = height;
-			SetStatus(SIZE_KNOWN);
-		};
-		error = img->Load(path, sizeCallback);
-		if ( !error ) {
-			const bool useTextureFormatFallback = !renderer->texBC7;
-			if (useTextureFormatFallback) {
-				if (img->tex.format() == gli::FORMAT_RGBA_BP_UNORM_BLOCK16)
-					img->tex = TranscodeTexture(img->tex, gli::FORMAT_RGBA8_UNORM_PACK8, true);
-			}
-			stackLayers = img->tex.layers();
-			const bool is_async = !!(flags & TF_ASYNC);
-			img = BuildMipSet(std::move(img));
+	const bool is_async = !!(flags & TF_ASYNC);
+	const bool no_mipmap = !!(flags & TF_NOMIPMAP);
 
-			status = PENDING_UPLOAD;
-			if (is_async) {
-				// Post a main thread task to create and fill GPU textures.
-				manager->EnqueueTextureUpload(this);
+	auto sizeCallback = [this](int width, int height) {
+		this->fileWidth = width;
+		this->fileHeight = height;
+		SetStatus(SIZE_KNOWN);
+	};
+
+	if (!img) {
+		if (fileName.size() && fileName[0] == '@') {
+			// Upload a (typically) 8x8 builtin image
+			auto it = std::find_if(builtinImages.begin(), builtinImages.end(), [name = std::string_view(fileName)](const BuiltinImageSpec& spec) {
+				return spec.name == name;
+			});
+			if (it == builtinImages.end())
+				it = builtinImages.begin(); // fall back to @default
+
+			flags |= TF_NOMIPMAP;
+			img = std::make_unique<image_c>();
+			img->CopyRaw(it->imageType, it->width, it->height, it->imageData);
+			sizeCallback(it->width, it->height);
+		}
+		else {
+			// Try to load image file using appropriate loader
+			const auto path = std::filesystem::u8path(fileName);
+			img = std::unique_ptr<image_c>(image_c::LoaderForFile(renderer->sys->con, path));
+			if (img && img->Load(path, sizeCallback))
+				img.reset();
+
+			// Fallback to gray default texture
+			if( !img ) {
+				img = std::make_unique<image_c>();
+				img->CopyRaw(IMGTYPE_GRAY, 8, 8, t_defaultTexture);
+				flags |= TF_NOMIPMAP;
+				sizeCallback(8, 8);
 			}
-			else {
-				PerformUpload(this);
-			}
-			return;
 		}
 	}
 
-	auto raw = std::make_unique<image_c>();
-	raw->CopyRaw(IMGTYPE_GRAY, 8, 8, t_defaultTexture);
-	Upload(*raw, TF_NOMIPMAP);
-	SetStatus(DONE);
+	const bool useTextureFormatFallback = !renderer->texBC7;
+	if (useTextureFormatFallback) {
+		if (img->tex.format() == gli::FORMAT_RGBA_BP_UNORM_BLOCK16)
+			img->tex = TranscodeTexture(img->tex, gli::FORMAT_RGBA8_UNORM_PACK8, true);
+	}
+	stackLayers = img->tex.layers();
+	if (!no_mipmap)
+		img = BuildMipSet(std::move(img));
+
+	SetStatus(PENDING_UPLOAD);
+	if (is_async) {
+		// Post a main thread task to create and fill GPU textures.
+		manager->EnqueueTextureUpload(shared_from_this());
+	}
+	else {
+		PerformUpload();
+	}
+	return;
+}
+
+r_tex_c::Status r_tex_c::GetStatus() const noexcept
+{
+	std::unique_lock statusLock(statusMutex);
+	return status.load(std::memory_order_acquire);
 }
 
 void r_tex_c::SetStatus(Status newStatus)
@@ -632,11 +660,19 @@ void r_tex_c::SetStatus(Status newStatus)
 	statusCV.notify_all();
 }
 
-void r_tex_c::PerformUpload(r_tex_c* tex)
+void r_tex_c::WaitOnStatusAtLeast(Status bound) const noexcept
 {
-	tex->Upload(*tex->img, tex->flags);
-	tex->img = {};
-	tex->SetStatus(DONE);
+	std::unique_lock statusLock(statusMutex);
+	statusCV.wait(statusLock, [this, bound] {
+		return this->status.load(std::memory_order_relaxed) >= bound;
+	});
+}
+
+void r_tex_c::PerformUpload()
+{
+	Upload(*img, flags);
+	img.reset();
+	SetStatus(DONE);
 }
 
 static std::atomic<size_t> inputBytes = 0;

@@ -55,12 +55,10 @@ enum r_blendMode_e {
 class r_shaderHnd_c {
 	friend class r_renderer_c;
 public:
-	~r_shaderHnd_c();
-
 	std::optional<int> StackCount() const;
 private:
-	r_shaderHnd_c(class r_shader_c* sh);
-	r_shader_c* sh;
+	r_shaderHnd_c(std::shared_ptr<class r_shader_c>&& sh);
+	std::shared_ptr<class r_shader_c> sh;
 };
 
 // ==========
