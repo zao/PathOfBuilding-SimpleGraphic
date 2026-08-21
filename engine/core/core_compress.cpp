@@ -12,7 +12,7 @@ std::optional<std::vector<char>> CompressZstandard(gsl::span<const std::byte> sr
 	return dst;
 }
 
-std::optional<std::vector<char>> DecompressZstandard(gsl::span<const std::byte> src)
+std::optional<std::vector<char>> DecompressZstandard(gsl::span<const std::byte> src, std::optional<DecompressZstandardChunkCallback> chunkCallback)
 {
 	const size_t buffOutSize = ZSTD_DStreamOutSize();
 	std::vector<char> buffOut(buffOutSize);
@@ -35,6 +35,10 @@ std::optional<std::vector<char>> DecompressZstandard(gsl::span<const std::byte> 
 		}
 		dst.resize(newSize);
 		memcpy(dst.data() + oldSize, output.dst, output.pos);
+		if (chunkCallback) {
+			if ((*chunkCallback)(gsl::span(dst)))
+				chunkCallback.reset();
+		}
 	}
 
 	dst.shrink_to_fit();

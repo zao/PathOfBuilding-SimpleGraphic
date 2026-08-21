@@ -458,6 +458,21 @@ bool gif_c::Save(std::filesystem::path const& fileName)
 // DDS Image
 // =========
 
+std::optional<glm::ivec2> TryParseDDSSize(gsl::span<const char>& partialData)
+{
+	constexpr std::array FOURCC_DDS{'D', 'D', 'S', ' '};
+	using DdsHeaderPrefix = std::array<uint32_t, 4>;
+	if (partialData.size_bytes() < sizeof(FOURCC_DDS) + sizeof(DdsHeaderPrefix))
+		return {};
+	if (partialData.subspan(0, 4) != gsl::make_span(FOURCC_DDS))
+		return {};
+
+	DdsHeaderPrefix headerPrefix;
+	std::memcpy(headerPrefix.data(), partialData.subspan(sizeof(FOURCC_DDS), sizeof(DdsHeaderPrefix)).data(), sizeof(DdsHeaderPrefix));
+	enum { SizeSlot, FlagsSlot, HeightSlot, WidthSlot };
+	return glm::ivec2{headerPrefix[WidthSlot], headerPrefix[HeightSlot]};
+}
+
 bool dds_c::Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback)
 {
 	// Open file
@@ -470,7 +485,18 @@ bool dds_c::Load(std::filesystem::path const& fileName, std::optional<size_callb
 		return true;
 
 	if (fileName.extension() == ".zst" || fileData.size() >= 4 && *(uint32_t*)fileData.data() == 0xFD2FB528) {
-		auto ret = DecompressZstandard(as_bytes(gsl::span(fileData)));
+		std::optional<DecompressZstandardChunkCallback> chunkCallback;
+		if (sizeCallback) {
+			chunkCallback = [&](gsl::span<const char> prefix) -> bool {
+				if (auto size = TryParseDDSSize(prefix)) {
+					(*sizeCallback)(size->x, size->y);
+					sizeCallback.reset();
+					return true;
+				}
+				return false;
+			};
+		}
+		auto ret = DecompressZstandard(as_bytes(gsl::span(fileData)), chunkCallback);
 		if (!ret.has_value())
 			return true;
 		fileData.assign(ret->data(), ret->data() + ret->size());
