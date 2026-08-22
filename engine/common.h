@@ -90,7 +90,7 @@ public:
 	void	Free();		// Free the buffer
 	bool	KeyEvent(int key, int type);// Act on a keypress
 
-	textBuffer_c &operator=(const char* r);
+	textBuffer_c &operator=(std::string_view r);
 
 private:
 	void	Alloc(int sz);// Allocate the buffer

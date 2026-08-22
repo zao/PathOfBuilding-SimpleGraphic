@@ -18,10 +18,6 @@
 
 constexpr size_t CON_MAXLINES = 1024;
 
-constexpr size_t CON_MAXCMD = 512;			// Maximum commands
-constexpr size_t CON_MAXCVAR = 512;			// Maximum cvars
-constexpr size_t CON_MAXMATCH = CON_MAXCMD + CON_MAXCVAR;
-
 constexpr size_t CON_MAXCMDBUFFER = 1024;	// Maximum buffered commands
 
 constexpr size_t CON_MAXHIST = 32;			// Maximum history
@@ -156,20 +152,16 @@ public:
 	void	Hook_RunHooks(std::string_view text);
 	void	Hook_RunClear();
 
-	conCmd_c* cmdList[CON_MAXCMD];
-
+	std::vector<conCmd_c> cmdList;
 	conCmd_c* Cmd_Ptr(std::string_view name);
 
-	conVar_c* cvarList[CON_MAXCVAR];
+	std::vector<std::unique_ptr<conVar_c>> cvarList;
+	int Cvar_Find(std::string_view name);
 
-	int		Cvar_Find(std::string_view name);
-
-	int		cmdBuf_numLine;
-	char*	cmdBuf_lines[CON_MAXCMDBUFFER];
+	std::vector<std::string> cmdBuf_lines;
 
 	textBuffer_c input;				// Input buffer
-	textBuffer_c hist[CON_MAXHIST];	// Command history buffers
-	int		numHist;				// Number of history items
+	std::deque<textBuffer_c> hist;	// Command history buffers
 	int		histSel;				// Current selection in history
 };
 
@@ -186,30 +178,17 @@ console_c::console_c()
 	hookFirst = NULL;
 	hookLast = NULL;
 
-	// Clear lists
-	memset(cmdList, 0, sizeof(cmdList));
-	memset(cvarList, 0, sizeof(cvarList));
-	
-	cmdBuf_numLine = 0;
-
-	numHist = -1;
 	histSel = -1;
 }
 
 console_c::~console_c()
 {
 	// Clear command buffer
-	for (int l = 0; l < cmdBuf_numLine; l++) {
-		FreeString(cmdBuf_lines[l]);
-	}
+	cmdBuf_lines.clear();
 
 	// Delete commands and variables
-	for (int slot = 0; slot < CON_MAXCMD; slot++) {
-		delete cmdList[slot];
-	}
-	for (int slot = 0; slot < CON_MAXCVAR; slot++) {
-		delete cvarList[slot];
-	}
+	cmdList.clear();
+	cvarList.clear();
 
 	// Delete hooks
 	conHookEntry_s* i = hookFirst;
@@ -401,12 +380,10 @@ conCmdHandler_c::conCmdHandler_c(IConsole* conHnd)
 conCmdHandler_c::~conCmdHandler_c()
 {
 	// Remove any commands added by this handler
-	for (int slot = 0; slot < CON_MAXCMD; slot++) {
-		if (_con->cmdList[slot] && _con->cmdList[slot]->obj == this) {
-			delete _con->cmdList[slot];
-			_con->cmdList[slot] = NULL;
-		}
-	}
+	auto& seq = _con->cmdList;
+	seq.erase(std::remove_if(seq.begin(), seq.end(), [this](const conCmd_c& cmd) {
+		return cmd.obj == this;
+	}), seq.end());
 }
 
 void conCmdHandler_c::Cmd_PrivAdd(const char* name, int minArgs, const char* usage, conCmdHandler_c* obj, conCmdMethod_t method)
@@ -417,47 +394,30 @@ void conCmdHandler_c::Cmd_PrivAdd(const char* name, int minArgs, const char* usa
 	}
 
 	// Find a free slot
-	for (int slot = 0; slot < CON_MAXCMD; slot++) {
-		if (_con->cmdList[slot] == NULL) {
-			// Allocate and fill new command structure
-			_con->cmdList[slot] = new conCmd_c;
-			_con->cmdList[slot]->name = AllocString(name);
-			_con->cmdList[slot]->minArgs = minArgs;
-			_con->cmdList[slot]->usage = AllocString(usage);
-			_con->cmdList[slot]->obj = obj;
-			_con->cmdList[slot]->method = method;
-			return;
-		}
-	}
-
-	// Command array is full...
-	_con->Warning("Reached console command limit (CON_MAXCMD)");
+	_con->cmdList.emplace_back(conCmd_c{name, minArgs, usage, obj, method});
 }
 
 conCmd_c* console_c::Cmd_Ptr(std::string_view name)
 {
 	std::string name_str(name);
-	for (int slot = 0; slot < CON_MAXCMD; slot++) {
-		if (cmdList[slot] && _stricmp(cmdList[slot]->name.c_str(), name_str.c_str()) == 0) {
-			return cmdList[slot];
-		}
+	const auto it = std::find_if(cmdList.begin(), cmdList.end(), [name](const conCmd_c& cmd) { return cmd.name == name; });
+	if (it != cmdList.end()) {
+		return &*it;
 	}
-	return NULL;
+	return nullptr;
 }
 
 conCmd_c* console_c::EnumCmd(int* index)
 {
-	if (*index < -1 || *index >= CON_MAXCMD - 1) {
+	if (*index < -1 || *index >= cmdList.size() - 1) {
 		return NULL;
 	}
 	while (1) {
 		(*index)++;
-		if (*index >= CON_MAXCMD) {
+		if (*index >= cmdList.size()) {
 			return NULL;
 		}
-		if (cmdList[*index]) {
-			return cmdList[*index];
-		}
+		return &cmdList[*index];
 	}
 }
 
@@ -473,27 +433,17 @@ conVar_c* console_c::Cvar_Add(std::string_view name, int flags, std::string_view
 		if (cvarList[slot]->flags & CV_SET) {
 			// Has been set, take value and delete old cvar
 			setVal = cvarList[slot]->strVal;
-			delete cvarList[slot];
-			cvarList[slot] = NULL;
+			cvarList[slot].reset();
 		} else {
-			return cvarList[slot];
+			return cvarList[slot].get();
 		}
 	} else {
 		// Find a free slot
-		for (int s = 0; s < CON_MAXCVAR; s++) {
-			if (cvarList[s] == NULL) {
-				slot = s;
-				break;
-			}
-		}
-		if (slot < 0) {
-			// Cvar list is full...
-			Warning("Reached console variable limit (CON_MAXCVAR)");
-			return NULL;
-		}
+		slot = cvarList.size();
+		cvarList.emplace_back();
 	}
 
-	cvarList[slot] = new conVar_c(this);
+	cvarList[slot] = std::make_unique<conVar_c>(this);
 	cvarList[slot]->name = (std::string)name;
 	cvarList[slot]->flags = flags;
 	cvarList[slot]->defVal = (std::string)def;
@@ -508,14 +458,14 @@ conVar_c* console_c::Cvar_Add(std::string_view name, int flags, std::string_view
 		cvarList[slot]->mod = false;
 	}
 
-	return cvarList[slot];
+	return cvarList[slot].get();
 }
 
 conVar_c* console_c::Cvar_Ptr(std::string_view name)
 {
 	int slot = Cvar_Find(name);
 	if (slot >= 0) {
-		return cvarList[slot];
+		return cvarList[slot].get();
 	} else {
 		return NULL;
 	}
@@ -524,27 +474,28 @@ conVar_c* console_c::Cvar_Ptr(std::string_view name)
 int console_c::Cvar_Find(std::string_view name)
 {
 	std::string name_str(name);
+	int slot = 0;
 	// Find the cvar and return the index
-	for (int slot = 0; slot < CON_MAXCVAR; slot++) {
-		if (cvarList[slot] && _stricmp(name_str.c_str(), cvarList[slot]->name.c_str()) == 0) {
+	for (const auto& cv : cvarList) {
+		if (cv && cv->name == name)
 			return slot;
-		}
+		++slot;
 	}
 	return -1;
 }
 
 conVar_c* console_c::EnumCvar(int* index)
 {
-	if (*index < -1 || *index >= CON_MAXCMD - 1) {
-		return NULL;
+	if (*index < -1 || *index >= cvarList.size() - 1) {
+		return nullptr;
 	}
 	while (1) {
 		(*index)++;
-		if (*index >= CON_MAXCMD) {
-			return NULL;
+		if (*index >= cvarList.size()) {
+			return nullptr;
 		}
 		if (cvarList[*index]) {
-			return cvarList[*index];
+			return cvarList[*index].get();
 		}
 	}
 }
@@ -565,20 +516,16 @@ void console_c::Execute(std::string_view cmd)
 		std::string lp(newCmd.substr(0, end));
 		newCmd = newCmd.substr(end);
 
-		if (cmdBuf_numLine >= CON_MAXCMDBUFFER) {
-			Warning("console command buffer overflow");
-		} else {
-			cmdBuf_lines[cmdBuf_numLine++] = AllocString(lp.c_str());
-		}
+		cmdBuf_lines.push_back(lp);
 	}
 }
 
 void console_c::ExecCommands(bool deferUnknown)
 {
-	int numDefer = 0;
-	for (int l = 0; l < cmdBuf_numLine; l++) {
+	std::vector<std::string> deferred;
+	for (auto& cmdLine : cmdBuf_lines) {
 		// Split command string
-		args_c args(cmdBuf_lines[l]);
+		args_c args(cmdLine.c_str());
 		if (args.argc == 0) {
 			continue;
 		}
@@ -609,15 +556,14 @@ void console_c::ExecCommands(bool deferUnknown)
 				}
 			} else if (deferUnknown) {
 				// Defer execution of unknown commands
-				cmdBuf_lines[numDefer++] = cmdBuf_lines[l];
-				continue;
+				deferred.emplace_back(std::move(cmdLine));
 			} else {
 				Print(fmt::format("Unknown command '{}'\n", args[0]).c_str());
 			}
 		}
-		FreeString(cmdBuf_lines[l]);
 	}
-	cmdBuf_numLine = numDefer;
+
+	cmdBuf_lines = std::move(deferred);
 }
 
 // =============
@@ -657,7 +603,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 			return;
 		// Up/down select from command history
 		case KEY_UP:
-			if (_con->histSel < _con->numHist) {
+			if (_con->histSel < _con->hist.size()) {
 				// Copy next history item
 				_con->histSel++;
 				_con->input = _con->hist[_con->histSel].buf;
@@ -682,50 +628,47 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 				int	compLen = comp.size();
 
 				// Build match list
-				int num = 0;
-				std::string match[CON_MAXMATCH];
-				std::string args[CON_MAXMATCH];
-				for (int slot = 0; slot < CON_MAXCMD; slot++) {
-					conCmd_c* cmd = _con->cmdList[slot];
-					if (cmd && _strnicmp(cmd->name.c_str(), comp.c_str(), comp.size()) == 0) {
-						match[num] = cmd->name;
-						args[num] = cmd->usage;
-						num++;
+				struct Match
+				{
+					std::string match;
+					std::string args;
+				};
+				std::vector<Match> matches;
+				for (const auto& cmd : _con->cmdList) {
+					if (std::string_view(cmd.name).substr(0, comp.size()) == comp) {
+						matches.emplace_back(Match{cmd.name, cmd.usage});
 					}
 				}
-				for (int slot = 0; slot < CON_MAXCVAR; slot++) {
-					conVar_c* cv = _con->cvarList[slot];
-					if (cv && _strnicmp(cv->name.c_str(), comp.c_str(), comp.size()) == 0) {
-						match[num] = cv->name;
-						args[num] = fmt::format("= \"{}\"", cv->strVal);
-						num++;
+				for (const auto& cv : _con->cvarList) {
+					if (cv && std::string_view(cv->name).substr(0, comp.size()) == comp) {
+						matches.emplace_back(Match{cv->name, fmt::format("= \"{}\"", cv->strVal)});
 					}
 				}
 
-				if (num > 0) {
+				if (matches.size()) {
 					// Matches were found
-					if (num == 1) {
+					if (matches.size()  == 1) {
 						// Exact match
-						comp = match[0];
-						if (!args[0].empty()) {
+						comp = matches[0].match;
+						if (!matches[0].args.empty()) {
 							comp += " ";
 						}
 					} else {
 						size_t minMatchLen = ~0;
 						// Multiple matches, print them out
 						_con->Print(fmt::format("]{}\n", comp).c_str());
-						for (int m = 0; m < num; m++) {
-							_con->Print(fmt::format("  {} {}\n", match[m], args[m]).c_str());
-							minMatchLen = (std::min)(minMatchLen, match[m].size());
+						for (const auto& m : matches) {
+							_con->Print(fmt::format("  {} {}\n", m.match, m.args).c_str());
+							minMatchLen = (std::min)(minMatchLen, m.match.size());
 						}
 
 						// Try to refine comparison string
 						comp.clear();
 						for (size_t compIdx = 0; compIdx < minMatchLen; ++compIdx) {
-							char c = match[0][compIdx];
+							char c = matches[0].match[compIdx];
 							bool fail = false;
-							for (int m = 1; m < num; m++) {
-								if (match[m][compIdx] != c) {
+							for (int m = 1; m < matches.size(); m++) {
+								if (matches[m].match[compIdx] != c) {
 									fail = true;
 									break;
 								}
@@ -738,7 +681,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 					}
 
 					// Copy comparison string back into input buffer
-					_con->input = comp.c_str();
+					_con->input = comp;
 					RefreshConInput();
 				}
 			}
@@ -751,14 +694,10 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 				_con->Execute(_con->input.buf);
 
 				// Add to command history if different from most recent command
-				if (_stricmp(_con->hist[0].buf, _con->input.buf)) {
-					if (_con->numHist + 1 < CON_MAXHIST) {
-						_con->numHist++;
-					}
-					for (int h = _con->numHist; h > 0; h--) {
-						_con->hist[h] = _con->hist[h-1].buf;
-					}
-					_con->hist[0] = _con->input.buf;
+				if (_con->hist.empty() || _stricmp(_con->hist[0].buf, _con->input.buf)) {
+					if (_con->hist.size() == CON_MAXHIST)
+						_con->hist.pop_back();
+					_con->hist.emplace_front() = _con->input.buf;
 				}
 
 				// Clear the input buffer

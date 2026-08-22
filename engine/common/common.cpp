@@ -87,11 +87,11 @@ void textBuffer_c::Free()
 	buf = NULL;
 }
 
-textBuffer_c &textBuffer_c::operator=(const char* r)
+textBuffer_c &textBuffer_c::operator=(std::string_view r)
 {
 	// Reallocate buffer and copy the string
-	Alloc((int)strlen(r));
-	strcpy(buf, r);
+	Alloc((int)r.size());
+	memcpy(buf, r.data(), r.size());
 	return *this;
 }
 
