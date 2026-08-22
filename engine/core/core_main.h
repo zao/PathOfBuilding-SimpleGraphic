@@ -11,11 +11,11 @@
 // Engine Core
 class core_IMain {
 public:
-	static core_IMain* GetHandle(sys_IMain* sysHnd);
-	static void FreeHandle(core_IMain* hnd);
+	static InterfacePtr<core_IMain> GetHandle(sys_IMain* sysHnd);
+	virtual ~core_IMain() = default;
 
-	core_IConfig*	config = nullptr;
-	core_IVideo*	video = nullptr;
+	InterfacePtr<core_IConfig> config;
+	InterfacePtr<core_IVideo> video;
 
 	virtual void	Init(int argc, char** argv) = 0;
 	virtual void	Frame() = 0;

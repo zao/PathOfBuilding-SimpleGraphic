@@ -23,8 +23,8 @@ class r_tex_c : public std::enable_shared_from_this<r_tex_c> {
 	void Kick();
 
 public:
-	r_tex_c(CreateToken, class r_ITexManager* manager, std::string_view fileName, int flags);
-	r_tex_c(CreateToken, class r_ITexManager* manager, std::unique_ptr<image_c> img, int flags);
+	r_tex_c(CreateToken, BorrowedInterfacePtr<class r_ITexManager> manager, std::string_view fileName, int flags);
+	r_tex_c(CreateToken, BorrowedInterfacePtr<class r_ITexManager> manager, std::unique_ptr<image_c> img, int flags);
 	~r_tex_c();
 
 	int		error;
@@ -50,8 +50,8 @@ public:
 	GLenum target{};
 	size_t stackLayers = 1;
 
-	static std::shared_ptr<r_tex_c> CreateFromPath(class r_ITexManager* manager, std::string_view fileName, int flags);
-	static std::shared_ptr<r_tex_c> CreateFromImage(class r_ITexManager* manager, std::unique_ptr<image_c> img, int flags);
+	static std::shared_ptr<r_tex_c> CreateFromPath(BorrowedInterfacePtr<class r_ITexManager> manager, std::string_view fileName, int flags);
+	static std::shared_ptr<r_tex_c> CreateFromImage(BorrowedInterfacePtr<class r_ITexManager> manager, std::unique_ptr<image_c> img, int flags);
 
 	void Bind();
 	void Unbind();
@@ -70,7 +70,7 @@ public:
 private:
 	class t_manager_c* manager;
 	class r_renderer_c* renderer;
-	void	Init(class r_ITexManager* manager, std::string_view fileName, int flags);
+	void	Init(BorrowedInterfacePtr<class r_ITexManager> manager, std::string_view fileName, int flags);
 	void	Upload(image_c& img, int flags);
 	std::unique_ptr<image_c> BuildMipSet(std::unique_ptr<image_c> img);
 };
@@ -82,8 +82,8 @@ private:
 // Texture Manager
 class r_ITexManager {
 public:
-	static r_ITexManager* GetHandle(r_renderer_c* renderer);
-	static void FreeHandle(r_ITexManager* hnd);
+	static InterfacePtr<r_ITexManager> GetHandle(r_renderer_c* renderer);
+	virtual ~r_ITexManager() = default;
 
 	virtual int		GetAsyncCount() = 0;
 	virtual void	ProcessPendingTextureUploads() = 0;

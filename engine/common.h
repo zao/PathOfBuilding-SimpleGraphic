@@ -28,6 +28,7 @@
 #include "common/memtrak3.h"
 #endif
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -517,6 +518,12 @@ char* NarrowUTF8String(const wchar_t* str);
 #define _strnicmp strncasecmp
 #define _chdir chdir
 #endif
+
+template <typename Interface>
+using InterfacePtr = std::unique_ptr<Interface>;
+
+template <typename Interface>
+using BorrowedInterfacePtr = Interface*;
 
 // =======
 // Headers

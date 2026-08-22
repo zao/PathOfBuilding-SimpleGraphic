@@ -11,8 +11,8 @@
 // Console Handler
 class ui_IConsole {
 public:
-	static ui_IConsole* GetHandle(class ui_main_c* ui);
-	static void FreeHandle(ui_IConsole* hnd);
+	static InterfacePtr<ui_IConsole> GetHandle(class ui_main_c* ui);
+	virtual ~ui_IConsole() = default;
 
 	virtual void	Toggle() = 0;
 	virtual void	Hide() = 0;

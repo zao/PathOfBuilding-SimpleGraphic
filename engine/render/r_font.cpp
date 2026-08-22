@@ -75,7 +75,7 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 			fh = new f_fontHeight_s;
 			fontHeights[numFontHeight++] = fh;
 			std::string tgaName = fmt::format("{}.{}.tga", fileNameBase, h);
-			fh->tex = r_tex_c::CreateFromPath(renderer->texMan, tgaName.c_str(), TF_ASYNC|TF_NOMIPMAP);
+			fh->tex = r_tex_c::CreateFromPath(renderer->texMan.get(), tgaName.c_str(), TF_ASYNC | TF_NOMIPMAP);
 			fh->tex->WaitOnStatusAtLeast(r_tex_c::SIZE_KNOWN);
 			fh->height = h;
 			if (h > maxHeight) {

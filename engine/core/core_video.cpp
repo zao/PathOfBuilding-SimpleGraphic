@@ -54,18 +54,13 @@ public:
 	void	C_Vid_ModeList(IConsole* conHnd, args_c &args);
 };
 
-core_IVideo* core_IVideo::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<core_IVideo> core_IVideo::GetHandle(sys_IMain* sysHnd)
 {
-	return new core_video_c(sysHnd);
-}
-
-void core_IVideo::FreeHandle(core_IVideo* hnd)
-{
-	delete (core_video_c*)hnd;
+	return std::make_unique<core_video_c>(sysHnd);
 }
 
 core_video_c::core_video_c(sys_IMain* sysHnd)
-	: conCmdHandler_c(sysHnd->con), sys(sysHnd)
+	: conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
 	vid_mode		= sys->con->Cvar_Add("vid_mode", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFMODE, -1, VID_NUMMODES-1);
 	vid_fullscreen	= sys->con->Cvar_Add("vid_fullscreen", CV_ARCHIVE, CFG_VID_DEFFULLSCREEN);

@@ -112,11 +112,11 @@ public:
 	// Encapsulated
 	r_renderer_c(sys_IMain* sysHnd);
 
-	sys_IMain* sys = nullptr;
+	BorrowedInterfacePtr<sys_IMain> sys = nullptr;
 
-	sys_IOpenGL* openGL = nullptr;
+	InterfacePtr<sys_IOpenGL> openGL = nullptr;
 
-	r_ITexManager* texMan = nullptr;	// Texture manager interface
+	InterfacePtr<r_ITexManager> texMan = nullptr;	// Texture manager interface
 
 	const char*	st_vendor = nullptr;	// Vendor string
 	const char*	st_renderer = nullptr;	// Renderer string

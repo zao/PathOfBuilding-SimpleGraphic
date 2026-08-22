@@ -23,15 +23,15 @@ public:
 	// Encapsulated
 	ui_main_c(sys_IMain* sysHnd, core_IMain* coreHnd);
 
-	sys_IMain* sys = nullptr;
-	core_IMain* core = nullptr;
+	BorrowedInterfacePtr<sys_IMain> sys = nullptr;
+	BorrowedInterfacePtr<core_IMain> core = nullptr;
 
-	r_IRenderer* renderer = nullptr;
+	InterfacePtr<r_IRenderer> renderer = nullptr;
 
-	ui_IConsole* conUI = nullptr;
+	InterfacePtr<ui_IConsole> conUI = nullptr;
 
-	dword	subScriptSize = 0;
-	ui_ISubScript** subScriptList = nullptr;
+	uintptr_t nextSubscriptId = 0;
+	std::unordered_map<uint64_t, InterfacePtr<ui_ISubScript>> subScripts;
 
 	std::optional<sol::state> solState;
 	lua_State* L = nullptr;

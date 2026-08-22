@@ -655,6 +655,10 @@ sys_main_c::sys_main_c()
 	std::tie(userPath, userPathReason) = FindUserPath();
 }
 
+sys_main_c::~sys_main_c()
+{
+}
+
 bool sys_main_c::Run(int argc, char** argv)
 {
 	initialised = false;
@@ -755,10 +759,10 @@ bool sys_main_c::Run(int argc, char** argv)
 	initialised = false;
 
 	// Release system interfaces
-	core_IMain::FreeHandle(core);
-	sys_IVideo::FreeHandle(video);
-	sys_IConsole::FreeHandle(conWin);
-	IConsole::FreeHandle(con);
+	core.reset();
+	video.reset();
+	conWin.reset();
+	con.reset();
 
 	return restartFlag;
 }

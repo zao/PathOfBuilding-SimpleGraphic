@@ -56,18 +56,13 @@ public:
 	void	ConPrintClear();
 };
 
-sys_IConsole* sys_IConsole::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<sys_IConsole> sys_IConsole::GetHandle(sys_IMain* sysHnd)
 {
-	return new sys_console_c(sysHnd);
-}
-
-void sys_IConsole::FreeHandle(sys_IConsole* hnd)
-{
-	delete (sys_console_c*)hnd;
+	return std::make_unique<sys_console_c>(sysHnd);
 }
 
 sys_console_c::sys_console_c(sys_IMain* sysHnd)
-	: conPrintHook_c(sysHnd->con), sys((sys_main_c*)sysHnd), thread_c(sysHnd)
+	: conPrintHook_c(sysHnd->con.get()), sys((sys_main_c*)sysHnd), thread_c(sysHnd)
 {
 	threadStartedEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 	threadShouldStopEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);

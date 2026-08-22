@@ -44,11 +44,11 @@ public:
 	size_t	GetScriptMemory();
 
 	// Encapsulated
-	ui_subscript_c(ui_main_c* ui, dword id);
+	ui_subscript_c(ui_main_c* ui, uintptr_t id);
 	~ui_subscript_c();
 
 	ui_main_c* ui = nullptr;
-	dword	id = 0;
+	uintptr_t id = 0;
 
 	lua_State* L = nullptr;
 	bool	running = false;
@@ -66,17 +66,12 @@ public:
 	void	LAssert(int cond, const char* fmt, ...);
 };
 
-ui_ISubScript* ui_ISubScript::GetHandle(ui_main_c* ui, dword id)
+InterfacePtr<ui_ISubScript> ui_ISubScript::GetHandle(ui_main_c* ui, uintptr_t id)
 {
-	return new ui_subscript_c(ui, id);
+	return std::make_unique<ui_subscript_c>(ui, id);
 }
 
-void ui_ISubScript::FreeHandle(ui_ISubScript* hnd)
-{
-	delete (ui_subscript_c*)hnd;
-}
-
-ui_subscript_c::ui_subscript_c(ui_main_c* ui, dword id)
+ui_subscript_c::ui_subscript_c(ui_main_c* ui, uintptr_t id)
 	: thread_c(ui->sys), ui(ui), id(id)
 {
 	L = NULL;
@@ -444,7 +439,7 @@ void ui_subscript_c::SubScriptFrame()
 		if (errorStr) {
 			int extraArgs = ui->PushCallback("OnSubError");
 			if (extraArgs >= 0) {
-				lua_pushlightuserdata(ui->L, (void*)(uintptr_t)id);
+				lua_pushlightuserdata(ui->L, (void*)id);
 				lua_pushstring(ui->L, errorStr);
 				ui->PCall(extraArgs + 2, 0);
 			}
@@ -465,7 +460,7 @@ void ui_subscript_c::SubScriptFrame()
 						break;
 					}
 				}
-				lua_pushlightuserdata(ui->L, (void*)(uintptr_t)id);
+				lua_pushlightuserdata(ui->L, (void*)id);
 				ui->PCall(extraArgs + 1 + ssPushData(ui->L, ssBuildData(L, 2)), 0);
 			}
 		}

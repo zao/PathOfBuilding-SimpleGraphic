@@ -59,9 +59,9 @@ std::tuple<std::string, std::string> GetWineHostVersion();
 // System Main
 class sys_IMain {
 public:
-	IConsole* con = nullptr;
-	sys_IConsole* conWin = nullptr;
-	sys_IVideo* video = nullptr;
+	InterfacePtr<IConsole> con;
+	InterfacePtr<sys_IConsole> conWin;
+	InterfacePtr<sys_IVideo> video;
 
 	bool		x64 = false;
 	bool		debug = false;

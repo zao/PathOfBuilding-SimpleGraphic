@@ -304,7 +304,7 @@ SG_LUA_CPP_FUN_BEGIN(NewArtHandle)
 	std::filesystem::path filePath = std::filesystem::u8path(reader.ArgToString(1));
 	if (filePath.is_relative())
 		filePath = ui->scriptWorkDir / filePath;
-	auto img = image_c::LoaderForFile(ui->sys->con, filePath);
+	auto img = image_c::LoaderForFile(ui->sys->con.get(), filePath);
 	if (!img)
 		return 0;
 
@@ -549,7 +549,7 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoadArtRectangle)
 	ui->LExpect(L, y1 >= 0 && y2 <= srcHeight, "imgHandle:LoadArtRectangle(): Y range %d to %d outside of the 0 to %d bounds", y1, y2, srcHeight);
 
 	// Slice rectangle into temporary target image.
-	auto dstImg = std::make_unique<image_c>(ui->sys->con);
+	auto dstImg = std::make_unique<image_c>(ui->sys->con.get());
 	const int dstWidth = x2 - x1;
 	const int dstHeight = y2 - y1;
 
@@ -617,7 +617,7 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoadArtArcBand)
 
 
 	// Slice rectangle into temporary target image.
-	auto dstImg = std::make_unique<image_c>(ui->sys->con);
+	auto dstImg = std::make_unique<image_c>(ui->sys->con.get());
 	const int dstWidth = xC - x1;
 	const int dstHeight = yC - y1;
 
@@ -1848,24 +1848,11 @@ static int l_LaunchSubScript(lua_State* L)
 		ui->LAssert(L, lua_isnil(L, i) || lua_isboolean(L, i) || lua_isnumber(L, i) || lua_isstring(L, i),
 			"LaunchSubScript() argument %d: only nil, boolean, number and string types can be passed to sub script", i);
 	}
-	dword slot = -1;
-	for (dword i = 0; i < ui->subScriptSize; i++) {
-		if (!ui->subScriptList[i]) {
-			slot = i;
-			break;
-		}
-	}
-	if (slot == -1) {
-		slot = ui->subScriptSize;
-		ui->subScriptSize <<= 1;
-		trealloc(ui->subScriptList, ui->subScriptSize);
-		for (dword i = slot; i < ui->subScriptSize; i++) {
-			ui->subScriptList[i] = NULL;
-		}
-	}
-	ui->subScriptList[slot] = ui_ISubScript::GetHandle(ui, slot);
-	if (ui->subScriptList[slot]->Start()) {
-		lua_pushlightuserdata(L, (void*)(uintptr_t)slot);
+
+	const auto slot = ui->nextSubscriptId++;
+	auto& script = *(ui->subScripts.emplace(slot, ui_ISubScript::GetHandle(ui, slot)).first->second);
+	if (script.Start()) {
+		lua_pushlightuserdata(L, (void*)slot);
 	}
 	else {
 		lua_pushnil(L);
@@ -1879,11 +1866,10 @@ static int l_AbortSubScript(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: AbortSubScript(ssID)");
 	ui->LAssert(L, lua_islightuserdata(L, 1), "AbortSubScript() argument 1: expected subscript ID, got %s", luaL_typename(L, 1));
-	dword slot = (dword)(uintptr_t)lua_touserdata(L, 1);
-	ui->LAssert(L, slot < ui->subScriptSize && ui->subScriptList[slot], "AbortSubScript() argument 1: invalid subscript ID");
-	ui->LAssert(L, ui->subScriptList[slot]->IsRunning(), "AbortSubScript(): subscript isn't running");
-	ui_ISubScript::FreeHandle(ui->subScriptList[slot]);
-	ui->subScriptList[slot] = NULL;
+	const auto slot = (uintptr_t)lua_touserdata(L, 1);
+	ui->LAssert(L, ui->subScripts.count(slot), "AbortSubScript() argument 1: invalid subscript ID");
+	ui->LAssert(L, ui->subScripts[slot]->IsRunning(), "AbortSubScript(): subscript isn't running");
+	ui->subScripts.erase(slot);
 	return 0;
 }
 
@@ -1893,9 +1879,9 @@ static int l_IsSubScriptRunning(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: IsSubScriptRunning(ssID)");
 	ui->LAssert(L, lua_islightuserdata(L, 1), "IsSubScriptRunning() argument 1: expected subscript ID, got %s", luaL_typename(L, 1));
-	dword slot = (dword)(uintptr_t)lua_touserdata(L, 1);
-	ui->LAssert(L, slot < ui->subScriptSize && ui->subScriptList[slot], "IsSubScriptRunning() argument 1: invalid subscript ID");
-	lua_pushboolean(L, ui->subScriptList[slot]->IsRunning());
+	const auto slot = (uintptr_t)lua_touserdata(L, 1);
+	ui->LAssert(L, ui->subScripts.count(slot), "IsSubScriptRunning() argument 1: invalid subscript ID");
+	lua_pushboolean(L, ui->subScripts[slot]->IsRunning());
 	return 1;
 }
 
@@ -2052,7 +2038,7 @@ static int l_ConPrintTable(lua_State* L)
 	lua_pushvalue(L, 1);	// Push root table
 	lua_pushboolean(L, 1);
 	lua_settable(L, 3);		// Add root table to printed tables list
-	printTableItter(L, ui->sys->con, 1, 0, recurse);
+	printTableItter(L, ui->sys->con.get(), 1, 0, recurse);
 	return 0;
 }
 

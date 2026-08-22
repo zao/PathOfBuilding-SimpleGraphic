@@ -47,18 +47,13 @@ public:
 	void	ConPrintHook(const char* text);
 };
 
-core_IConfig* core_IConfig::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<core_IConfig> core_IConfig::GetHandle(sys_IMain* sysHnd)
 {
-	return new core_config_c(sysHnd);
-}
-
-void core_IConfig::FreeHandle(core_IConfig* hnd)
-{
-	delete (core_config_c*)hnd;
+	return std::make_unique<core_config_c>(sysHnd);
 }
 
 core_config_c::core_config_c(sys_IMain* sysHnd)
-	: conPrintHook_c(sysHnd->con), conCmdHandler_c(sysHnd->con), sys(sysHnd)
+	: conPrintHook_c(sysHnd->con.get()), conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
 	Cmd_Add("set", 2, "<cvar_name> <cvar_value>", this, &core_config_c::C_Set);
 	Cmd_Add("seta", 2, "<cvar_name> <cvar_value>", this, &core_config_c::C_SetA);

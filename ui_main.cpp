@@ -64,14 +64,9 @@ static struct {
 // ui_IMain Interface
 // ==================
 
-ui_IMain* ui_IMain::GetHandle(sys_IMain* sysHnd, core_IMain* coreHnd)
+InterfacePtr<ui_IMain> ui_IMain::GetHandle(sys_IMain* sysHnd, core_IMain* coreHnd)
 {
-	return new ui_main_c(sysHnd, coreHnd);
-}
-
-void ui_IMain::FreeHandle(ui_IMain* hnd)
-{
-	delete (ui_main_c*)hnd;
+	return std::make_unique<ui_main_c>(sysHnd, coreHnd);
 }
 
 ui_main_c::ui_main_c(sys_IMain* sysHnd, core_IMain* coreHnd)
@@ -318,11 +313,8 @@ void ui_main_c::ScriptInit()
 	lua_gc(L, LUA_GCRESTART, -1);
 
 	// Setup subscript system
-	subScriptSize = 16;
-	subScriptList = new ui_ISubScript*[subScriptSize];
-	for (dword i = 0; i < subScriptSize; i++) {
-		subScriptList[i] = NULL;
-	}
+	nextSubscriptId = 0;
+	subScripts.clear();
 	
 	// Load the script file
 	sys->SetWorkDir(scriptWorkDir);
@@ -368,13 +360,8 @@ void ui_main_c::ScriptInit()
 void ui_main_c::Frame()
 {
 	// Check for any subscripts we need to run
-	bool hasSubscript = false;
-	for (dword i = 0; i < subScriptSize; i++) {
-		if (subScriptList[i]) {
-			hasSubscript = true;
-			break;
-		}
-	}
+	const bool hasSubscript = std::any_of(subScripts.begin(), subScripts.end(), [](const auto& entry) { return (bool)entry.second; });
+
 	// Always runs 10 frames after finishing the boot process
 	if (!sys->video->IsVisible() || sys->conWin->IsVisible() || restartFlag || didExit) {
 		framesSinceWindowHidden = 0;
@@ -398,15 +385,14 @@ void ui_main_c::Frame()
 	renderEnable = true;
 
 	// Run subscript system
-	for (dword i = 0; i < subScriptSize; i++) {
-		if (subScriptList[i]) {
-			subScriptList[i]->SubScriptFrame();
-			if ( !subScriptList[i]->IsRunning() ) {
-				ui_ISubScript::FreeHandle(subScriptList[i]);
-				subScriptList[i] = NULL;
-			}
-		}
+	std::vector<uint64_t> completedScripts;
+	for (auto& [id, subscript] : subScripts) {
+		subscript->SubScriptFrame();
+		if (!subscript->IsRunning())
+			completedScripts.push_back(id);
 	}
+	for (auto id : completedScripts)
+		subScripts.erase(id);
 
 	// Run script
 	//sys->con->Printf("OnFrame...\n");
@@ -451,12 +437,7 @@ void ui_main_c::ScriptShutdown()
 	}
 
 	// Shutdown subscript system
-	for (dword i = 0; i < subScriptSize; i++) {
-		if (subScriptList[i]) {
-			ui_ISubScript::FreeHandle(subScriptList[i]);
-		}
-	}
-	delete subScriptList;
+	subScripts.clear();
 
 	// Shutdown Lua
 	L = NULL;
@@ -469,11 +450,11 @@ void ui_main_c::Shutdown()
 	ScriptShutdown();
 
 	if (renderer) {
-		ui_IConsole::FreeHandle(conUI);
+		conUI.reset();
 
 		// Shutdown renderer
 		renderer->Shutdown();
-		r_IRenderer::FreeHandle(renderer);	
+		renderer.reset();
 
 		// Shutdown window
 		sys->video->SetVisible(false);

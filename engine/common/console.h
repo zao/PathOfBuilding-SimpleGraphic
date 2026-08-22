@@ -115,8 +115,8 @@ struct conCmd_c {
 // Console
 class IConsole {
 public:
-	static IConsole* GetHandle();
-	static void FreeHandle(IConsole* hnd);
+	static InterfacePtr<IConsole> GetHandle();
+	virtual ~IConsole() = default;
 
 	virtual	void	Print(const char* text) = 0;		// Print
 	virtual	void	Printf(const char* fmt, ...) = 0;	// Formatted print

@@ -11,8 +11,8 @@
 // UI Sub Script Handler
 class ui_ISubScript {
 public:
-	static ui_ISubScript* GetHandle(class ui_main_c*, dword id);
-	static void FreeHandle(ui_ISubScript*);
+	static InterfacePtr<ui_ISubScript> GetHandle(class ui_main_c*, uintptr_t id);
+	virtual ~ui_ISubScript() = default;
 
 	virtual bool	Start() = 0;
 	virtual	void	SubScriptFrame() = 0;

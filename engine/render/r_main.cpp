@@ -60,7 +60,7 @@ r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flag
 {
 	name = shname;
 	nameHash = StringHash(name.c_str(), 0xFFFF);
-	tex = r_tex_c::CreateFromPath(renderer->texMan, name, flags);
+	tex = r_tex_c::CreateFromPath(renderer->texMan.get(), name, flags);
 	if (tex->error) {
 		renderer->sys->con->Warning("couldn't load texture '%s'", name.c_str());
 	}
@@ -71,7 +71,7 @@ r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flag
 {
 	name = shname;
 	nameHash = StringHash(name.c_str(), 0xFFFF);
-	tex = r_tex_c::CreateFromImage(renderer->texMan, std::move(img), flags);
+	tex = r_tex_c::CreateFromImage(renderer->texMan.get(), std::move(img), flags);
 }
 
 // ===================
@@ -724,18 +724,13 @@ void r_layer_c::Discard()
 // r_IRenderer Interface
 // =====================
 
-r_IRenderer* r_IRenderer::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<r_IRenderer> r_IRenderer::GetHandle(sys_IMain* sysHnd)
 {
-	return new r_renderer_c(sysHnd);
-}
-
-void r_IRenderer::FreeHandle(r_IRenderer* hnd)
-{
-	delete (r_renderer_c*)hnd;
+	return std::make_unique<r_renderer_c>(sysHnd);
 }
 
 r_renderer_c::r_renderer_c(sys_IMain* sysHnd)
-	: conCmdHandler_c(sysHnd->con), sys(sysHnd)
+	: conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
 	r_compress = sys->con->Cvar_Add("r_compress", CV_ARCHIVE, "0");
 	r_screenshotFormat = sys->con->Cvar_Add("r_screenshotFormat", CV_ARCHIVE, "jpg");
@@ -1127,11 +1122,11 @@ void r_renderer_c::Shutdown()
 	glDeleteProgram(rttMain[0].blitProg);
 
 	// Shutdown texture manager
-	r_ITexManager::FreeHandle(texMan);
+	texMan.reset();
 
 	// Shutdown OpenGL
 	openGL->Shutdown();
-	sys_IOpenGL::FreeHandle(openGL);
+	openGL.reset();
 
 	sys->con->Printf("Renderer shutdown complete.\n");
 }
@@ -1506,19 +1501,19 @@ void r_renderer_c::EndFrame()
 	switch (takeScreenshot) {
 	case R_SSTGA:
 	{
-		targa_c i(sys->con);
+		targa_c i(sys->con.get());
 		DoScreenshot(&i, IMGTYPE_RGB, "tga");
 	}
 	break;
 	case R_SSJPEG:
 	{
-		jpeg_c i(sys->con);
+		jpeg_c i(sys->con.get());
 		DoScreenshot(&i, IMGTYPE_RGB, "jpg");
 	}
 	break;
 	case R_SSPNG:
 	{
-		png_c i(sys->con);
+		png_c i(sys->con.get());
 		DoScreenshot(&i, IMGTYPE_RGB, "png");
 	}
 	break;

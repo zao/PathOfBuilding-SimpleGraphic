@@ -23,8 +23,8 @@ struct sys_glSet_s {
 // System OpenGL
 class sys_IOpenGL {
 public:
-	static sys_IOpenGL* GetHandle(class sys_IMain* sysHnd);
-	static void FreeHandle(sys_IOpenGL* hnd);
+	static InterfacePtr<sys_IOpenGL> GetHandle(class sys_IMain* sysHnd);
+	virtual ~sys_IOpenGL() = default;
 
 	virtual	bool	Init(sys_glSet_s* set) = 0; // Initialise
 	virtual	bool	Shutdown() = 0;	// Shutdown

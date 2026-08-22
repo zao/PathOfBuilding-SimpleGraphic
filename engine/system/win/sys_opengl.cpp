@@ -28,14 +28,9 @@ public:
 	sys_main_c* sys;
 };
 
-sys_IOpenGL* sys_IOpenGL::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<sys_IOpenGL> sys_IOpenGL::GetHandle(sys_IMain* sysHnd)
 {
-	return new sys_openGL_c(sysHnd);
-}
-
-void sys_IOpenGL::FreeHandle(sys_IOpenGL* hnd)
-{
-	delete (sys_openGL_c*)hnd;
+	return std::make_unique<sys_openGL_c>(sysHnd);
 }
 
 sys_openGL_c::sys_openGL_c(sys_IMain* sysHnd)

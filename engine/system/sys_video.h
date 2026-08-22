@@ -40,8 +40,8 @@ struct sys_vidSet_s {
 // System Video
 class sys_IVideo {
 public:
-	static sys_IVideo* GetHandle(class sys_IMain* sysHnd);
-	static void FreeHandle(sys_IVideo* hnd);
+	static InterfacePtr<sys_IVideo> GetHandle(class sys_IMain* sysHnd);
+	virtual ~sys_IVideo() = default;
 
 	sys_vidSave_s vid;	// Current state
 

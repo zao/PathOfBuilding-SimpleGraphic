@@ -44,6 +44,7 @@ public:
 
 	// Encapsulated
 	sys_main_c();
+	~sys_main_c(); // Out of line so that `core`'s dtor can see a complete type
 
 	bool	Run(int argc, char** argv);
 
@@ -55,7 +56,7 @@ public:
 	HICON	icon = nullptr;
 #endif
 
-	class core_IMain* core = nullptr;
+	InterfacePtr<class core_IMain> core;
 
 	bool	initialised = false;
 	bool	minimized = false;

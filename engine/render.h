@@ -70,8 +70,8 @@ class image_c;
 // Renderer: r_main.cpp
 class r_IRenderer {
 public:
-	static r_IRenderer* GetHandle(sys_IMain* sysHnd);
-	static void FreeHandle(r_IRenderer* hnd);
+	static InterfacePtr<r_IRenderer> GetHandle(sys_IMain* sysHnd);
+	virtual ~r_IRenderer() = default;
 
 	virtual void	Init(r_featureFlag_e features) = 0;
 	virtual void	Shutdown() = 0;

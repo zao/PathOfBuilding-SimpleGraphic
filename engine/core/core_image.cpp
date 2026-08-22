@@ -31,7 +31,7 @@
 // Raw Image
 // =========
 
-image_c::image_c(IConsole* conHnd)
+image_c::image_c(BorrowedInterfacePtr<IConsole> conHnd)
 	: con(conHnd)
 {}
 
@@ -90,7 +90,7 @@ bool image_c::Save(std::filesystem::path const& fileName)
 	return false; // o_O
 }
 
-std::unique_ptr<image_c> image_c::LoaderForFile(IConsole* conHnd, std::filesystem::path const& fileName)
+std::unique_ptr<image_c> image_c::LoaderForFile(BorrowedInterfacePtr<IConsole> conHnd, std::filesystem::path const& fileName)
 {
 	auto nameU8 = fileName.generic_u8string();
 	std::ifstream in(fileName, std::ios::binary);

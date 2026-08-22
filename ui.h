@@ -11,8 +11,8 @@
 // UI Main: ui_main.cpp
 class ui_IMain {
 public:
-	static ui_IMain* GetHandle(sys_IMain* sysHnd, core_IMain* coreHnd);
-	static void FreeHandle(ui_IMain* hnd);
+	static InterfacePtr<ui_IMain> GetHandle(sys_IMain* sysHnd, BorrowedInterfacePtr<core_IMain> coreHnd);
+	virtual ~ui_IMain() = default;
 
 	virtual void	Init(int argc, char** argv) = 0;
 	virtual void	Frame() = 0;

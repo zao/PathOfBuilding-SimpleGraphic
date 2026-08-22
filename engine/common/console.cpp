@@ -179,14 +179,9 @@ public:
 	int		histSel;				// Current selection in history
 };
 
-IConsole* IConsole::GetHandle()
+InterfacePtr<IConsole> IConsole::GetHandle()
 {
-	return new console_c();
-}
-
-void IConsole::FreeHandle(IConsole* hnd)
-{
-	delete (console_c*)hnd;
+	return std::make_unique<console_c>();
 }
 
 console_c::console_c()

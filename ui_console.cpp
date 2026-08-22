@@ -28,11 +28,11 @@ public:
 	void	Render();
 
 	// Encapsulated
-	ui_console_c(ui_main_c* ui);
+	ui_console_c(BorrowedInterfacePtr<ui_main_c> ui);
 
-	ui_main_c* ui = nullptr;
+	BorrowedInterfacePtr<ui_main_c> ui = nullptr;
 	sys_IMain* sys = nullptr;
-	r_IRenderer* renderer = nullptr;
+	BorrowedInterfacePtr<r_IRenderer> renderer = nullptr;
 
 	conVar_c* con_fontSize = nullptr;
 
@@ -49,18 +49,13 @@ public:
 	void	SetConInput(char* newInput, int newCaret);
 };
 
-ui_IConsole* ui_IConsole::GetHandle(ui_main_c* ui)
+InterfacePtr<ui_IConsole> ui_IConsole::GetHandle(ui_main_c* ui)
 {
-	return new ui_console_c(ui);
-}
-
-void ui_IConsole::FreeHandle(ui_IConsole* hnd)
-{
-	delete (ui_console_c*)hnd;
+	return std::make_unique<ui_console_c>(ui);
 }
 
 ui_console_c::ui_console_c(ui_main_c* ui)
-	: conInputHandler_c(ui->sys->con), ui(ui), sys(ui->sys), renderer(ui->renderer)
+	: conInputHandler_c(ui->sys->con.get()), ui(ui), sys(ui->sys), renderer(ui->renderer.get())
 {
 	con_fontSize = sys->con->Cvar_Add("con_fontSize", CV_ARCHIVE|CV_CLAMP, "14", 12, 32);
 
@@ -165,10 +160,8 @@ void ui_console_c::Render()
 	renderer->DrawString(0, liney, F_RIGHT, fontSize, colorGreen, F_FIXED, CFG_VERSION);
 	liney-= fontSize;
 	int memTotal = lua_gc(ui->L, LUA_GCCOUNT, 0);
-	for (dword i = 0; i < ui->subScriptSize; i++) {
-		if (ui->subScriptList[i]) {
-			memTotal+= ui->subScriptList[i]->GetScriptMemory();
-		}
+	for (const auto& [id, subscript] : ui->subScripts) {
+		memTotal+= subscript->GetScriptMemory();
 	}
 	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%dkB used by Lua", memTotal);
 #ifdef _MEMTRAK_H 

@@ -83,14 +83,9 @@ private:
 	void	ThreadProc() override;
 };
 
-r_ITexManager* r_ITexManager::GetHandle(r_renderer_c* renderer)
+InterfacePtr<r_ITexManager> r_ITexManager::GetHandle(r_renderer_c* renderer)
 {
-	return new t_manager_c(renderer);
-}
-
-void r_ITexManager::FreeHandle(r_ITexManager* hnd)
-{
-	delete (t_manager_c*)hnd;
+	return std::make_unique<t_manager_c>(renderer);
 }
 
 t_manager_c::t_manager_c(r_renderer_c* renderer)
@@ -304,12 +299,12 @@ static void T_ResampleImage(byte* in, dword in_w, dword in_h, int in_comp, byte*
 // OpenGL Texture Class
 // ====================
 
-r_tex_c::r_tex_c(CreateToken, r_ITexManager* manager, std::string_view fileName, int flags)
+r_tex_c::r_tex_c(CreateToken, BorrowedInterfacePtr<r_ITexManager> manager, std::string_view fileName, int flags)
 {
 	Init(manager, fileName, flags);
 }
 
-r_tex_c::r_tex_c(CreateToken, r_ITexManager* manager, std::unique_ptr<image_c> newImg, int flags)
+r_tex_c::r_tex_c(CreateToken, BorrowedInterfacePtr<r_ITexManager> manager, std::unique_ptr<image_c> newImg, int flags)
 {
 	Init(manager, {}, flags);
 
@@ -338,7 +333,7 @@ void r_tex_c::Kick()
 	}
 }
 
-void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_flags)
+void r_tex_c::Init(BorrowedInterfacePtr<r_ITexManager> i_manager, std::string_view i_fileName, int i_flags)
 {
 	manager = (t_manager_c*)i_manager;
 	renderer = manager->renderer;
@@ -353,14 +348,14 @@ void r_tex_c::Init(r_ITexManager* i_manager, std::string_view i_fileName, int i_
 
 }
 
-std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(r_ITexManager* manager, std::string_view fileName, int flags)
+std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(BorrowedInterfacePtr<r_ITexManager> manager, std::string_view fileName, int flags)
 {
 	auto ptr = std::make_shared<r_tex_c>(CreateToken{}, manager, fileName, flags);
 	ptr->Kick();
 	return ptr;
 }
 
-std::shared_ptr<r_tex_c> r_tex_c::CreateFromImage(r_ITexManager* manager, std::unique_ptr<image_c> img, int flags)
+std::shared_ptr<r_tex_c> r_tex_c::CreateFromImage(BorrowedInterfacePtr<r_ITexManager> manager, std::unique_ptr<image_c> img, int flags)
 {
 	auto ptr = std::make_shared<r_tex_c>(CreateToken{}, manager, std::move(img), flags);
 	ptr->Kick();
@@ -611,7 +606,7 @@ void r_tex_c::LoadFile()
 		else {
 			// Try to load image file using appropriate loader
 			const auto path = std::filesystem::u8path(fileName);
-			img = image_c::LoaderForFile(renderer->sys->con, path);
+			img = image_c::LoaderForFile(renderer->sys->con.get(), path);
 			if (img && !img->Load(path, sizeCallback))
 				img.reset();
 

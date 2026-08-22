@@ -47,10 +47,10 @@ public:
 	// both unblocked and blocked texture formats with array layers and mip levels.
 	gli::texture2d_array tex{};
 
-	explicit image_c(IConsole* conHnd = NULL);
+	explicit image_c(BorrowedInterfacePtr<IConsole> conHnd = NULL);
 	virtual ~image_c() = default;
 
-	IConsole* con;
+	BorrowedInterfacePtr<IConsole> con;
 
 	using size_callback_t = std::function<void(int, int)>;
 
@@ -60,8 +60,8 @@ public:
 	bool CopyRaw(int type, dword width, dword height, const byte* dat);
 	void Free();
 
-	static image_c* LoaderForFile(IConsole* conHnd, char const* fileName) = delete;
-	static std::unique_ptr<image_c> LoaderForFile(IConsole* conHnd, std::filesystem::path const& fileName);
+	static image_c* LoaderForFile(BorrowedInterfacePtr<IConsole> conHnd, char const* fileName) = delete;
+	static std::unique_ptr<image_c> LoaderForFile(BorrowedInterfacePtr<IConsole> conHnd, std::filesystem::path const& fileName);
 
 private:
 	// Force compile error on narrow strings to favour `std::filesystem::path`.
@@ -81,7 +81,7 @@ private:
 class targa_c : public image_c {
 public:
 	bool rle;
-	targa_c(IConsole* conHnd) : image_c(conHnd) { rle = true; }
+	targa_c(BorrowedInterfacePtr<IConsole> conHnd) : image_c(conHnd) { rle = true; }
 	bool Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback = {}) override;
 	bool Save(std::filesystem::path const& fileName) override;
 };
@@ -90,7 +90,7 @@ public:
 class jpeg_c : public image_c {
 public:
 	int quality;
-	jpeg_c(IConsole* conHnd) : image_c(conHnd) { quality = 80; }
+	jpeg_c(BorrowedInterfacePtr<IConsole> conHnd) : image_c(conHnd) { quality = 80; }
 	bool Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback = {}) override;
 	bool Save(std::filesystem::path const& fileName) override;
 };
@@ -98,7 +98,7 @@ public:
 // PNG Image
 class png_c : public image_c {
 public:
-	png_c(IConsole* conHnd) : image_c(conHnd) { }
+	png_c(BorrowedInterfacePtr<IConsole> conHnd) : image_c(conHnd) { }
 	bool Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback = {}) override;
 	bool Save(std::filesystem::path const& fileName) override;
 };
@@ -106,7 +106,7 @@ public:
 // GIF Image
 class gif_c : public image_c {
 public:
-	gif_c(IConsole* conHnd) : image_c(conHnd) { }
+	gif_c(BorrowedInterfacePtr<IConsole> conHnd) : image_c(conHnd) { }
 	bool Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback = {}) override;
 	bool Save(std::filesystem::path const& fileName) override;
 };
@@ -114,7 +114,7 @@ public:
 // DDS Image
 class dds_c : public image_c {
 public:
-	dds_c(IConsole* conHnd) : image_c(conHnd) {}
+	dds_c(BorrowedInterfacePtr<IConsole> conHnd) : image_c(conHnd) {}
 	bool Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback = {}) override;
 	bool Save(std::filesystem::path const& fileName) override;
 };
@@ -122,7 +122,7 @@ public:
 // WEBP Image
 class webp_c : public image_c {
 public:
-	webp_c(IConsole* conHnd) : image_c(conHnd) {}
+	webp_c(BorrowedInterfacePtr<IConsole> conHnd) : image_c(conHnd) {}
 	bool Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback = {}) override;
 	bool Save(std::filesystem::path const& fileName) override;
 };

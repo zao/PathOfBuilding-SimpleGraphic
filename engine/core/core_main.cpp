@@ -26,21 +26,16 @@ public:
 	// Encapsulated
 	core_main_c(sys_IMain* sysHnd);
 
-	sys_IMain*		sys = nullptr;
+	BorrowedInterfacePtr<sys_IMain>	sys = nullptr;
 
-	ui_IMain*		ui = nullptr;
+	InterfacePtr<ui_IMain> ui = nullptr;
 
-	bool			initialised = false;
+	bool initialised = false;
 };
 
-core_IMain* core_IMain::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<core_IMain> core_IMain::GetHandle(sys_IMain* sysHnd)
 {
-	return new core_main_c(sysHnd);
-}
-
-void core_IMain::FreeHandle(core_IMain* hnd)
-{
-	delete (core_main_c*)hnd;
+	return std::make_unique<core_main_c>(sysHnd);
 }
 
 core_main_c::core_main_c(sys_IMain* sysHnd)
@@ -86,11 +81,11 @@ void core_main_c::Shutdown()
 
 	// Shutdown UI Manager
 	ui->Shutdown();
-	ui_IMain::FreeHandle(ui);
+	ui.reset();
 
 	// Shutdown config system
-	core_IVideo::FreeHandle(video);
-	core_IConfig::FreeHandle(config);
+	video.reset();
+	config.reset();
 
 	sys->con->Printf("Engine shutdown complete.\n");
 }

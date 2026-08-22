@@ -87,14 +87,9 @@ public:
 	std::optional<ClickEvent> lastClick;
 };
 
-sys_IVideo* sys_IVideo::GetHandle(sys_IMain* sysHnd)
+InterfacePtr<sys_IVideo> sys_IVideo::GetHandle(sys_IMain* sysHnd)
 {
-	return new sys_video_c(sysHnd);
-}
-
-void sys_IVideo::FreeHandle(sys_IVideo* hnd)
-{
-	delete (sys_video_c*)hnd;
+	return std::make_unique<sys_video_c>(sysHnd);
 }
 
 sys_video_c::sys_video_c(sys_IMain* sysHnd)
@@ -476,7 +471,7 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		glfwSetWindowUserPointer(wnd, sys);
 		glfwSetCursorEnterCallback(wnd, [](GLFWwindow* wnd, int entered) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
-			auto video = (sys_video_c*)sys->video;
+			auto video = (sys_video_c*)sys->video.get();
 			bool is_inside = !!entered;
 			video->cursorInWindow = is_inside;
 			if (!is_inside) {
@@ -488,7 +483,7 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			if (ImGui::GetIO().WantCaptureMouse) {
 				return;
 			}
-			auto video = (sys_video_c*)sys->video;
+			auto video = (sys_video_c*)sys->video.get();
 			video->lastCursorPos = CursorPos{ (int)x, (int)y };
 			});
 		glfwSetWindowCloseCallback(wnd, [](GLFWwindow* wnd) {
@@ -545,7 +540,7 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			if (ImGui::GetIO().WantCaptureMouse) {
 				return;
 			}
-			auto video = (sys_video_c*)sys->video;
+			auto video = (sys_video_c*)sys->video.get();
 			int sg_key;
 			switch (button) {
 			case GLFW_MOUSE_BUTTON_LEFT:
@@ -620,7 +615,7 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			});
 		glfwSetWindowContentScaleCallback(wnd, [](GLFWwindow* wnd, float xScale, float yScale) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);
-			auto video = (sys_video_c*)sys->video;
+			auto video = (sys_video_c*)sys->video.get();
 			if (!video->ignoreDpiScale) {
 				video->vid.dpiScale = xScale;
 			}
