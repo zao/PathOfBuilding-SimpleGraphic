@@ -1968,7 +1968,7 @@ static int l_ConPrintf(lua_State* L)
 	lua_insert(L, 1);
 	lua_call(L, n, 1);
 	ui->LAssert(L, lua_isstring(L, 1), "ConPrintf() error: string.format returned non-string");
-	ui->sys->con->Printf("%s\n", lua_tostring(L, 1));
+	ui->sys->con->Print(fmt::format("{}\n", lua_tostring(L, 1)));
 	return 0;
 }
 
@@ -1980,13 +1980,13 @@ static void printTableItter(lua_State* L, IConsole* con, int index, int level, b
 		for (int t = 0; t < level; t++) con->Print("  ");
 		// Print key
 		if (lua_type(L, -2) == LUA_TSTRING) {
-			con->Printf("[\"%s^7\"] = ", lua_tostring(L, -2));
+			con->Print(fmt::format("[\"{}^7\"] = ", lua_tostring(L, -2)));
 		}
 		else {
 			lua_pushvalue(L, 2);	// Push tostring function
 			lua_pushvalue(L, -3);	// Push key
 			lua_call(L, 1, 1);		// Call tostring
-			con->Printf("%s = ", lua_tostring(L, -1));
+			con->Print(fmt::format("{} = ", lua_tostring(L, -1)));
 			lua_pop(L, 1);			// Pop result of tostring
 		}
 		// Print value
@@ -2002,23 +2002,23 @@ static void printTableItter(lua_State* L, IConsole* con, int index, int level, b
 				lua_pushvalue(L, -1);	// Push value
 				lua_pushboolean(L, 1);
 				lua_settable(L, 3);		// Add to printed tables list
-				con->Printf("table: %08x {\n", lua_topointer(L, -1));
+				con->Print(fmt::format("table: {} {{\n", lua_topointer(L, -1)));
 				printTableItter(L, con, lua_gettop(L), level + 1, true);
 				for (int t = 0; t < level; t++) con->Print("  ");
 				con->Print("}\n");
 			}
 			else {
-				con->Printf("table: %08x { ... }\n", lua_topointer(L, -1));
+				con->Print(fmt::format("table: {} {{ ... }}\n", lua_topointer(L, -1)));
 			}
 		}
 		else if (lua_type(L, -1) == LUA_TSTRING) {
-			con->Printf("\"%s\"\n", lua_tostring(L, -1));
+			con->Print(fmt::format("\"{}\"\n", lua_tostring(L, -1)));
 		}
 		else {
 			lua_pushvalue(L, 2);	// Push tostring function
 			lua_pushvalue(L, -2);	// Push value
 			lua_call(L, 1, 1);		// Call tostring
-			con->Printf("%s\n", lua_tostring(L, -1));
+			con->Print(fmt::format("{}\n", lua_tostring(L, -1)));
 			lua_pop(L, 1);			// Pop result of tostring
 		}
 		lua_pop(L, 1);	// Pop value

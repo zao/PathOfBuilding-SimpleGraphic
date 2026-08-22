@@ -269,7 +269,7 @@ void ui_main_c::RenderInit(r_featureFlag_e features)
 	// Create UI console handler
 	conUI = ui_IConsole::GetHandle(this);
 
-	sys->con->Printf("\n");
+	sys->con->Print("\n");
 	sys->SetWorkDir(scriptWorkDir);
 }
 
@@ -277,9 +277,9 @@ void ui_main_c::ScriptInit()
 {
 	sys->con->PrintFunc("UI Init");
 
-	sys->con->Printf("Script: %s\n", scriptName.generic_u8string().c_str());
+	sys->con->Print(fmt::format("Script: {}\n", scriptName.generic_u8string()));
 	if (!scriptPath.empty()) {
-		sys->con->Printf("Script working directory: %s\n", scriptWorkDir.generic_u8string().c_str());
+		sys->con->Print(fmt::format("Script working directory: %s\n", scriptWorkDir.generic_u8string()));
 	}
 	sys->video->SetTitle(scriptName.generic_u8string().c_str());
 
@@ -289,7 +289,7 @@ void ui_main_c::ScriptInit()
 	inLua = false;
 
 	// Initialise Lua
-	sys->con->Printf("Initialising Lua...\n");
+	sys->con->Print("Initialising Lua...\n");
 	solState.emplace();
 	L = solState->lua_state();
 	if ( !L ) sys->Error("Error: unable to create Lua state.");
@@ -326,7 +326,7 @@ void ui_main_c::ScriptInit()
 	sys->SetWorkDir();
 
 	// Run the script
-	sys->con->Printf("Running script...\n");
+	sys->con->Print("Running script...\n");
 	for (int i = 0; i < scriptArgc; i++) {
 		lua_pushstring(L, scriptArgv[i]);
 	}
@@ -351,7 +351,7 @@ void ui_main_c::ScriptInit()
 		if (extraArgs >= 0) {
 			lua_pop(L, 1 + extraArgs);
 		} else {
-			sys->con->Printf("\nScript didn't set frame callback, exiting...\n");
+			sys->con->Print("\nScript didn't set frame callback, exiting...\n");
 			sys->Exit();
 		}
 	}

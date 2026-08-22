@@ -21,7 +21,7 @@ enum conBufScroll_e {
 // Console print hook base
 class conPrintHook_c {
 public:
-	virtual void ConPrintHook(const char* text) = 0;
+	virtual void ConPrintHook(std::string_view text) = 0;
 	virtual void ConPrintClear() { }
 protected:
 	conPrintHook_c(class IConsole* conHnd);
@@ -118,17 +118,15 @@ public:
 	static InterfacePtr<IConsole> GetHandle();
 	virtual ~IConsole() = default;
 
-	virtual	void	Print(const char* text) = 0;		// Print
-	virtual	void	Printf(const char* fmt, ...) = 0;	// Formatted print
-	virtual void	PrintFunc(const char* func) = 0;	// Function title print
-	virtual void	Warning(const char* fmt, ...) = 0;	// Formatted warning print
+	virtual	void	Print(std::string_view text) = 0;		// Print
+	virtual void	PrintFunc(std::string_view func) = 0;	// Function title print
+	virtual void	Warning(std::string_view text) = 0;	// Formatted warning print
 	virtual	void	Clear() = 0;						// Clear the console
 	virtual	void	Scroll(int mode) = 0;				// Scroll the console
-	virtual	const char*	EnumLines(int* index) = 0;		// Retrieve lines of console text
-	virtual char*	BuildBuffer() = 0;					// Retrieve entire console buffer text
+	virtual	std::optional<std::string_view> EnumLines(int* index) = 0;		// Retrieve lines of console text
+	virtual std::string BuildBuffer() = 0;					// Retrieve entire console buffer text
 
 	virtual void	Execute(std::string_view cmd) = 0;	// Execute string
-	virtual void	Executef(const char* fmt, ...) = 0;	// Execute formatted string
 	virtual void	ExecCommands(bool deferUnknown = false) = 0; // Flush command buffer
 
 	virtual conVar_c* Cvar_Add(std::string_view name, int flags, std::string_view def, int minVal = 0, int maxVal = 0) = 0; // Add a variable

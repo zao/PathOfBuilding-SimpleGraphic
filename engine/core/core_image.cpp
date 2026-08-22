@@ -95,7 +95,7 @@ std::unique_ptr<image_c> image_c::LoaderForFile(BorrowedInterfacePtr<IConsole> c
 	auto nameU8 = fileName.generic_u8string();
 	std::ifstream in(fileName, std::ios::binary);
 	if (!in) {
-		conHnd->Warning("'%s' doesn't exist or cannot be opened", nameU8.c_str());
+		conHnd->Warning(fmt::format("'{}' doesn't exist or cannot be opened", nameU8));
 		return NULL;
 	}
 
@@ -114,7 +114,7 @@ std::unique_ptr<image_c> image_c::LoaderForFile(BorrowedInterfacePtr<IConsole> c
 	// Attempt to detect image file type from first 4 bytes of file
 	std::array<byte, 4> dat;
 	if (!ReadTrivial(in, dat)) {
-		conHnd->Warning("'%s': cannot read image file (file is corrupt?)", nameU8.c_str());
+		conHnd->Warning(fmt::format("'{}': cannot read image file (file is corrupt?)", nameU8));
 		return NULL;
 	}
 	if (dat[0] == 0xFF && dat[1] == 0xD8) {
@@ -136,7 +136,7 @@ std::unique_ptr<image_c> image_c::LoaderForFile(BorrowedInterfacePtr<IConsole> c
 		// Detect all valid image types (whether supported or not)
 		return std::make_unique<targa_c>(conHnd);
 	}
-	conHnd->Warning("'%s': unsupported image file format", nameU8.c_str());
+	conHnd->Warning(fmt::format("'{}': unsupported image file format", nameU8));
 	return NULL;
 }
 
@@ -172,11 +172,11 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 	// Read header
 	tgaHeader_s hdr;
 	if (!ReadTrivial(in, hdr)) {
-		con->Warning("TGA '%s': couldn't read header", nameU8.c_str());
+		con->Warning(fmt::format("TGA '{}': couldn't read header", nameU8));
 		return false;
 	}
 	if (hdr.colorMapType) {
-		con->Warning("TGA '%s': color mapped images not supported", nameU8.c_str());
+		con->Warning(fmt::format("TGA '{}': color mapped images not supported", nameU8));
 		return false;
 	}
 	in.seekg(hdr.idLen, std::ios::cur);
@@ -194,7 +194,7 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 		if (ittable[it_m][0] == (hdr.imgType & 7) && ittable[it_m][1] == hdr.depth) break;
 	}
 	if (it_m == 3) {
-		con->Warning("TGA '%s': unsupported image type (it: %d pd: %d)", nameU8.c_str(), hdr.imgType, hdr.depth);
+		con->Warning(fmt::format("TGA '{}': unsupported image type (it: {} pd: {})", nameU8, hdr.imgType, hdr.depth));
 		return false;
 	}
 
@@ -217,7 +217,7 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 				ReadTrivial(in, rlehdr);
 				int rlen = ((rlehdr & 0x7F) + 1) * comp; 
 				if (x + rlen > rowSize) {
-					con->Warning("TGA '%s': invalid RLE coding (overlong row)", nameU8.c_str());
+					con->Warning(fmt::format("TGA '{}': invalid RLE coding (overlong row)", nameU8));
 					return false;
 				}
 				if (rlehdr & 0x80) {
@@ -298,7 +298,7 @@ bool jpeg_c::Load(std::filesystem::path const& fileName, std::optional<size_call
 		return false;
 	}
 	if (in_comp != 1 && in_comp != 3) {
-		con->Warning("JPEG '%s': unsupported component count '%d'", nameU8.c_str(), in_comp);
+		con->Warning(fmt::format("JPEG '{}': unsupported component count '{}'", nameU8, in_comp));
 		return false;
 	}
 	if (sizeCallback)

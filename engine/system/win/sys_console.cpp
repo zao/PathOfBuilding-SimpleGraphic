@@ -52,7 +52,7 @@ public:
 	void	Print(std::u32string_view text);
 	void	CopyToClipboard();
 
-	void	ConPrintHook(const char* text);
+	void	ConPrintHook(std::string_view text);
 	void	ConPrintClear();
 };
 
@@ -228,11 +228,9 @@ void sys_console_c::SetVisible(bool show)
 
 			// Select all text and replace with full text
 			Edit_SetText(hwOut, L"");
-			char* buffer = sys->con->BuildBuffer();
+			const auto buffer = sys->con->BuildBuffer();
 			std::u32string u32_text = IndexUTF8ToUTF32(buffer).text;
-
 			Print(u32_text);
-			delete buffer;
 	
 			RunMessages(hwMain);
 		}
@@ -342,7 +340,7 @@ void sys_console_c::CopyToClipboard()
 	}
 }
 
-void sys_console_c::ConPrintHook(const char* text)
+void sys_console_c::ConPrintHook(std::string_view text)
 {
 	Print(IndexUTF8ToUTF32(text).text);
 }

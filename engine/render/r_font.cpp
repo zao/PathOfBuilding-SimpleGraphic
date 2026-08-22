@@ -59,7 +59,7 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 	std::string tgfName = fileNameBase + ".tgf";
 	std::ifstream tgf(tgfName);
 	if (!tgf) {
-		renderer->sys->con->Warning("font \"%s\" not found", fontName);
+		renderer->sys->con->Warning(fmt::format("font \"{}\" not found", fontName));
 		return;
 	}
 

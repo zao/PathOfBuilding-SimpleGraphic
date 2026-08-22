@@ -7,6 +7,8 @@
 #include "common.h"
 
 #include <charconv>
+#include <deque>
+#include <string>
 #include <string_view>
 #include <fmt/format.h>
 
@@ -14,16 +16,15 @@
 // Configuration
 // =============
 
-#define CON_MAXLINES 1024
-#define CON_MAXLINEMASK (CON_MAXLINES-1)
+constexpr size_t CON_MAXLINES = 1024;
 
-#define CON_MAXCMD 512			// Maximum commands
-#define CON_MAXCVAR 512			// Maximum cvars
-#define CON_MAXMATCH CON_MAXCMD + CON_MAXCVAR
+constexpr size_t CON_MAXCMD = 512;			// Maximum commands
+constexpr size_t CON_MAXCVAR = 512;			// Maximum cvars
+constexpr size_t CON_MAXMATCH = CON_MAXCMD + CON_MAXCVAR;
 
-#define CON_MAXCMDBUFFER 1024	// Maximum buffered commands
+constexpr size_t CON_MAXCMDBUFFER = 1024;	// Maximum buffered commands
 
-#define CON_MAXHIST 32			// Maximum history
+constexpr size_t CON_MAXHIST = 32;			// Maximum history
 
 // ==========
 // Cvar Class
@@ -103,9 +104,8 @@ void conVar_c::Clamp()
 
 // Buffer line
 struct conLine_s {
-	char*	buf;
-	int		len;
-	bool	newLine;
+	std::string buf;
+	bool newLine = false;
 };
 
 // Print hook list entry
@@ -122,17 +122,15 @@ struct conHookEntry_s {
 class console_c: public IConsole {
 public:
 	// Interface
-	void	Print(const char* text);
-	void	Printf(const char* fmt, ...);
-	void	PrintFunc(const char* func);
-	void	Warning(const char* fmt, ...);
+	void	Print(std::string_view text);
+	void	PrintFunc(std::string_view func);
+	void	Warning(std::string_view text);
 	void	Clear();
 	void	Scroll(int mode);
-	const char*	EnumLines(int* index);
-	char*	BuildBuffer();
+	std::optional<std::string_view> EnumLines(int* index);
+	std::string BuildBuffer();
 
 	void	Execute(std::string_view cmd);
-	void	Executef(const char* fmt, ...);
 	void	ExecCommands(bool deferUnknown);
 
 	conVar_c* Cvar_Add(std::string_view name, int flags, std::string_view def, int minVal = 0, int maxVal = 0);
@@ -145,21 +143,17 @@ public:
 	console_c();
 	~console_c();
 
-	int		bufLen;		// Combined length of lines
-	int		bufNumLine;	// Line count
-	conLine_s bufLines[CON_MAXLINES];
-	int		bufFirst;	// First line in buffer
-	int		bufLast;	// Last line in buffer
+	std::deque<conLine_s> bufLines;
 	int		bufScroll;	// Scroll point
 
 	void	Buffer_Init();
 	void	Buffer_Shutdown();
-	void	Buffer_PrintLine(char* text);
+	void	Buffer_PrintLine(std::string_view text);
 
 	conHookEntry_s* hookFirst;
 	conHookEntry_s* hookLast;
 
-	void	Hook_RunHooks(const char* text);
+	void	Hook_RunHooks(std::string_view text);
 	void	Hook_RunClear();
 
 	conCmd_c* cmdList[CON_MAXCMD];
@@ -232,117 +226,62 @@ console_c::~console_c()
 
 void console_c::Buffer_Init()
 {
-	bufLen = 0;
-	bufNumLine = 1;
-	bufLines[0].len = 0;
-	bufLines[0].buf = NULL;
-	bufLines[0].newLine = false;
-	bufFirst = 0;
-	bufLast = 0;
+	bufLines.emplace_back();
 	bufScroll = 0;
 }
 
 void console_c::Buffer_Shutdown()
 {
-	for (int l = 0; l < bufNumLine; l++) {
-		delete bufLines[l].buf;
-	}
+	bufLines.clear();
 }
 
-void console_c::Buffer_PrintLine(char* text)
+void console_c::Buffer_PrintLine(std::string_view text)
 {
-	if (bufLines[bufLast].newLine) {
-		// Start a new line
-		conLine_s* line;
-		if (bufNumLine < CON_MAXLINES) {
-			// Make a new line
-			line = bufLines + bufNumLine++;
-		} else {
-			// Overwrite first line
-			line = bufLines + bufFirst;
-			delete line->buf;
-			bufLen-= line->len;
-			bufFirst = (bufFirst + 1) & CON_MAXLINEMASK;
+	conLine_s* line{};
+	if (!bufLines.back().newLine) {
+		line = &bufLines.back();
+	}
+	else {
+		if (bufLines.size() == CON_MAXLINES) {
+			bufLines.pop_front();
 		}
-		line->len = 0;
-		line->buf = NULL;
-		line->newLine = false;
-		bufLast = (bufLast + 1) & CON_MAXLINEMASK;
+		line = &bufLines.emplace_back();
 	}
-	if (*text) {
-		int stlen = (int)strlen(text);
-		bufLen+= stlen;
-		conLine_s* line = bufLines + bufLast;
-		trealloc(line->buf, line->len + stlen + 1);
-		strcpy(line->buf + line->len, text);
-		line->len+= stlen;
-	}
+
+	line->buf += text;
 }
 
-void console_c::Print(const char* text)
+void console_c::Print(std::string_view text)
 {
 	// Run print hooks
 	Hook_RunHooks(text);
 
-	char line[4096];
-	int lineLen = 0;
-	for (const char* p = text; *p; p++) {
-		if (*p == '\n') {
-			// Separate into lines
-			line[lineLen] = 0;
-			Buffer_PrintLine(line);
-			bufLines[bufLast].newLine = true;
-			lineLen = 0;
-		} else {
-			line[lineLen++] = *p;
+	std::string_view p = text;
+	while (p.size()) {
+		if (const auto newlineIdx = p.find('\n'); newlineIdx != p.npos) {
+			Buffer_PrintLine(p.substr(0, newlineIdx));
+			bufLines.back().newLine = true;
+			p = p.substr(newlineIdx + 1);
+		}
+		else {
+			Buffer_PrintLine(p);
+			p = {};
 		}
 	}
 
-	if (lineLen) {
-		// Print the rest
-		line[lineLen] = 0;
-		Buffer_PrintLine(line);
-	}
-
 	// Scroll to the bottom
-	bufScroll = bufLast;
+	bufScroll = bufLines.size() - 1;
 }
 
-void console_c::Printf(const char* fmt, ...)
-{
-	// Normal print
-	va_list va;
-	va_start(va, fmt);
-	char text[4096];
-	vsnprintf(text, 4095, fmt, va);
-	text[4095] = 0;
-	va_end(va);
-	Print(text);
-}
-
-void console_c::PrintFunc(const char* func)
+void console_c::PrintFunc(std::string_view func)
 {
 	// Print function title
 	Print(fmt::format("\n--- {} ---\n", func).c_str());
 }
 
-void console_c::Warning(const char* fmt, ...)
+void console_c::Warning(std::string_view text)
 {
-	// Print warning text
-	va_list va;
-	va_start(va, fmt);
-#ifdef _WIN32
-	char text[4096];
-	vsprintf_s(text, 4096, fmt, va);
-#else
-	char* text{};
-	vasprintf(&text, fmt, va);
-#endif
-	va_end(va);
-	Printf("^4Warning: %s\n", text);
-#ifndef _WIN32
-	free(text);
-#endif
+	Print(fmt::format("^4Warning: {}\n", text));
 }
 
 void console_c::Clear()
@@ -358,63 +297,45 @@ void console_c::Scroll(int mode)
 	switch (mode) {
 	case CBSC_UP:
 		// Try to scroll up 4 lines
-		for (int sc = 0; sc < 4; sc++) {
-			if (bufScroll == bufFirst) {
-				break;
-			}
-			bufScroll = (bufScroll - 1) & CON_MAXLINEMASK;
-		}
+		bufScroll = std::max(0, bufScroll - 4);
 		break;
 	case CBSC_DOWN:
 		// Try to scroll down 4 lines
-		for (int sc = 0; sc < 4; sc++) {
-			if (bufScroll == bufLast) {
-				break;
-			}
-			bufScroll = (bufScroll + 1) & CON_MAXLINEMASK;
-		}
+		bufScroll = std::min((int)bufLines.size() - 1, bufScroll + 4);
 		break;
 	case CBSC_BOTTOM:
 		// Scroll to last line in buffer
-		bufScroll = bufLast;
+		bufScroll = bufLines.size() - 1;
 		break;
 	}
 }
 
-const char* console_c::EnumLines(int* index)
+std::optional<std::string_view> console_c::EnumLines(int* index)
 {
 	if (*index <= -1) {
 		// Start traversing from scroll point
 		*index = bufScroll;
-	} else if (*index == bufFirst) {
+	} else if (*index == 0) {
 		// Reached the end of the buffer
-		return NULL;
+		return std::nullopt;
 	} else {
-		*index = (*index - 1) & CON_MAXLINEMASK;
+		*index = *index - 1;
 	}
 	
 	// Return next line
-	const char* line = bufLines[*index].buf;
-	return line? line:"";
+	return bufLines[*index].buf;
 }
 
-char* console_c::BuildBuffer()
+std::string console_c::BuildBuffer()
 {
-	// Allocate space for line data + newlines + terminator
-	char* buf = AllocStringLen(bufLen + bufNumLine); 
+	fmt::memory_buffer buf;
 
 	// Append the lines
-	char* p = buf;
-	for (int l = 0; l < bufNumLine; l++) {
-		conLine_s* line = bufLines + ((bufFirst + l) & CON_MAXLINEMASK);
-		if (line->len) {
-			strcpy(p, line->buf);
-			p+= line->len;
-		}
-		*(p++) = '\n';
+	for (const auto& line : bufLines) {
+		fmt::format_to(fmt::appender(buf), "{}\n", line.buf);
 	}
 
-	return buf;
+	return to_string(buf);
 }
 
 // =====================
@@ -452,7 +373,7 @@ void conPrintHook_c::RemovePrintHook()
 	}
 }
 
-void console_c::Hook_RunHooks(const char* text)
+void console_c::Hook_RunHooks(std::string_view text)
 {
 	conHookEntry_s* i = hookFirst;
 	while (i) {
@@ -491,7 +412,7 @@ conCmdHandler_c::~conCmdHandler_c()
 void conCmdHandler_c::Cmd_PrivAdd(const char* name, int minArgs, const char* usage, conCmdHandler_c* obj, conCmdMethod_t method)
 {
 	if (_con->Cmd_Ptr(name)) {
-		_con->Warning("command '%s' already exists", name);
+		_con->Warning(fmt::format("command '{}' already exists", name));
 		return;
 	}
 
@@ -650,25 +571,6 @@ void console_c::Execute(std::string_view cmd)
 			cmdBuf_lines[cmdBuf_numLine++] = AllocString(lp.c_str());
 		}
 	}
-}
-
-void console_c::Executef(const char* fmt, ...)
-{
-	va_list va;
-	va_start(va, fmt);
-#ifdef _WIN32
-	char cmd[4096];
-	vsnprintf_s(cmd, 4095, fmt, va);
-	cmd[4095] = 0;
-#else
-	char* cmd{};
-	vasprintf(&cmd, fmt, va);
-#endif
-	va_end(va);
-	Execute(cmd);
-#ifndef _WIN32
-	free(cmd);
-#endif
 }
 
 void console_c::ExecCommands(bool deferUnknown)
@@ -845,7 +747,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 		case KEY_RETURN:
 			if (_con->input.len) {
 				// Execute buffer
-				_con->Printf("]%s\n", _con->input.buf);
+				_con->Print(fmt::format("]{}\n", _con->input.buf));
 				_con->Execute(_con->input.buf);
 
 				// Add to command history if different from most recent command

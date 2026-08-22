@@ -87,7 +87,7 @@ void core_main_c::Shutdown()
 	video.reset();
 	config.reset();
 
-	sys->con->Printf("Engine shutdown complete.\n");
+	sys->con->Print("Engine shutdown complete.\n");
 }
 
 void core_main_c::KeyEvent(int key, int type)

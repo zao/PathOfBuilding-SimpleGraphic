@@ -62,7 +62,7 @@ r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flag
 	nameHash = StringHash(name.c_str(), 0xFFFF);
 	tex = r_tex_c::CreateFromPath(renderer->texMan.get(), name, flags);
 	if (tex->error) {
-		renderer->sys->con->Warning("couldn't load texture '%s'", name.c_str());
+		renderer->sys->con->Warning(fmt::format("couldn't load texture '{}'", name));
 	}
 }
 
@@ -894,7 +894,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	st_ext = (const char*)glGetString(GL_EXTENSIONS);
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, (int*)&texMaxDim);
-	sys->con->Printf("GL_MAX_TEXTURE_SIZE: %d\n", texMaxDim);
+	sys->con->Print(fmt::format("GL_MAX_TEXTURE_SIZE: {}\n", texMaxDim));
 
 	// Set default state
 	glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -903,34 +903,34 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	glEnable(GL_BLEND);
 
 	// Load extensions
-	sys->con->Printf("Loading OpenGL extensions...\n");
+	sys->con->Print("Loading OpenGL extensions...\n");
 
 	if (strstr(st_ext, "GL_EXT_texture_compression_s3tc")) {
-		sys->con->Printf("using GL_EXT_texture_compression_s3tc\n");
+		sys->con->Print("using GL_EXT_texture_compression_s3tc\n");
 		glCompressedTexImage2D = (PFNGLCOMPRESSEDTEXIMAGE2DPROC)openGL->GetProc("glCompressedTexImage2D");
 	}
 	else {
-		sys->con->Printf("GL_EXT_texture_compression_s3tc not supported\n");
+		sys->con->Print("GL_EXT_texture_compression_s3tc not supported\n");
 		glCompressedTexImage2D = NULL;
 	}
 
 	if (strstr(st_ext, "GL_EXT_texture_compression_bptc")) {
-		sys->con->Printf("using GL_EXT_texture_compression_bptc\n");
+		sys->con->Print("using GL_EXT_texture_compression_bptc\n");
 		texBC7 = true;
 	}
 	else {
-		sys->con->Printf("GL_EXT_texture_compression_bptc not supported\n");
+		sys->con->Print("GL_EXT_texture_compression_bptc not supported\n");
 		texBC7 = false;
 	}
 
 	if (strstr(st_ext, "GL_EXT_debug_marker")) {
-		sys->con->Printf("using GL_EXT_debug_marker\n");
+		sys->con->Print("using GL_EXT_debug_marker\n");
 		glInsertEventMarkerEXT = (PFNGLINSERTEVENTMARKEREXTPROC)openGL->GetProc("glInsertEventMarkerEXT");
 		glPushGroupMarkerEXT = (PFNGLPUSHGROUPMARKEREXTPROC)openGL->GetProc("glPushGroupMarkerEXT");
 		glPopGroupMarkerEXT = (PFNGLPOPGROUPMARKEREXTPROC)openGL->GetProc("glPopGroupMarkerEXT");
 	}
 	else {
-		sys->con->Printf("GL_EXT_debug_marker not supported\n");
+		sys->con->Print("GL_EXT_debug_marker not supported\n");
 		glInsertEventMarkerEXT = NULL;
 		glPushGroupMarkerEXT = NULL;
 		glPopGroupMarkerEXT = NULL;
@@ -1035,12 +1035,12 @@ void r_renderer_c::Init(r_featureFlag_e features)
 			auto vsId = compileShader(s_scaleVsSource, GL_VERTEX_SHADER);
 			if (!GetShaderCompileSuccess(vsId)) {
 				auto log = GetShaderInfoLog(vsId);
-				sys->con->Printf("Scaling VS compile failure: %s\n", log.c_str());
+				sys->con->Print(fmt::format("Scaling VS compile failure: {}\n", log));
 			}
 			auto fsId = compileShader(s_scaleFsSource, GL_FRAGMENT_SHADER);
 			if (!GetShaderCompileSuccess(fsId)) {
 				auto log = GetShaderInfoLog(fsId);
-				sys->con->Printf("Scaling FS compile failure: %s\n", log.c_str());
+				sys->con->Print(fmt::format("Scaling FS compile failure: {}\n", log));
 			}
 
 			GLuint prog = rtt.blitProg = glCreateProgram();
@@ -1049,7 +1049,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 			glLinkProgram(prog);
 			if (!GetProgramLinkSuccess(prog)) {
 				auto log = GetProgramInfoLog(prog);
-				sys->con->Printf("Scaling program link failure: %s\n", log.c_str());
+				sys->con->Print(fmt::format("Scaling program link failure: {}\n", log));
 			}
 
 			GLint linked = GL_FALSE;
@@ -1065,7 +1065,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	}
 
 	// Load render resources
-	sys->con->Printf("Loading resources...\n");
+	sys->con->Print("Loading resources...\n");
 
 	whiteImage = RegisterShader("@white", 0);
 	blackImage = RegisterShader("@black", 0);
@@ -1084,14 +1084,14 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	fonts[F_FONTIN] = new r_font_c(this, "Fontin");
 	fonts[F_FONTIN_ITALIC] = new r_font_c(this, "Fontin Italic");
 
-	sys->con->Printf("Renderer initialised in %d msec.\n", timer.Get());
+	sys->con->Print(fmt::format("Renderer initialised in {} msec.\n", timer.Get()));
 }
 
 void r_renderer_c::Shutdown()
 {
 	sys->con->PrintFunc("Render Shutdown");
 
-	sys->con->Printf("Unloading resources...\n");
+	sys->con->Print("Unloading resources...\n");
 
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
@@ -1128,7 +1128,7 @@ void r_renderer_c::Shutdown()
 	openGL->Shutdown();
 	openGL.reset();
 
-	sys->con->Printf("Renderer shutdown complete.\n");
+	sys->con->Print("Renderer shutdown complete.\n");
 }
 
 // =================
@@ -1730,7 +1730,7 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1,
 		stackLayer, maskLayer.value_or(-1));
 }
 
-void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)
+void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, std::string_view str)
 {
 	auto idxStr = IndexUTF8ToUTF32(str);
 	if (font < 0 || font >= F_NUMFONTS) {
@@ -1871,7 +1871,7 @@ void r_renderer_c::C_Screenshot(IConsole* conHnd, args_c& args)
 		takeScreenshot = R_SSPNG;
 	}
 	else {
-		conHnd->Warning("Unknown screenshot format '%s', valid formats: jpg, tga, png", fmtName);
+		conHnd->Warning(fmt::format("Unknown screenshot format '{}', valid formats: jpg, tga, png", fmtName));
 	}
 }
 

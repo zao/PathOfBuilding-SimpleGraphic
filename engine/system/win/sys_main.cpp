@@ -536,7 +536,7 @@ void sys_main_c::Error(const char *fmt, ...)
 	vasprintf(&msg, fmt, va);
 #endif
 	va_end(va);
-	con->Printf("\n--- ERROR ---\n%s", msg);
+	con->Print(fmt::format("\n--- ERROR ---\n{}", msg));
 #ifndef _WIN32
 	free(msg);
 #endif
@@ -678,11 +678,11 @@ bool sys_main_c::Run(int argc, char** argv)
 	core = core_IMain::GetHandle(this);
 
 	// Print some handy information
-	con->Printf(CFG_VERSION" %s %s, built " __DATE__ "\n", x64? "x64":"x86", debug? "Debug":"Release");
+	con->Print(fmt::format(CFG_VERSION" {} {}, built " __DATE__ "\n", x64? "x64":"x86", debug? "Debug":"Release"));
 	if (debuggerRunning) {
-		con->Printf("Debugger is present.\n");
+		con->Print("Debugger is present.\n");
 	}
-	con->Printf("\n");
+	con->Print("\n");
 
 	initialised = true;
 
@@ -747,7 +747,7 @@ bool sys_main_c::Run(int argc, char** argv)
 		video->SetVisible(false);
 		conWin->SetVisible(true);
 		if (exitMsg) {
-			con->Printf("\n%s", exitMsg);
+			con->Print(fmt::format("\n{}", exitMsg));
 			FreeString(exitMsg);
 			exitMsg = NULL;
 		}

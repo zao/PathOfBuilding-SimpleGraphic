@@ -125,8 +125,8 @@ void core_video_c::C_Vid_Apply(IConsole* conHnd, args_c &args)
 
 void core_video_c::C_Vid_ModeList(IConsole* conHnd, args_c &args)
 {
-	sys->con->Printf("Mode -1: Use desktop resolution\n");
+	sys->con->Print("Mode -1: Use desktop resolution\n");
 	for (int m = 0; m < VID_NUMMODES; m++) {
-		sys->con->Printf("Mode %d: %dx%d\n", m, vid_modeList[m][0], vid_modeList[m][1]);
+		sys->con->Print(fmt::format("Mode {}: {}x{}\n", m, vid_modeList[m][0], vid_modeList[m][1]));
 	}
 }

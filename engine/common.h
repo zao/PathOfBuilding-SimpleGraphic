@@ -24,6 +24,8 @@
 
 #include <Superluminal/PerformanceAPI.h>
 
+#include <fmt/core.h>
+
 #ifdef _DEBUG
 #include "common/memtrak3.h"
 #endif

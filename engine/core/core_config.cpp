@@ -44,7 +44,7 @@ public:
 	bool	logOpen;
 	std::ofstream logFile;
 
-	void	ConPrintHook(const char* text);
+	void	ConPrintHook(std::string_view text);
 };
 
 InterfacePtr<core_IConfig> core_IConfig::GetHandle(sys_IMain* sysHnd)
@@ -96,7 +96,7 @@ void core_config_c::C_Toggle(IConsole* conHnd, args_c &args)
 		cv->Toggle();
 	} else {
 		// Oops.
-		conHnd->Printf("Cvar '%s' does not exist.\n", args[1]);
+		conHnd->Print(fmt::format("Cvar '{}' does not exist.\n", args[1]));
 	}
 }
 
@@ -140,9 +140,9 @@ void core_config_c::C_MemReport(IConsole* conHnd, args_c &args)
 {
 #ifdef _MEMTRAK_H
 	_memTrak_memReport("memreport.log");
-	conHnd->Printf("Memory report saved to memreport.log\n");
+	conHnd->Print("Memory report saved to memreport.log\n");
 #else
-	conHnd->Printf("Memory report not available in Release builds.\n");
+	conHnd->Print("Memory report not available in Release builds.\n");
 #endif
 }
 
@@ -220,7 +220,7 @@ bool core_config_c::SaveConfig(std::filesystem::path const& cfgName)
 // Console Logging
 // ===============
 
-void core_config_c::ConPrintHook(const char* text)
+void core_config_c::ConPrintHook(std::string_view text)
 {
 	if (con_log->intVal) {
 		if (logOpen == false) {
@@ -228,7 +228,7 @@ void core_config_c::ConPrintHook(const char* text)
 			logOpen = true;
 			fmt::println(logFile, "Log opened.");
 		}
-		logFile.write(text, strlen(text));
+		logFile.write(text.data(), text.size());
 		logFile.flush();
 	} else {
 		if (logOpen) {

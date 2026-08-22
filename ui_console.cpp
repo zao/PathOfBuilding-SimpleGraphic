@@ -176,9 +176,9 @@ void ui_console_c::Render()
 	// Draw the text lines
 	liney = basey - fontSize;
 	int index = -1;
-	const char* l;
+	std::optional<std::string_view> l;
 	while (liney >= 0 && (l = sys->con->EnumLines(&index))) {
-		renderer->DrawString(0, liney, F_LEFT, fontSize, colorWhite, F_FIXED, l);
+		renderer->DrawString(0, liney, F_LEFT, fontSize, colorWhite, F_FIXED, *l);
 		liney-= fontSize;
 	}
 
