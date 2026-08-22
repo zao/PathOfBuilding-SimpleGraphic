@@ -611,8 +611,8 @@ void r_tex_c::LoadFile()
 		else {
 			// Try to load image file using appropriate loader
 			const auto path = std::filesystem::u8path(fileName);
-			img = std::unique_ptr<image_c>(image_c::LoaderForFile(renderer->sys->con, path));
-			if (img && img->Load(path, sizeCallback))
+			img = image_c::LoaderForFile(renderer->sys->con, path);
+			if (img && !img->Load(path, sizeCallback))
 				img.reset();
 
 			// Fallback to gray default texture

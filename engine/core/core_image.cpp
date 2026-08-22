@@ -82,19 +82,19 @@ void image_c::Free()
 
 bool image_c::Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback)
 {
-	return true; // o_O
+	return false; // o_O
 }
 
 bool image_c::Save(std::filesystem::path const& fileName) 
 {
-	return true; // o_O
+	return false; // o_O
 }
 
-image_c* image_c::LoaderForFile(IConsole* conHnd, std::filesystem::path const& fileName)
+std::unique_ptr<image_c> image_c::LoaderForFile(IConsole* conHnd, std::filesystem::path const& fileName)
 {
 	auto nameU8 = fileName.generic_u8string();
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true)) {
+	std::ifstream in(fileName, std::ios::binary);
+	if (!in) {
 		conHnd->Warning("'%s' doesn't exist or cannot be opened", nameU8.c_str());
 		return NULL;
 	}
@@ -104,37 +104,37 @@ image_c* image_c::LoaderForFile(IConsole* conHnd, std::filesystem::path const& f
 		auto inner = fileName.filename();
 		inner.replace_extension();
 		if (inner.extension() == ".dds")
-			return new dds_c(conHnd);
+			return std::make_unique<dds_c>(conHnd);
 	}
 	if (fileName.extension() == ".dds")
-		return new dds_c(conHnd);
+		return std::make_unique<dds_c>(conHnd);
 	if (fileName.extension() == ".webp")
-		return new webp_c(conHnd);
+		return std::make_unique<webp_c>(conHnd);
 
 	// Attempt to detect image file type from first 4 bytes of file
-	byte dat[4];
-	if (in.Read(dat, 4)) {
+	std::array<byte, 4> dat;
+	if (!ReadTrivial(in, dat)) {
 		conHnd->Warning("'%s': cannot read image file (file is corrupt?)", nameU8.c_str());
 		return NULL;
 	}
 	if (dat[0] == 0xFF && dat[1] == 0xD8) {
 		// JPEG Start Of Image marker
-		return new jpeg_c(conHnd);
-	} else if (*(dword*)dat == 0x474E5089) {
+		return std::make_unique<jpeg_c>(conHnd);
+	} else if (*(dword*)dat.data() == 0x474E5089) {
 		// 0x89 P N G
-		return new png_c(conHnd);
-	} else if (*(dword*)dat == 0x38464947) {
+		return std::make_unique<png_c>(conHnd);
+	} else if (*(dword*)dat.data() == 0x38464947) {
 		// G I F 8
-		return new gif_c(conHnd);
-	} else if (*(dword*)dat == 0x20534444) {
+		return std::make_unique<gif_c>(conHnd);
+	} else if (*(dword*)dat.data() == 0x20534444) {
 		// D D S 0x20
-		return new dds_c(conHnd);
-	} else if (*(dword*)dat == 0x46464952) {
+		return std::make_unique<dds_c>(conHnd);
+	} else if (*(dword*)dat.data() == 0x46464952) {
 		// R I F F
-		return new webp_c(conHnd);
+		return std::make_unique<webp_c>(conHnd);
 	} else if ((dat[1] == 0 && (dat[2] == 2 || dat[2] == 3 || dat[2] == 10 || dat[2] == 11)) || (dat[1] == 1 && (dat[2] == 1 || dat[2] == 9))) {
 		// Detect all valid image types (whether supported or not)
-		return new targa_c(conHnd);
+		return std::make_unique<targa_c>(conHnd);
 	}
 	conHnd->Warning("'%s': unsupported image file format", nameU8.c_str());
 	return NULL;
@@ -162,24 +162,24 @@ struct tgaHeader_s {
 bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback)
 {
 	// Open the file
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true)) {
-		return true;
+	std::ifstream in(fileName, std::ios::binary);
+	if (!in) {
+		return false;
 	}
 
-	auto nameU8 = fileName.generic_u8string();
+	const auto nameU8 = fileName.generic_u8string();
 
 	// Read header
 	tgaHeader_s hdr;
-	if (in.TRead(hdr)) {
+	if (!ReadTrivial(in, hdr)) {
 		con->Warning("TGA '%s': couldn't read header", nameU8.c_str());
-		return true;
+		return false;
 	}
 	if (hdr.colorMapType) {
 		con->Warning("TGA '%s': color mapped images not supported", nameU8.c_str());
-		return true;
+		return false;
 	}
-	in.Seek(hdr.idLen, SEEK_CUR);
+	in.seekg(hdr.idLen, std::ios::cur);
 	if (sizeCallback)
 		(*sizeCallback)(hdr.width, hdr.height);
 
@@ -195,7 +195,7 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 	}
 	if (it_m == 3) {
 		con->Warning("TGA '%s': unsupported image type (it: %d pd: %d)", nameU8.c_str(), hdr.imgType, hdr.depth);
-		return true;
+		return false;
 	}
 
 	// Read image
@@ -214,19 +214,18 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 			int x = 0;
 			do {
 				byte rlehdr;
-				in.TRead(rlehdr);
+				ReadTrivial(in, rlehdr);
 				int rlen = ((rlehdr & 0x7F) + 1) * comp; 
 				if (x + rlen > rowSize) {
 					con->Warning("TGA '%s': invalid RLE coding (overlong row)", nameU8.c_str());
-					delete[] dat;
-					return true;
+					return false;
 				}
 				if (rlehdr & 0x80) {
-					byte rpk[4];
-					in.Read(rpk, comp);
+					std::array<byte, 4> rpk;
+					ReadTrivial(in, rpk);
 					for (int c = 0; c < rlen; c++, x++) dat[rowBase + x] = rpk[c % comp];
 				} else {
-					in.Read(dat + rowBase + x, rlen);
+					in.read((char*)dat + rowBase + x, rlen);
 					x+= rlen;
 				}
 			} while (x < rowSize);
@@ -235,10 +234,10 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 		// Raw image
 		if (flipV) {
 			for (int row = height - 1; row >= 0; row--) {
-				in.Read(dat + row * rowSize, rowSize);
+				in.read((char*)dat + row * rowSize, rowSize);
 			}
 		} else {
-			in.Read(dat, height * rowSize);
+			in.read((char*)dat, height * rowSize);
 		}
 	}
 
@@ -250,32 +249,32 @@ bool targa_c::Load(std::filesystem::path const& fileName, std::optional<size_cal
 		}
 	}
 
-	return !CopyRaw(type, width, height, dat);
+	return CopyRaw(type, width, height, dat);
 }
 
 bool targa_c::Save(std::filesystem::path const& fileName)
 {
 	auto format = tex.format();
 	if (is_compressed(format) || !is_unsigned(format))
-		return true;
+		return false;
 
 	int comp = (int)component_count(format);
 	if (comp != 3 && comp != 4)
-		return true;
+		return false;
 
 	// Open file
-	fileOutputStream_c out;
-	if (out.FileOpen(fileName, true)) {
-		return true;
+	std::ofstream out(fileName, std::ios::binary);
+	if (!out) {
+		return false;
 	}
 
 	auto extent = tex.extent();
 	auto rc = stbi_write_tga_to_func([](void* ctx, void* data, int size) {
-		auto out = (fileOutputStream_c*)ctx;
-		out->Write(data, size);
+		auto out = (std::ofstream*)ctx;
+		out->write((const char*)data, size);
 		}, &out, extent.x, extent.y, comp, tex.data(0, 0, 0));
 
-	return !rc;
+	return !!rc;
 }
 
 // ==========
@@ -287,38 +286,33 @@ bool jpeg_c::Load(std::filesystem::path const& fileName, std::optional<size_call
 	Free();
 
 	// Open the file
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true)) {
-		return true;
+	const auto fileData = SlurpFile(fileName);
+	if (!fileData) {
+		return false;
 	}
 
 	auto nameU8 = fileName.generic_u8string();
 
-	std::vector<byte> fileData(in.GetLen());
-	if (in.Read(fileData.data(), fileData.size())) {
-		return true;
-	}
 	int x, y, in_comp;
-	if (!stbi_info_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp)) {
-		return true;
+	if (!stbi_info_from_memory((const stbi_uc*)fileData->data(), (int)fileData->size(), &x, &y, &in_comp)) {
+		return false;
 	}
 	if (in_comp != 1 && in_comp != 3) {
 		con->Warning("JPEG '%s': unsupported component count '%d'", nameU8.c_str(), in_comp);
-		return true;
+		return false;
 	}
 	if (sizeCallback)
 		(*sizeCallback)(x, y);
 
-	stbi_uc* data = stbi_load_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp, in_comp);
+	stbi_uc* data = stbi_load_from_memory((const stbi_uc*)fileData->data(), (int)fileData->size(), &x, &y, &in_comp, in_comp);
 	if (!data) {
-		stbi_image_free(data);
-		return true;
+		return false;
 	}
 
 	bool success = CopyRaw(in_comp == 1 ? IMGTYPE_GRAY : IMGTYPE_RGB, x, y, data);
 	stbi_image_free(data);
 
-	return !success;
+	return success;
 }
 
 bool jpeg_c::Save(std::filesystem::path const& fileName)
@@ -326,24 +320,24 @@ bool jpeg_c::Save(std::filesystem::path const& fileName)
 	// JPEG only supports RGB and grayscale images
 	auto format = tex.format();
 	if (is_compressed(format) || !is_unsigned(format))
-		return true;
+		return false;
 
 	int comp = (int)component_count(format);
 	if (comp != 1 && comp != 3)
-		return true;
+		return false;
 
 	// Open the file
-	fileOutputStream_c out;
-	if (out.FileOpen(fileName, true)) {
-		return true;
+	std::ofstream out(fileName, std::ios::binary);
+	if (!out) {
+		return false;
 	}
 
 	auto extent = tex.extent();
 	int rc = stbi_write_jpg_to_func([](void* ctx, void* data, int size) {
-		auto out = (fileOutputStream_c*)ctx;
-		out->Write(data, size);
+		auto out = (std::ofstream*)ctx;
+		out->write((const char*)data, size);
 	}, &out, extent.x, extent.y, comp, tex.data(0, 0, 0), quality);
-	return !rc;
+	return !!rc;
 }
 
 // =========
@@ -355,18 +349,14 @@ bool png_c::Load(std::filesystem::path const& fileName, std::optional<size_callb
 	Free();
 
 	// Open file and check signature
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true)) {
-		return true;
+	const auto fileData = SlurpFile(fileName);
+	if (!fileData) {
+		return false;
 	}
 
-	std::vector<byte> fileData(in.GetLen());
-	if (in.Read(fileData.data(), fileData.size())) {
-		return true;
-	}
 	int x, y, in_comp;
-	if (!stbi_info_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp)) {
-		return true;
+	if (!stbi_info_from_memory((const stbi_uc*)fileData->data(), (int)fileData->size(), &x, &y, &in_comp)) {
+		return false;
 	}
 
 	dword width = x;
@@ -376,41 +366,40 @@ bool png_c::Load(std::filesystem::path const& fileName, std::optional<size_callb
 
 	int comp = (in_comp == 1 || in_comp == 3) ? 3 : 4;
 	int type = comp == 3 ? IMGTYPE_RGB : IMGTYPE_RGBA;
-	stbi_uc* data = stbi_load_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp, comp);
+	stbi_uc* data = stbi_load_from_memory((const stbi_uc*)fileData->data(), (int)fileData->size(), &x, &y, &in_comp, comp);
 	if (!data) {
-		stbi_image_free(data);
-		return true;
+		return false;
 	}
 
 	bool success = CopyRaw(type, width, height, data);
 	stbi_image_free(data);
 
-	return !success;
+	return success;
 }
 
 bool png_c::Save(std::filesystem::path const& fileName)
 {
 	auto format = tex.format();
 	if (is_compressed(format) || !is_unsigned(format))
-		return true;
+		return false;
 
 	int comp = (int)component_count(format);
 	if (comp != 3 && comp != 4)
-		return true;
+		return false;
 
 	// Open file
-	fileOutputStream_c out;
-	if (out.FileOpen(fileName, true)) {
-		return true;
+	std::ofstream out(fileName, std::ios::binary);
+	if (!out) {
+		return false;
 	}
 
 	auto extent = tex.extent();
 	auto rc = stbi_write_png_to_func([](void* ctx, void* data, int size) {
-		auto out = (fileOutputStream_c*)ctx;
-		out->Write(data, size);
+		auto out = (std::ofstream*)ctx;
+		out->write((const char*)data, size);
 	}, &out, extent.x, extent.y, comp, tex.data(0, 0, 0), extent.x * comp);
 	
-	return !rc;
+	return !!rc;
 }
 
 // =========
@@ -420,38 +409,32 @@ bool png_c::Save(std::filesystem::path const& fileName)
 bool gif_c::Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback)
 {
 	// Open file
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true)) {
-		return true;
+	const auto fileData = SlurpFile(fileName);
+	if (!fileData) {
+		return false;
 	}
 
-	{
-		std::vector<byte> fileData(in.GetLen());
-		if (in.Read(fileData.data(), fileData.size())) {
-			return true;
-		}
-		int x, y, in_comp;
-		stbi_uc* data = stbi_load_from_memory(fileData.data(), (int)fileData.size(), &x, &y, &in_comp, 4);
-		if (!data || in_comp != 4) {
-			stbi_image_free(data);
-			return true;
-		}
-		dword width = x;
-		dword height = y;
-		if (sizeCallback)
-			(*sizeCallback)(width, height);
-
-		bool success = CopyRaw(IMGTYPE_RGBA, width, height, data);
+	int x, y, in_comp;
+	stbi_uc* data = stbi_load_from_memory((const stbi_uc*)fileData->data(), (int)fileData->size(), &x, &y, &in_comp, 4);
+	if (!data || in_comp != 4) {
 		stbi_image_free(data);
-
-		return !success;
+		return false;
 	}
+	dword width = x;
+	dword height = y;
+	if (sizeCallback)
+		(*sizeCallback)(width, height);
+
+	bool success = CopyRaw(IMGTYPE_RGBA, width, height, data);
+	stbi_image_free(data);
+
+	return success;
 }
 
 bool gif_c::Save(std::filesystem::path const& fileName)
 {
 	// HELL no.
-	return true;
+	return false;
 }
 
 // =========
@@ -476,43 +459,40 @@ std::optional<glm::ivec2> TryParseDDSSize(gsl::span<const char>& partialData)
 bool dds_c::Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback)
 {
 	// Open file
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true))
-		return true;
+	auto fileData = SlurpFile(fileName);
+	if (!fileData) {
+		return false;
+	}
 
-	std::vector<byte> fileData(in.GetLen());
-	if (in.Read(fileData.data(), fileData.size()))
-		return true;
-
-	if (fileName.extension() == ".zst" || fileData.size() >= 4 && *(uint32_t*)fileData.data() == 0xFD2FB528) {
+	if (fileName.extension() == ".zst" || fileData->size() >= 4 && *(uint32_t*)fileData->data() == 0xFD2FB528) {
 		std::optional<DecompressZstandardChunkCallback> chunkCallback;
 		if (sizeCallback) {
-			chunkCallback = [&](gsl::span<const char> prefix) -> bool {
+			chunkCallback = [&](gsl::span<const char> prefix) -> ChunkCallbackResult {
 				if (auto size = TryParseDDSSize(prefix)) {
 					(*sizeCallback)(size->x, size->y);
 					sizeCallback.reset();
-					return true;
+					return ChunkCallbackResult::RemoveCallback;
 				}
-				return false;
+				return ChunkCallbackResult::ContinueDecoding;
 			};
 		}
-		auto ret = DecompressZstandard(as_bytes(gsl::span(fileData)), chunkCallback);
+		auto ret = DecompressZstandard(as_bytes(gsl::span(*fileData)), chunkCallback);
 		if (!ret.has_value())
-			return true;
-		fileData.assign(ret->data(), ret->data() + ret->size());
+			return false;
+		fileData->assign(ret->data(), ret->data() + ret->size());
 	}
 
-	tex = gli::texture2d_array(gli::load_dds((const char*)fileData.data(), fileData.size()));
+	tex = gli::texture2d_array(gli::load_dds((const char*)fileData->data(), fileData->size()));
 	if (sizeCallback)
 		(*sizeCallback)(tex.extent().x, tex.extent().y);
 
-	return false;
+	return true;
 }
 
 bool dds_c::Save(std::filesystem::path const& fileName)
 {
 	// Nope.
-	return true;
+	return false;
 }
 
 // =========
@@ -522,32 +502,29 @@ bool dds_c::Save(std::filesystem::path const& fileName)
 bool webp_c::Load(std::filesystem::path const& fileName, std::optional<size_callback_t> sizeCallback)
 {
 	// Open file
-	fileInputStream_c in;
-	if (in.FileOpen(fileName, true))
-		return true;
-
-	std::vector<byte> fileData(in.GetLen());
-	if (in.Read(fileData.data(), fileData.size()))
-		return true;
+	const auto fileData = SlurpFile(fileName);
+	if (!fileData) {
+		return false;
+	}
 
 	int width;
 	int height;
 
-	bool valid = WebPGetInfo(fileData.data(), fileData.size(), &width, &height);
+	bool valid = WebPGetInfo((const uint8_t*)fileData->data(), fileData->size(), &width, &height);
 	if (!valid)
-		return true;
+		return false;
 
 	if (sizeCallback)
 		(*sizeCallback)(width, height);
-	auto data = WebPDecodeRGBA(fileData.data(), fileData.size(), &width, &height);
+	auto data = WebPDecodeRGBA((const uint8_t*)fileData->data(), fileData->size(), &width, &height);
 	bool success = CopyRaw(IMGTYPE_RGBA, width, height, data);
 	WebPFree(data);
 
-	return !success;
+	return success;
 }
 
 bool webp_c::Save(std::filesystem::path const& fileName)
 {
 	// Nope.
-	return true;
+	return false;
 }

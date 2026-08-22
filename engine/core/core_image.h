@@ -61,7 +61,7 @@ public:
 	void Free();
 
 	static image_c* LoaderForFile(IConsole* conHnd, char const* fileName) = delete;
-	static image_c* LoaderForFile(IConsole* conHnd, std::filesystem::path const& fileName);
+	static std::unique_ptr<image_c> LoaderForFile(IConsole* conHnd, std::filesystem::path const& fileName);
 
 private:
 	// Force compile error on narrow strings to favour `std::filesystem::path`.

@@ -36,8 +36,10 @@ std::optional<std::vector<char>> DecompressZstandard(gsl::span<const std::byte> 
 		dst.resize(newSize);
 		memcpy(dst.data() + oldSize, output.dst, output.pos);
 		if (chunkCallback) {
-			if ((*chunkCallback)(gsl::span(dst)))
+			if (const auto result = (*chunkCallback)(gsl::span(dst)); result == ChunkCallbackResult::RemoveCallback)
 				chunkCallback.reset();
+			else if (result == ChunkCallbackResult::AbortDecoding)
+				return {};
 		}
 	}
 

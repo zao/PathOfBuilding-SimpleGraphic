@@ -10,6 +10,9 @@
 #include "core_config.h"
 
 #include <fmt/core.h>
+#include <fmt/ostream.h>
+#include <fstream>
+#include <gsl/span>
 
 // =======================
 // core_IConfig Interface
@@ -39,7 +42,7 @@ public:
 
 	conVar_c* con_log;
 	bool	logOpen;
-	fileOutputStream_c logFile;
+	std::ofstream logFile;
 
 	void	ConPrintHook(const char* text);
 };
@@ -161,39 +164,35 @@ bool core_config_c::LoadConfig(std::filesystem::path const& cfgName)
 	sys->con->Print(fmt::format("Executing {}\n", fileName.generic_u8string()).c_str());
 
 	// Read the config file
-	fileInputStream_c f;
-	if (f.FileOpen(fileName, true)) {
+	std::ifstream f(fileName, std::ios::binary);
+	if (!f) {
 		sys->con->Warning("config file not found");
-		return true;
+		return false;
 	}
-	size_t flen = f.GetLen();
-	char* cfg = new char[flen+2];
-	f.Read(cfg, flen);
-	cfg[flen] = '\n';
-	cfg[flen+1] = 0;
-	f.FileClose();
+	auto cfg = SlurpFile(fileName, 1).value();
+	cfg.back() = '\n';
 
 	// Parse the config text
-	char* line = cfg;
-	for (char* i = cfg; *i; i++) {
-		if (*i == '\r' || *i == '\n') {
-			// Remove comments and null terminate
-			*i = 0;
-			char *comm = strstr(line, "//");
-			if (comm) {
-				*comm = 0;
-			}
 
-			// Execute if there's anything left
-			if (*line) {
-				sys->con->Execute(line);
-			}
-			line = i + 1;
+	gsl::span<const char> rest(cfg);
+	while (rest.size()) {
+		// Find end of line
+		const auto n = std::find_if(rest.begin(), rest.end(), [](char ch) { return ch == '\r' || ch == '\n'; }) - rest.begin();
+		auto line = rest.subspan(0, n);
+		rest = rest.subspan(n + 1);
+
+		// Remove line comments
+		if (auto it = std::adjacent_find(line.begin(), line.end(), [](char a, char b) { return a == '/' && b == '/'; }); it != line.end()) {
+			line = line.subspan(0, it - line.begin());
+		}
+
+		// Execute if there's anything left
+		if (line.size()) {
+			sys->con->Execute(std::string_view(line.data(), line.size()));
 		}
 	}
 
-	delete[] cfg;
-	return false;
+	return true;
 }
 
 bool core_config_c::SaveConfig(std::filesystem::path const& cfgName)
@@ -205,22 +204,21 @@ bool core_config_c::SaveConfig(std::filesystem::path const& cfgName)
 	sys->con->Print(fmt::format("Saving {}\n", fileName.generic_u8string()).c_str());
 
 	// Open the config file
-	fileOutputStream_c f;
-	if (f.FileOpen(fileName, false)) {
+	std::ofstream f(fileName);
+	if (!f) {
 		sys->con->Warning("couldnt write config file");
-		return true;
+		return false;
 	}
 
 	// Write archived cvars
 	int index = -1;
 	while (conVar_c* cv = sys->con->EnumCvar(&index)) {
 		if (cv->flags & CV_ARCHIVE) {
-			f.FilePrintf("set %s \"%s\"\n", cv->name.c_str(), cv->strVal.c_str());
+			fmt::println(f, "set {} \"{}\"", cv->name, cv->strVal);
 		}
 	}
 
-	f.FileClose();
-	return false;
+	return true;
 }
 
 // ===============
@@ -231,15 +229,15 @@ void core_config_c::ConPrintHook(const char* text)
 {
 	if (con_log->intVal) {
 		if (logOpen == false) {
-			logFile.FileOpen(std::filesystem::u8path(CFG_LOGFILE), false);
+			logFile.open(std::filesystem::u8path(CFG_LOGFILE));
 			logOpen = true;
-			logFile.FilePrintf("Log opened.\n");
+			fmt::println(logFile, "Log opened.");
 		}
-		logFile.Write(text, strlen(text));
-		logFile.FileFlush();
+		logFile.write(text, strlen(text));
+		logFile.flush();
 	} else {
 		if (logOpen) {
-			logFile.FileClose();
+			logFile.close();
 			logOpen = false;
 		}
 	}

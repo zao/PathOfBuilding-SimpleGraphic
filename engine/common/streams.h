@@ -5,123 +5,55 @@
 //
 
 #include <filesystem>
-#include <string>
-#include <string_view>
+#include <fstream>
+#include <optional>
+#include <vector>
 
-// ==========
-// Base Class
-// ==========
+inline std::optional<std::vector<char>> SlurpFile(std::ifstream& is, size_t endPadBytes = 0)
+{
+	if (!is)
+		return std::nullopt;
 
-class ioStream_c {
-public:
-	virtual size_t GetLen() = 0;
-	virtual size_t GetPos() = 0;
-	virtual bool Seek(size_t pos, int mode) = 0;
-	virtual bool Read(void* out, size_t len)
-	{
-		return true;
-	}
-	template <class T>
-	bool TRead(T &out)
-	{
-		return Read(&out, sizeof(T));
-	}
-	virtual bool Write(const void* in, size_t len)
-	{
-		return true;
-	}
-	template <class T>
-	bool TWrite(T &in)
-	{
-		return Write(&in, sizeof(T));
-	}
-};
+	is.seekg(0, std::ios::end);
+	const auto endPos = is.tellg();
+	is.seekg(0, std::ios::beg);
+	std::vector<char> ret;
+	ret.resize((size_t)endPos + endPadBytes);
+	is.read(ret.data(), (size_t)endPos);
+	if (!is)
+		return std::nullopt;
+	return ret;
+}
 
-// =====================
-// Memory Buffer Streams
-// =====================
+inline std::optional<std::vector<char>> SlurpFile(const std::filesystem::path& path, size_t endPadBytes = 0)
+{
+	std::ifstream is(path, std::ios::binary);
+	return SlurpFile(is, endPadBytes);
+}
 
-class memInputStream_c: public ioStream_c {
-public:
-	memInputStream_c();
-	memInputStream_c(ioStream_c* in);
-	memInputStream_c(byte* useMem, size_t useMemSize);
-	~memInputStream_c();
-	size_t GetLen();
-	size_t GetPos();
-	bool Seek(size_t pos, int mode);
-	bool Read(void* out, size_t len);
-	bool MemInput(ioStream_c* in);
-	void MemCopy(byte* in, size_t len);
-	void MemUse(byte* in, size_t len);
-	void MemFree();
-private:
-	byte* mem;
-	size_t memLen;
-	size_t memPos;
-};
+inline size_t GetStreamSize(std::ifstream& s)
+{
+	const auto prevPos = s.tellg();
+	s.seekg(0, std::ios::end);
+	const auto endPos = s.tellg();
+	s.seekg(prevPos);
+	return endPos;
+}
 
-class memOutputStream_c: public ioStream_c {
-public:
-	memOutputStream_c(size_t initSize = 16);
-	~memOutputStream_c();
-	size_t GetLen();
-	size_t GetPos();
-	bool Seek(size_t pos, int mode);
-	bool Write(const void* in, size_t len);
-	byte* MemGet();
-	bool MemOutput(ioStream_c* out);
-	void MemReset();
-private:
-	byte* mem;
-	size_t memLen;
-	size_t memPos;
-	size_t memSize;
-};
+template <typename T, size_t N>
+std::ifstream& ReadTrivialArray(std::ifstream& is, T(&out)[N])
+{
+	static_assert(std::is_trivially_copy_assignable_v<T>);
+	constexpr auto N = sizeof(T);
+	is.read(reinterpret_cast<char*>(&out), N);
+	return is;
+}
 
-// ==================
-// Stdio File Streams
-// ==================
-
-class fileStreamBase_c: public ioStream_c {
-public:
-	fileStreamBase_c();
-	~fileStreamBase_c();
-	size_t GetLen();
-	size_t GetPos();
-	bool Seek(size_t pos, int mode);
-	void FileClose();
-protected:
-	FILE* file;
-};
-
-class fileInputStream_c: public fileStreamBase_c {
-public:
-	bool Read(void* out, size_t len);
-
-	// Force compile error on narrow strings to favour `std::filesystem::path`.
-	// These are unfortunately necessary as the path constructor is eager to
-	// interpret narrow strings as the ACP codepage. Prefer using
-	// `std::filesystem::u8path` (C++17) or `std::u8string` (since C++20) in
-	// the calls to these functions.
-	bool FileOpen(char const*, bool) = delete;
-	bool FileOpen(std::string const&, bool) = delete;
-	bool FileOpen(std::string_view*, bool) = delete;
-
-	bool FileOpen(std::filesystem::path const& fileName, bool binary);
-};
-
-class fileOutputStream_c: public fileStreamBase_c {
-public:
-	bool Write(const void* in, size_t len);
-
-	// Force compile error like in `fileInputStream_c` on non-path types.
-	bool FileOpen(char const*, bool) = delete;
-	bool FileOpen(std::string const&, bool) = delete;
-	bool FileOpen(std::string_view*, bool) = delete;
-
-	bool FileOpen(std::filesystem::path const& fileName, bool binary);
-	void FilePrintf(const char* fmt, ...);
-	void FileFlush();
-};
-
+template <typename T>
+std::ifstream& ReadTrivial(std::ifstream& is, T& out)
+{
+	static_assert(std::is_trivially_copy_assignable_v<T>);
+	constexpr auto N = sizeof(T);
+	is.read(reinterpret_cast<char*>(&out), N);
+	return is;
+}

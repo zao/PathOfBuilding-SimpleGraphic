@@ -304,11 +304,11 @@ SG_LUA_CPP_FUN_BEGIN(NewArtHandle)
 	std::filesystem::path filePath = std::filesystem::u8path(reader.ArgToString(1));
 	if (filePath.is_relative())
 		filePath = ui->scriptWorkDir / filePath;
-	std::unique_ptr<image_c> img(image_c::LoaderForFile(ui->sys->con, filePath));
+	auto img = image_c::LoaderForFile(ui->sys->con, filePath);
 	if (!img)
 		return 0;
 
-	if (img->Load(filePath))
+	if (!img->Load(filePath))
 		return 0;
 
 	const auto format = img->tex.format();

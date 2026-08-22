@@ -131,7 +131,7 @@ public:
 	const char*	EnumLines(int* index);
 	char*	BuildBuffer();
 
-	void	Execute(const char* cmd);
+	void	Execute(std::string_view cmd);
 	void	Executef(const char* fmt, ...);
 	void	ExecCommands(bool deferUnknown);
 
@@ -637,7 +637,7 @@ conVar_c* console_c::EnumCvar(int* index)
 // String Executor
 // ===============
 
-void console_c::Execute(const char* cmd)
+void console_c::Execute(std::string_view cmd)
 {
 	std::string_view newCmd = cmd;
 	std::string_view sep = ";\n";

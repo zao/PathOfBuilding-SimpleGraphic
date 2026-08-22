@@ -51,7 +51,6 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/common/keylist.h"
     "engine/common/memtrak3.cpp"
     "engine/common/memtrak3.h"
-    "engine/common/streams.cpp"
     "engine/common/streams.h"
     "engine/core/core_compress.cpp"
     "engine/core/core_compress.h"

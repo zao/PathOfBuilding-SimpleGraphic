@@ -127,7 +127,7 @@ public:
 	virtual	const char*	EnumLines(int* index) = 0;		// Retrieve lines of console text
 	virtual char*	BuildBuffer() = 0;					// Retrieve entire console buffer text
 
-	virtual void	Execute(const char* cmd) = 0;		// Execute string
+	virtual void	Execute(std::string_view cmd) = 0;	// Execute string
 	virtual void	Executef(const char* fmt, ...) = 0;	// Execute formatted string
 	virtual void	ExecCommands(bool deferUnknown = false) = 0; // Flush command buffer
 

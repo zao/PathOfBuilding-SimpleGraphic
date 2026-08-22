@@ -10,5 +10,11 @@
 
 std::optional<std::vector<char>> CompressZstandard(gsl::span<const std::byte> src, std::optional<int> level = {});
 
-using DecompressZstandardChunkCallback = std::function<bool(gsl::span<const char>)>;
+enum class ChunkCallbackResult
+{
+	ContinueDecoding,
+	AbortDecoding,
+	RemoveCallback,
+};
+using DecompressZstandardChunkCallback = std::function<ChunkCallbackResult(gsl::span<const char>)>;
 std::optional<std::vector<char>> DecompressZstandard(gsl::span<const std::byte> src, std::optional<DecompressZstandardChunkCallback> chunkCallback = {});
