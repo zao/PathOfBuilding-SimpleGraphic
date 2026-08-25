@@ -91,8 +91,8 @@ InterfacePtr<r_ITexManager> r_ITexManager::GetHandle(r_renderer_c* renderer)
 t_manager_c::t_manager_c(r_renderer_c* renderer)
 	: thread_c(renderer->sys), renderer(renderer)
 {
-	whiteTex = r_tex_c::CreateFromPath(this, "@white", 0);
-	blackTex = r_tex_c::CreateFromPath(this, "@black", 0);
+	whiteTex = r_tex_c::CreateFromPath(this, u8"@white", 0);
+	blackTex = r_tex_c::CreateFromPath(this, u8"@black", 0);
 
 	doRun = true;
 	runnersRunning = 0;
@@ -299,7 +299,7 @@ static void T_ResampleImage(byte* in, dword in_w, dword in_h, int in_comp, byte*
 // OpenGL Texture Class
 // ====================
 
-r_tex_c::r_tex_c(CreateToken, BorrowedInterfacePtr<r_ITexManager> manager, std::string_view fileName, int flags)
+r_tex_c::r_tex_c(CreateToken, BorrowedInterfacePtr<r_ITexManager> manager, std::u8string_view fileName, int flags)
 {
 	Init(manager, fileName, flags);
 }
@@ -333,7 +333,7 @@ void r_tex_c::Kick()
 	}
 }
 
-void r_tex_c::Init(BorrowedInterfacePtr<r_ITexManager> i_manager, std::string_view i_fileName, int i_flags)
+void r_tex_c::Init(BorrowedInterfacePtr<r_ITexManager> i_manager, std::u8string_view i_fileName, int i_flags)
 {
 	manager = (t_manager_c*)i_manager;
 	renderer = manager->renderer;
@@ -348,7 +348,7 @@ void r_tex_c::Init(BorrowedInterfacePtr<r_ITexManager> i_manager, std::string_vi
 
 }
 
-std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(BorrowedInterfacePtr<r_ITexManager> manager, std::string_view fileName, int flags)
+std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(BorrowedInterfacePtr<r_ITexManager> manager, std::u8string_view fileName, int flags)
 {
 	auto ptr = std::make_shared<r_tex_c>(CreateToken{}, manager, fileName, flags);
 	ptr->Kick();
@@ -559,7 +559,7 @@ static gli::texture2d_array TranscodeTexture(gli::texture2d_array src, gli::form
 
 struct BuiltinImageSpec
 {
-	const std::string_view name;
+	const std::u8string_view name;
 	const imageType_s imageType;
 	const byte* imageData;
 	const int width;
@@ -567,9 +567,9 @@ struct BuiltinImageSpec
 };
 
 static const std::array builtinImages{
-	BuiltinImageSpec{ "@default", IMGTYPE_GRAY, t_defaultTexture, 8, 8},
-	BuiltinImageSpec{ "@white", IMGTYPE_GRAY, t_whiteImage, 8, 8},
-	BuiltinImageSpec{ "@black", IMGTYPE_RGBA, t_blackImage, 8, 8},
+	BuiltinImageSpec{ u8"@default", IMGTYPE_GRAY, t_defaultTexture, 8, 8},
+	BuiltinImageSpec{ u8"@white", IMGTYPE_GRAY, t_whiteImage, 8, 8},
+	BuiltinImageSpec{ u8"@black", IMGTYPE_RGBA, t_blackImage, 8, 8},
 };
 
 void r_tex_c::LoadFile()
@@ -592,7 +592,7 @@ void r_tex_c::LoadFile()
 	if (!img) {
 		if (fileName.size() && fileName[0] == '@') {
 			// Upload a (typically) 8x8 builtin image
-			auto it = std::find_if(builtinImages.begin(), builtinImages.end(), [name = std::string_view(fileName)](const BuiltinImageSpec& spec) {
+			auto it = std::find_if(builtinImages.begin(), builtinImages.end(), [name = std::u8string_view(fileName)](const BuiltinImageSpec& spec) {
 				return spec.name == name;
 			});
 			if (it == builtinImages.end())

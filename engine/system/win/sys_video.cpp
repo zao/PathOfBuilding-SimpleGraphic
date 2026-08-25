@@ -37,8 +37,8 @@ public:
 	void	GetMinSize(int& width, int& height);
 	void	SetVisible(bool vis);
 	bool	IsVisible();
-	void	SetTitle(const char* title);
-	void* GetWindowHandle();
+	void	SetTitle(std::u8string_view title);
+	void*	GetWindowHandle();
 	void	GetRelativeCursor(int& x, int& y);
 	void	SetRelativeCursor(int x, int y);
 	bool	IsCursorOverWindow();
@@ -69,7 +69,7 @@ public:
 	sys_vidSet_s cur;			// Current settings
 	int		scrSize[2] = {};	// Screen size
 	int		minSize[2] = {};	// Minimum window size
-	char	curTitle[512] = {};	// Window title
+	std::u8string curTitle;		// Window title
 
 	bool cursorInWindow = false;
 
@@ -99,7 +99,7 @@ sys_video_c::sys_video_c(sys_IMain* sysHnd)
 
 	minSize[0] = minSize[1] = 0;
 
-	strcpy(curTitle, CFG_TITLE);
+	curTitle = CFG_TITLE;
 
 	int platformType = GLFW_ANGLE_PLATFORM_TYPE_NONE;
 #ifdef _WIN32
@@ -313,6 +313,7 @@ bool ShouldIgnoreDpiScale() {
 	struct ScopedRegKey {
 		HKEY key{};
 
+		ScopedRegKey() = default;
 		ScopedRegKey& operator = (ScopedRegKey const&) = delete;
 		ScopedRegKey(ScopedRegKey const&) = delete;
 		~ScopedRegKey() {
@@ -457,11 +458,11 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		glfwWindowHint(GLFW_DEPTH_BITS, 24);
 		//glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
 
-		wnd = glfwCreateWindow(cur.mode[0], cur.mode[1], curTitle, nullptr, nullptr);
+		wnd = glfwCreateWindow(cur.mode[0], cur.mode[1], (const char*)curTitle.c_str(), nullptr, nullptr);
 		if (!wnd) {
 			char const* errDesc = "Unknown error";
 			glfwGetError(&errDesc);
-			sys->con->Print(fmt::format("Could not create window, {}\n", errDesc));
+			sys->con->Print(fmt::format(u8"Could not create window, {}\n", (const char8_t*)errDesc));
 		}
 
 		glfwMakeContextCurrent(wnd);
@@ -714,11 +715,11 @@ bool sys_video_c::IsVisible()
 	return !!glfwGetWindowAttrib(wnd, GLFW_VISIBLE);
 }
 
-void sys_video_c::SetTitle(const char* title)
+void sys_video_c::SetTitle(std::u8string_view title)
 {
-	strcpy(curTitle, (title && *title) ? title : CFG_TITLE);
+	curTitle = !title.empty() ? title : std::u8string_view(CFG_TITLE);
 	if (initialised) {
-		glfwSetWindowTitle(wnd, curTitle);
+		glfwSetWindowTitle(wnd, (const char*)curTitle.c_str());
 	}
 }
 

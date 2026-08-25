@@ -21,7 +21,7 @@ enum conBufScroll_e {
 // Console print hook base
 class conPrintHook_c {
 public:
-	virtual void ConPrintHook(std::string_view text) = 0;
+	virtual void ConPrintHook(std::u8string_view text) = 0;
 	virtual void ConPrintClear() { }
 protected:
 	conPrintHook_c(class IConsole* conHnd);
@@ -43,15 +43,15 @@ enum conVarFlags_e {
 // Cvar
 class conVar_c {
 public:
-	std::string	name;			// Cvar name
+	std::u8string	name;			// Cvar name
 	int		flags = 0;			// Flags
 	bool	mod = false;		// Modified?
 
 	int		intVal = 0;			// Integer value
 	float	floatVal = 0.f;		// Float value
-	std::string strVal;			// String value
+	std::u8string strVal;			// String value
 
-	std::string	defVal;			// Default string
+	std::u8string	defVal;			// Default string
 	int		min = 0, max = 0;	// Clamp limits
 
 	conVar_c(IConsole* conHnd);
@@ -59,7 +59,7 @@ public:
 
 	void	Set(int val);
 	void	Set(float val);
-	void	Set(char const* val);
+	void	Set(char8_t const* val);
 	void	Toggle();
 	bool	GetMod();	// Return and clear modified flag
 	void	Reset();
@@ -75,7 +75,7 @@ protected:
 	void	ClearConInput();
 	void	RefreshConInput();
 	void	ConInputKeyEvent(int key, int type);
-	virtual void SetConInput(char* text, int caret) = 0;
+	virtual void SetConInput(char8_t* text, int caret) = 0;
 private:
 	class console_c* _con;
 };
@@ -90,20 +90,20 @@ protected:
 	conCmdHandler_c(class IConsole* conHnd);
 	~conCmdHandler_c();
 	template <class T>
-	void	Cmd_Add(const char* name, int minArgs, const char* usage, T* objPtr, void (T::*method)(class IConsole*,args_c&))
+	void	Cmd_Add(const char8_t* name, int minArgs, const char8_t* usage, T* objPtr, void (T::*method)(class IConsole*,args_c&))
 	{
 		Cmd_PrivAdd(name, minArgs, usage, objPtr, (conCmdMethod_t)method);
 	}
 private:
 	class console_c* _con;
-	void	Cmd_PrivAdd(const char* name, int minArgs, const char* usage, conCmdHandler_c* obj, conCmdMethod_t method);
+	void	Cmd_PrivAdd(const char8_t* name, int minArgs, const char8_t* usage, conCmdHandler_c* obj, conCmdMethod_t method);
 };
 
 // Command class
 struct conCmd_c {
-	std::string	name;	// Command name
+	std::u8string	name;	// Command name
 	int			minArgs;// Required number of arguments
-	std::string	usage;	// Usage string
+	std::u8string	usage;	// Usage string
 	conCmdHandler_c* obj;  // Handler
 	conCmdMethod_t method;	// Method
 };
@@ -118,19 +118,19 @@ public:
 	static InterfacePtr<IConsole> GetHandle();
 	virtual ~IConsole() = default;
 
-	virtual	void	Print(std::string_view text) = 0;		// Print
-	virtual void	PrintFunc(std::string_view func) = 0;	// Function title print
-	virtual void	Warning(std::string_view text) = 0;	// Formatted warning print
+	virtual	void	Print(std::u8string_view text) = 0;		// Print
+	virtual void	PrintFunc(std::u8string_view func) = 0;	// Function title print
+	virtual void	Warning(std::u8string_view text) = 0;	// Formatted warning print
 	virtual	void	Clear() = 0;						// Clear the console
 	virtual	void	Scroll(int mode) = 0;				// Scroll the console
-	virtual	std::optional<std::string_view> EnumLines(int* index) = 0;		// Retrieve lines of console text
-	virtual std::string BuildBuffer() = 0;					// Retrieve entire console buffer text
+	virtual	std::optional<std::u8string_view> EnumLines(int* index) = 0;		// Retrieve lines of console text
+	virtual std::u8string BuildBuffer() = 0;					// Retrieve entire console buffer text
 
-	virtual void	Execute(std::string_view cmd) = 0;	// Execute string
+	virtual void	Execute(std::u8string_view cmd) = 0;	// Execute string
 	virtual void	ExecCommands(bool deferUnknown = false) = 0; // Flush command buffer
 
-	virtual conVar_c* Cvar_Add(std::string_view name, int flags, std::string_view def, int minVal = 0, int maxVal = 0) = 0; // Add a variable
-	virtual conVar_c* Cvar_Ptr(std::string_view name) = 0;	// Get pointer to an existing variable
+	virtual conVar_c* Cvar_Add(std::u8string_view name, int flags, std::u8string_view def, int minVal = 0, int maxVal = 0) = 0; // Add a variable
+	virtual conVar_c* Cvar_Ptr(std::u8string_view name) = 0;	// Get pointer to an existing variable
 
 	virtual conCmd_c* EnumCmd(int* index) = 0;			// Retrieve commands
 	virtual conVar_c* EnumCvar(int* index) = 0;			// Retrieve variables

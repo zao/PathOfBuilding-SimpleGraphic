@@ -136,7 +136,7 @@ static int traceback (lua_State *L) {
 static int l_panicFunc(lua_State* L)
 {
 	ui_subscript_c* ss = GetSSPtr(L);
-	ss->ui->sys->Error("Unprotected Lua error:\n%s", lua_tostring(L, -1));
+	ss->ui->sys->Error(u8"Unprotected Lua error:\n%s", lua_tostring(L, -1));
 	return 0;
 }
 

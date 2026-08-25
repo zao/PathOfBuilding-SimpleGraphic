@@ -44,9 +44,9 @@ public:
 	} mode;
 	int		moveStart = 0;
 
-	char	input[1024] = {};
+	char8_t	input[1024] = {};
 	int		caret = 0;
-	void	SetConInput(char* newInput, int newCaret);
+	void	SetConInput(char8_t* newInput, int newCaret);
 };
 
 InterfacePtr<ui_IConsole> ui_IConsole::GetHandle(ui_main_c* ui)
@@ -57,7 +57,7 @@ InterfacePtr<ui_IConsole> ui_IConsole::GetHandle(ui_main_c* ui)
 ui_console_c::ui_console_c(ui_main_c* ui)
 	: conInputHandler_c(ui->sys->con.get()), ui(ui), sys(ui->sys), renderer(ui->renderer.get())
 {
-	con_fontSize = sys->con->Cvar_Add("con_fontSize", CV_ARCHIVE|CV_CLAMP, "14", 12, 32);
+	con_fontSize = sys->con->Cvar_Add(u8"con_fontSize", CV_ARCHIVE|CV_CLAMP, u8"14", 12, 32);
 
 	mode = MODE_UP;
 	RefreshConInput();
@@ -157,7 +157,7 @@ void ui_console_c::Render()
 
 	// Draw info strings
 	liney = basey;
-	renderer->DrawString(0, liney, F_RIGHT, fontSize, colorGreen, F_FIXED, CFG_VERSION);
+	renderer->DrawString(0, liney, F_RIGHT, fontSize, colorGreen, F_FIXED, AsStringView(CFG_VERSION));
 	liney-= fontSize;
 	int memTotal = lua_gc(ui->L, LUA_GCCOUNT, 0);
 	for (const auto& [id, subscript] : ui->subScripts) {
@@ -176,9 +176,9 @@ void ui_console_c::Render()
 	// Draw the text lines
 	liney = basey - fontSize;
 	int index = -1;
-	std::optional<std::string_view> l;
+	std::optional<std::u8string_view> l;
 	while (liney >= 0 && (l = sys->con->EnumLines(&index))) {
-		renderer->DrawString(0, liney, F_LEFT, fontSize, colorWhite, F_FIXED, *l);
+		renderer->DrawString(0, liney, F_LEFT, fontSize, colorWhite, F_FIXED, AsStringView(*l));
 		liney-= fontSize;
 	}
 
@@ -192,18 +192,18 @@ void ui_console_c::Render()
 			++caretPad;
 		}
 	}
-	std::string caretStr(caretPad, ' ');
-	caretStr += "_";
+	std::u8string caretStr(caretPad, ' ');
+	caretStr += u8"_";
 
 	// Draw prompt, input text, and caret
 	renderer->DrawString(0, basey, F_LEFT, fontSize, colorWhite, F_FIXED, "]");
 	renderer->DrawStringFormat(fontSize * 0.66f, basey, F_LEFT, fontSize, colorWhite, F_FIXED, "%s", input);
-	renderer->DrawString(fontSize * 0.66f, basey, F_LEFT, fontSize, colorWhite, F_FIXED, caretStr.c_str());
+	renderer->DrawString(fontSize * 0.66f, basey, F_LEFT, fontSize, colorWhite, F_FIXED, (const char*)caretStr.c_str());
 }
 
-void ui_console_c::SetConInput(char* newInput, int newCaret)
+void ui_console_c::SetConInput(char8_t* newInput, int newCaret)
 {
-	std::string_view nextInput = newInput;
+	std::u8string_view nextInput = newInput;
 	if (nextInput.size() >= 1024) {
 		nextInput = nextInput.substr(0, 1023);
 	}

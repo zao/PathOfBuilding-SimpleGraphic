@@ -26,7 +26,7 @@ public:
 	void	SetVisible(bool show);
 	bool	IsVisible();
 	void	SetForeground();
-	void	SetTitle(const char* title);
+	void	SetTitle(const char8_t* title);
 
 	// Encapsulated
 	sys_console_c(sys_IMain* sysHnd);
@@ -52,7 +52,7 @@ public:
 	void	Print(std::u32string_view text);
 	void	CopyToClipboard();
 
-	void	ConPrintHook(std::string_view text);
+	void	ConPrintHook(std::u8string_view text);
 	void	ConPrintClear();
 };
 
@@ -229,7 +229,7 @@ void sys_console_c::SetVisible(bool show)
 			// Select all text and replace with full text
 			Edit_SetText(hwOut, L"");
 			const auto buffer = sys->con->BuildBuffer();
-			std::u32string u32_text = IndexUTF8ToUTF32(buffer).text;
+			std::u32string u32_text = IndexUTF8ToUTF32(AsStringView(buffer)).text;
 			Print(u32_text);
 	
 			RunMessages(hwMain);
@@ -254,9 +254,9 @@ bool sys_console_c::IsVisible()
 	return IsWindowVisible(hwMain);
 }
 
-void sys_console_c::SetTitle(const char* title)
+void sys_console_c::SetTitle(const char8_t* title)
 {
-	WCHAR* text = WidenUTF8String(title);
+	WCHAR* text = WidenUTF8String((const char*)title);
 	SetWindowText(hwMain, (text && *text)? text : CFG_SCON_TITLE);
 }
 
@@ -340,9 +340,9 @@ void sys_console_c::CopyToClipboard()
 	}
 }
 
-void sys_console_c::ConPrintHook(std::string_view text)
+void sys_console_c::ConPrintHook(std::u8string_view text)
 {
-	Print(IndexUTF8ToUTF32(text).text);
+	Print(IndexUTF8ToUTF32(AsStringView(text)).text);
 }
 
 void sys_console_c::ConPrintClear()

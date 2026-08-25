@@ -5,24 +5,25 @@
 //
 
 #include "common.h"
+#include <xxh3.h>
 
 // ===================
 // Argument List Class
 // ===================
 
-args_c::args_c(const char* in)
+args_c::args_c(const char8_t* in)
 {
 	argc = 0;
-	memset(argv, 0, sizeof(char*) * 256);
+	memset(argv, 0, sizeof(char8_t*) * 256);
 
-	argBuf = AllocString(in);
-	char* ptr = argBuf;
+	argBuf = (char8_t*)AllocString((const char*)in);
+	char8_t* ptr = argBuf;
 	while (*ptr) {
 		if (isspace(*ptr)) {
 			ptr++;
-		} else if (*ptr == '"') {
+		} else if (*ptr == u8'"') {
 			argv[argc++] = ++ptr;
-			while (*ptr && *ptr != '"') {
+			while (*ptr && *ptr != u8'"') {
 				ptr++;
 			}
 			if (*ptr) *(ptr++) = 0;
@@ -38,15 +39,15 @@ args_c::args_c(const char* in)
 
 args_c::~args_c()
 {
-	FreeString(argBuf);
+	FreeString((char*)argBuf);
 }
 
-const char* args_c::operator[](int i)
+const char8_t* args_c::operator[](int i)
 {
 	if (i >= 0 && i < argc) {
 		return argv[i];
 	} else {
-		return "";
+		return u8"";
 	}
 }
 
@@ -69,7 +70,7 @@ void textBuffer_c::Alloc(int sz)
 {
 	// Allocate, set length and position, and null-teriminate.
 	Free();
-	buf = new char[sz+1];
+	buf = new char8_t[sz+1];
 	caret = len = sz;
 	buf[len] = 0;
 }
@@ -83,11 +84,11 @@ void textBuffer_c::Init()
 void textBuffer_c::Free()
 {
 	// Delete buffer memory
-	delete buf;
+	delete[] buf;
 	buf = NULL;
 }
 
-textBuffer_c &textBuffer_c::operator=(std::string_view r)
+textBuffer_c &textBuffer_c::operator=(std::u8string_view r)
 {
 	// Reallocate buffer and copy the string
 	Alloc((int)r.size());
@@ -98,7 +99,7 @@ textBuffer_c &textBuffer_c::operator=(std::string_view r)
 void textBuffer_c::IncSize()
 {
 	len++;
-	char* tmp = new char[len+1];
+	char8_t* tmp = new char8_t[len+1];
 	memcpy(tmp, buf, len);
 	tmp[len] = 0;
 	delete buf;
@@ -108,7 +109,7 @@ void textBuffer_c::IncSize()
 void textBuffer_c::DecSize()
 {
 	len--;
-	char* tmp = new char[len+1];
+	char8_t* tmp = new char8_t[len+1];
 	memcpy(tmp, buf, len);
 	tmp[len] = 0;
 	delete buf;
@@ -198,15 +199,15 @@ static const float* colorEscape[10] = {
 	colorDarkGray	// ^9
 };
 
-int IsColorEscape(const char* str)
+int IsColorEscape(const char8_t* str)
 {
-	if (str[0] != '^') {
+	if (str[0] != u8'^') {
 		return 0;
 	}
 	if (isdigit(str[1])) {
 		return 2;
 	}
-	else if (str[1] == 'x' || str[1] == 'X') {
+	else if (str[1] == u8'x' || str[1] == u8'X') {
 		for (int c = 0; c < 6; c++) {
 			if (!isxdigit(str[c + 2])) {
 				return 0;
@@ -215,6 +216,11 @@ int IsColorEscape(const char* str)
 		return 8;
 	}
 	return 0;
+}
+
+int IsColorEscape(const char* str)
+{
+	return IsColorEscape((const char8_t*)str);
 }
 
 int IsColorEscape(std::u32string_view str)
@@ -332,24 +338,9 @@ void FreeString(const char* str)
 	if (str) delete[] str;
 }
 
-dword StringHash(const char* str, int mask)
+uint64_t StringHash(std::u8string_view str)
 {
-	size_t len = strlen(str);
-	dword hash = 0;
-	for (size_t i = 0; i < len; i++) {
-		hash+= (str[i] * 4999) ^ (((dword)i + 17) * 2003);
-	}
-	return hash & mask;
-}
-
-dword StringHash(std::string_view str, int mask)
-{
-	size_t len = str.length();
-	dword hash = 0;
-	for (size_t i = 0; i < len; i++) {
-		hash += (str[i] * 4999) ^ (((dword)i + 17) * 2003);
-	}
-	return hash & mask;
+	return XXH3_64bits(str.data(), str.size());
 }
 
 #ifdef _WIN32

@@ -44,7 +44,7 @@ public:
 	bool	logOpen;
 	std::ofstream logFile;
 
-	void	ConPrintHook(std::string_view text);
+	void	ConPrintHook(std::u8string_view text);
 };
 
 InterfacePtr<core_IConfig> core_IConfig::GetHandle(sys_IMain* sysHnd)
@@ -55,19 +55,19 @@ InterfacePtr<core_IConfig> core_IConfig::GetHandle(sys_IMain* sysHnd)
 core_config_c::core_config_c(sys_IMain* sysHnd)
 	: conPrintHook_c(sysHnd->con.get()), conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
-	Cmd_Add("set", 2, "<cvar_name> <cvar_value>", this, &core_config_c::C_Set);
-	Cmd_Add("seta", 2, "<cvar_name> <cvar_value>", this, &core_config_c::C_SetA);
-	Cmd_Add("toggle", 1, "<cvar_name>", this, &core_config_c::C_Toggle);
-	Cmd_Add("cmdList", 0, "", this, &core_config_c::C_CmdList);
-	Cmd_Add("cvarList", 0, "", this, &core_config_c::C_CvarList);
-	Cmd_Add("clear", 0, "", this, &core_config_c::C_Clear);
-	Cmd_Add("exec", 1, "<configname>", this, &core_config_c::C_Exec);
-	Cmd_Add("exit", 0, "", this, &core_config_c::C_Exit);
-	Cmd_Add("quit", 0, "", this, &core_config_c::C_Exit);
-	Cmd_Add("restart", 0, "", this, &core_config_c::C_Restart);
-	Cmd_Add("memreport", 0, "", this, &core_config_c::C_MemReport);
+	Cmd_Add(u8"set", 2, u8"<cvar_name> <cvar_value>", this, &core_config_c::C_Set);
+	Cmd_Add(u8"seta", 2, u8"<cvar_name> <cvar_value>", this, &core_config_c::C_SetA);
+	Cmd_Add(u8"toggle", 1, u8"<cvar_name>", this, &core_config_c::C_Toggle);
+	Cmd_Add(u8"cmdList", 0, u8"", this, &core_config_c::C_CmdList);
+	Cmd_Add(u8"cvarList", 0, u8"", this, &core_config_c::C_CvarList);
+	Cmd_Add(u8"clear", 0, u8"", this, &core_config_c::C_Clear);
+	Cmd_Add(u8"exec", 1, u8"<configname>", this, &core_config_c::C_Exec);
+	Cmd_Add(u8"exit", 0, u8"", this, &core_config_c::C_Exit);
+	Cmd_Add(u8"quit", 0, u8"", this, &core_config_c::C_Exit);
+	Cmd_Add(u8"restart", 0, u8"", this, &core_config_c::C_Restart);
+	Cmd_Add(u8"memreport", 0, u8"", this, &core_config_c::C_MemReport);
 
-	con_log = sys->con->Cvar_Add("con_log", CV_ARCHIVE, "0");
+	con_log = sys->con->Cvar_Add(u8"con_log", CV_ARCHIVE, u8"0");
 	logOpen = false;
 	InstallPrintHook();
 }
@@ -78,13 +78,13 @@ core_config_c::core_config_c(sys_IMain* sysHnd)
 
 void core_config_c::C_Set(IConsole* conHnd, args_c &args)
 {
-	conVar_c* cv = conHnd->Cvar_Add(args[1], CV_SET, "");
+	conVar_c* cv = conHnd->Cvar_Add(args[1], CV_SET, u8"");
 	cv->Set(args[2]);
 }
 
 void core_config_c::C_SetA(IConsole* conHnd, args_c &args)
 {
-	conVar_c* cv = conHnd->Cvar_Add(args[1], CV_SET|CV_ARCHIVE, "");
+	conVar_c* cv = conHnd->Cvar_Add(args[1], CV_SET|CV_ARCHIVE, u8"");
 	cv->Set(args[2]);
 }
 
@@ -96,7 +96,7 @@ void core_config_c::C_Toggle(IConsole* conHnd, args_c &args)
 		cv->Toggle();
 	} else {
 		// Oops.
-		conHnd->Print(fmt::format("Cvar '{}' does not exist.\n", args[1]));
+		conHnd->Print(fmt::format(u8"Cvar '{}' does not exist.\n", args[1]));
 	}
 }
 
@@ -104,7 +104,7 @@ void core_config_c::C_CmdList(IConsole* conHnd, args_c &args)
 {
 	int index = -1;
 	while (conCmd_c* cmd = conHnd->EnumCmd(&index)) {
-		conHnd->Print(fmt::format(" {} {}\n", cmd->name, cmd->usage).c_str());
+		conHnd->Print(fmt::format(u8" {} {}\n", cmd->name, cmd->usage).c_str());
 	}
 }
 
@@ -112,7 +112,7 @@ void core_config_c::C_CvarList(IConsole* conHnd, args_c &args)
 {
 	int index = -1;
 	while (conVar_c* cv = conHnd->EnumCvar(&index)) {
-		conHnd->Print(fmt::format("{}{}{}  {} = \"{}\"\n", cv->flags & CV_ARCHIVE? 'A':' ', cv->flags & CV_READONLY? 'R':' ', cv->flags & CV_CLAMP? 'C':' ', cv->name, cv->strVal).c_str());
+		conHnd->Print(fmt::format(u8"{}{}{}  {} = \"{}\"\n", cv->flags & CV_ARCHIVE? 'A':' ', cv->flags & CV_READONLY? 'R':' ', cv->flags & CV_CLAMP? 'C':' ', cv->name, cv->strVal).c_str());
 	}
 }
 
@@ -140,9 +140,9 @@ void core_config_c::C_MemReport(IConsole* conHnd, args_c &args)
 {
 #ifdef _MEMTRAK_H
 	_memTrak_memReport("memreport.log");
-	conHnd->Print("Memory report saved to memreport.log\n");
+	conHnd->Print(u8"Memory report saved to memreport.log\n");
 #else
-	conHnd->Print("Memory report not available in Release builds.\n");
+	conHnd->Print(u8"Memory report not available in Release builds.\n");
 #endif
 }
 
@@ -156,12 +156,12 @@ bool core_config_c::LoadConfig(std::filesystem::path const& cfgName)
 	auto fileName = cfgName;
 	fileName.replace_extension(".cfg");
 
-	sys->con->Print(fmt::format("Executing {}\n", fileName.generic_u8string()).c_str());
+	sys->con->Print(fmt::format(u8"Executing {}\n", fileName.generic_u8string()));
 
 	// Read the config file
 	std::ifstream f(fileName, std::ios::binary);
 	if (!f) {
-		sys->con->Warning("config file not found");
+		sys->con->Warning(u8"config file not found");
 		return false;
 	}
 	auto cfg = SlurpFile(fileName, 1).value();
@@ -183,7 +183,7 @@ bool core_config_c::LoadConfig(std::filesystem::path const& cfgName)
 
 		// Execute if there's anything left
 		if (line.size()) {
-			sys->con->Execute(std::string_view(line.data(), line.size()));
+			sys->con->Execute(AsU8StringView(std::string_view(line.data(), line.size())));
 		}
 	}
 
@@ -196,12 +196,12 @@ bool core_config_c::SaveConfig(std::filesystem::path const& cfgName)
 	auto fileName = cfgName;
 	fileName.replace_extension(".cfg");
 
-	sys->con->Print(fmt::format("Saving {}\n", fileName.generic_u8string()).c_str());
+	sys->con->Print(fmt::format(u8"Saving {}\n", fileName.generic_u8string()));
 
 	// Open the config file
 	std::ofstream f(fileName);
 	if (!f) {
-		sys->con->Warning("couldnt write config file");
+		sys->con->Warning(u8"couldn't write config file");
 		return false;
 	}
 
@@ -209,7 +209,7 @@ bool core_config_c::SaveConfig(std::filesystem::path const& cfgName)
 	int index = -1;
 	while (conVar_c* cv = sys->con->EnumCvar(&index)) {
 		if (cv->flags & CV_ARCHIVE) {
-			fmt::println(f, "set {} \"{}\"", cv->name, cv->strVal);
+			fmt::println(f, "set {} \"{}\"", AsStringView(cv->name), AsStringView(cv->strVal));
 		}
 	}
 
@@ -220,7 +220,7 @@ bool core_config_c::SaveConfig(std::filesystem::path const& cfgName)
 // Console Logging
 // ===============
 
-void core_config_c::ConPrintHook(std::string_view text)
+void core_config_c::ConPrintHook(std::u8string_view text)
 {
 	if (con_log->intVal) {
 		if (logOpen == false) {
@@ -228,7 +228,7 @@ void core_config_c::ConPrintHook(std::string_view text)
 			logOpen = true;
 			fmt::println(logFile, "Log opened.");
 		}
-		logFile.write(text.data(), text.size());
+		logFile.write((const char*)text.data(), text.size());
 		logFile.flush();
 	} else {
 		if (logOpen) {

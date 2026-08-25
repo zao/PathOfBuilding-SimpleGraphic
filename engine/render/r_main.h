@@ -75,7 +75,7 @@ public:
 	void	BeginFrame();
 	void	EndFrame();
 	
-	r_shaderHnd_c* RegisterShader(std::string_view shname, int flags);
+	r_shaderHnd_c* RegisterShader(std::u8string_view shname, int flags);
 	r_shaderHnd_c* RegisterShaderFromImage(std::unique_ptr<image_c> img, int flags);
 	void	GetShaderImageSize(r_shaderHnd_c* hnd, int &width, int &height);
 	void	SetShaderLoadingPriority(r_shaderHnd_c* hnd, int pri);
@@ -211,7 +211,7 @@ public:
 	bool	debugLayers = false;
 
 	int		takeScreenshot = 0;
-	void	DoScreenshot(image_c* i, int type, const char* ext);
+	void	DoScreenshot(image_c* i, int type, std::u8string_view ext);
 
 	void	C_Screenshot(IConsole* conHnd, args_c &args);
 

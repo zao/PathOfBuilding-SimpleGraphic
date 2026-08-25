@@ -23,7 +23,7 @@ class r_tex_c : public std::enable_shared_from_this<r_tex_c> {
 	void Kick();
 
 public:
-	r_tex_c(CreateToken, BorrowedInterfacePtr<class r_ITexManager> manager, std::string_view fileName, int flags);
+	r_tex_c(CreateToken, BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);
 	r_tex_c(CreateToken, BorrowedInterfacePtr<class r_ITexManager> manager, std::unique_ptr<image_c> img, int flags);
 	~r_tex_c();
 
@@ -43,14 +43,14 @@ public:
 	std::atomic<int> loadPri;
 	dword	texId;
 	int		flags;
-	std::string fileName;
+	std::u8string fileName;
 	std::atomic<dword> fileWidth;
 	std::atomic<dword> fileHeight;
 	std::unique_ptr<image_c> img;
 	GLenum target{};
 	size_t stackLayers = 1;
 
-	static std::shared_ptr<r_tex_c> CreateFromPath(BorrowedInterfacePtr<class r_ITexManager> manager, std::string_view fileName, int flags);
+	static std::shared_ptr<r_tex_c> CreateFromPath(BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);
 	static std::shared_ptr<r_tex_c> CreateFromImage(BorrowedInterfacePtr<class r_ITexManager> manager, std::unique_ptr<image_c> img, int flags);
 
 	void Bind();
@@ -70,7 +70,7 @@ public:
 private:
 	class t_manager_c* manager;
 	class r_renderer_c* renderer;
-	void	Init(BorrowedInterfacePtr<class r_ITexManager> manager, std::string_view fileName, int flags);
+	void	Init(BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);
 	void	Upload(image_c& img, int flags);
 	std::unique_ptr<image_c> BuildMipSet(std::unique_ptr<image_c> img);
 };

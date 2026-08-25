@@ -47,19 +47,19 @@ struct f_fontHeight_s {
 // Font Loader
 // ===========
 
-r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
+r_font_c::r_font_c(r_renderer_c* renderer, const char8_t* fontName)
 	: renderer(renderer)
 {
 	numFontHeight = 0;
 	fontHeightMap = NULL;
 
-	std::string fileNameBase = fmt::format(CFG_DATAPATH "Fonts/{}", fontName);
+	std::u8string fileNameBase = fmt::format(u8"{}Fonts/{}", CFG_DATAPATH, fontName);
 
 	// Open info file
-	std::string tgfName = fileNameBase + ".tgf";
+	std::filesystem::path tgfName = fileNameBase + u8".tgf";
 	std::ifstream tgf(tgfName);
 	if (!tgf) {
-		renderer->sys->con->Warning(fmt::format("font \"{}\" not found", fontName));
+		renderer->sys->con->Warning(fmt::format(u8"font \"{}\" not found", fontName));
 		return;
 	}
 
@@ -74,8 +74,8 @@ r_font_c::r_font_c(r_renderer_c* renderer, const char* fontName)
 			// New height
 			fh = new f_fontHeight_s;
 			fontHeights[numFontHeight++] = fh;
-			std::string tgaName = fmt::format("{}.{}.tga", fileNameBase, h);
-			fh->tex = r_tex_c::CreateFromPath(renderer->texMan.get(), tgaName.c_str(), TF_ASYNC | TF_NOMIPMAP);
+			std::u8string tgaName = fmt::format(u8"{}.{}.tga", fileNameBase, h);
+			fh->tex = r_tex_c::CreateFromPath(renderer->texMan.get(), tgaName, TF_ASYNC | TF_NOMIPMAP);
 			fh->tex->WaitOnStatusAtLeast(r_tex_c::SIZE_KNOWN);
 			fh->height = h;
 			if (h > maxHeight) {

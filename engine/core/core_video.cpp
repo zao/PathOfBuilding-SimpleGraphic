@@ -62,13 +62,13 @@ InterfacePtr<core_IVideo> core_IVideo::GetHandle(sys_IMain* sysHnd)
 core_video_c::core_video_c(sys_IMain* sysHnd)
 	: conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
-	vid_mode		= sys->con->Cvar_Add("vid_mode", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFMODE, -1, VID_NUMMODES-1);
-	vid_fullscreen	= sys->con->Cvar_Add("vid_fullscreen", CV_ARCHIVE, CFG_VID_DEFFULLSCREEN);
-	vid_resizable	= sys->con->Cvar_Add("vid_resizable", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFRESIZABLE, 0, 3);
-	vid_last		= sys->con->Cvar_Add("vid_last", CV_ARCHIVE, "");
+	vid_mode		= sys->con->Cvar_Add(u8"vid_mode", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFMODE, -1, VID_NUMMODES-1);
+	vid_fullscreen	= sys->con->Cvar_Add(u8"vid_fullscreen", CV_ARCHIVE, CFG_VID_DEFFULLSCREEN);
+	vid_resizable	= sys->con->Cvar_Add(u8"vid_resizable", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFRESIZABLE, 0, 3);
+	vid_last		= sys->con->Cvar_Add(u8"vid_last", CV_ARCHIVE, u8"");
 
-	Cmd_Add("vid_apply", 0, "", this, &core_video_c::C_Vid_Apply);
-	Cmd_Add("vid_modeList", 0, "", this, &core_video_c::C_Vid_ModeList);
+	Cmd_Add(u8"vid_apply", 0, u8"", this, &core_video_c::C_Vid_Apply);
+	Cmd_Add(u8"vid_modeList", 0, u8"", this, &core_video_c::C_Vid_ModeList);
 }
 
 // =============
@@ -86,7 +86,7 @@ void core_video_c::Apply(bool shown)
 		if (vid_resizable->intVal == 2) {
 			set.flags|= VID_MAXIMIZE;
 		} else if (vid_resizable->intVal == 3) {
-			if (sscanf(vid_last->strVal.c_str(), "%d,%d,%d,%d,%d", set.save.size + 0, set.save.size + 1, set.save.pos + 0, set.save.pos + 1, (int*)&set.save.maximised) == 5) {
+			if (sscanf((const char*)vid_last->strVal.c_str(), "%d,%d,%d,%d,%d", set.save.size + 0, set.save.size + 1, set.save.pos + 0, set.save.pos + 1, (int*)&set.save.maximised) == 5) {
 				// Clamp saved window size as it may be persisted as zero before.
 				set.save.size[0] = (std::max)(CFG_VID_MINWIDTH, set.save.size[0]);
 				set.save.size[1] = (std::max)(CFG_VID_MINHEIGHT, set.save.size[1]);
@@ -114,7 +114,7 @@ void core_video_c::Save()
 	if (vid_resizable->intVal == 3) {
 		char spec[64];
 		sprintf(spec, "%d,%d,%d,%d,%d", sys->video->vid.size[0], sys->video->vid.size[1], sys->video->vid.pos[0], sys->video->vid.pos[1], sys->video->vid.maximised);
-		vid_last->Set(spec);
+		vid_last->Set((const char8_t*)spec);
 	}
 }
 
@@ -125,8 +125,8 @@ void core_video_c::C_Vid_Apply(IConsole* conHnd, args_c &args)
 
 void core_video_c::C_Vid_ModeList(IConsole* conHnd, args_c &args)
 {
-	sys->con->Print("Mode -1: Use desktop resolution\n");
+	sys->con->Print(u8"Mode -1: Use desktop resolution\n");
 	for (int m = 0; m < VID_NUMMODES; m++) {
-		sys->con->Print(fmt::format("Mode {}: {}x{}\n", m, vid_modeList[m][0], vid_modeList[m][1]));
+		sys->con->Print(fmt::format(u8"Mode {}: {}x{}\n", m, vid_modeList[m][0], vid_modeList[m][1]));
 	}
 }

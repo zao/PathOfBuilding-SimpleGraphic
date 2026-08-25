@@ -1406,7 +1406,7 @@ static int l_searchHandleGetFileName(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
 	searchHandle_s* searchHandle = GetSearchHandle(L, ui, "GetFileName", true);
-	lua_pushstring(L, searchHandle->find->fileName.generic_u8string().c_str());
+	lua_pushstring(L, (const char*)searchHandle->find->fileName.generic_u8string().c_str());
 	return 1;
 }
 
@@ -1527,8 +1527,8 @@ static int l_SetWindowTitle(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: SetWindowTitle(title)");
 	ui->LAssert(L, lua_isstring(L, 1), "SetWindowTitle() argument 1: expected string, got %s", luaL_typename(L, 1));
-	ui->sys->video->SetTitle(lua_tostring(L, 1));
-	ui->sys->conWin->SetTitle(lua_tostring(L, 1));
+	ui->sys->video->SetTitle((const char8_t*)lua_tostring(L, 1));
+	ui->sys->conWin->SetTitle((const char8_t*)lua_tostring(L, 1));
 	return 0;
 }
 
@@ -1586,17 +1586,16 @@ static int l_Copy(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: Copy(string)");
 	ui->LAssert(L, lua_isstring(L, 1), "Copy() argument 1: expected string, got %s", luaL_typename(L, 1));
-	ui->sys->ClipboardCopy(lua_tostring(L, 1));
+	ui->sys->ClipboardCopy((const char8_t*)lua_tostring(L, 1));
 	return 0;
 }
 
 static int l_Paste(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	char* data = ui->sys->ClipboardPaste();
+	const auto data = ui->sys->ClipboardPaste();
 	if (data) {
-		lua_pushstring(L, data);
-		FreeString(data);
+		lua_pushstring(L, (const char*)data->c_str());
 		return 1;
 	}
 	else {
@@ -1706,7 +1705,7 @@ static int l_GetTime(lua_State* L)
 static int l_GetScriptPath(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	lua_pushstring(L, ui->scriptPath.generic_u8string().c_str());
+	lua_pushstring(L, (const char*)ui->scriptPath.generic_u8string().c_str());
 	try
 	{
 		lua_pushstring(L, ui->scriptPath.generic_string().c_str());
@@ -1723,7 +1722,7 @@ static int l_GetScriptPath(lua_State* L)
 static int l_GetRuntimePath(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	lua_pushstring(L, ui->sys->basePath.generic_u8string().c_str());
+	lua_pushstring(L, (const char*)ui->sys->basePath.generic_u8string().c_str());
 	try
 	{
 		lua_pushstring(L, ui->sys->basePath.generic_string().c_str());
@@ -1752,7 +1751,7 @@ static int l_GetUserPath(lua_State* L)
 		return 2;
 	}
 
-	lua_pushstring(L, userPath->generic_u8string().c_str());
+	lua_pushstring(L, (const char*)userPath->generic_u8string().c_str());
 	try
 	{
 		lua_pushstring(L, userPath->generic_string().c_str());
@@ -1832,7 +1831,7 @@ SG_LUA_CPP_FUN_END()
 static int l_GetWorkDir(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	lua_pushstring(L, ui->scriptWorkDir.generic_u8string().c_str());
+	lua_pushstring(L, (const char*)ui->scriptWorkDir.generic_u8string().c_str());
 	return 1;
 }
 
@@ -1900,7 +1899,7 @@ SG_LUA_CPP_FUN_BEGIN(LoadModule)
 
 	ui->sys->SetWorkDir(ui->scriptPath);
 	auto fileStr = fileName.generic_u8string();
-	int err = luaL_loadfile(L, fileStr.c_str());
+	int err = luaL_loadfile(L, (const char*)fileStr.c_str());
 	ui->sys->SetWorkDir(ui->scriptWorkDir);
 	ui->LExpect(L, err == 0, "LoadModule() error loading '%s' (%d):\n%s", fileStr.c_str(), err, lua_tostring(L, -1));
 	lua_replace(L, 1);	// Replace module name with module main chunk
@@ -1923,7 +1922,7 @@ SG_LUA_CPP_FUN_BEGIN(PLoadModule)
 	PERFORMANCEAPI_INSTRUMENT_DATA("[API]PLoadModule", fileName.generic_string().c_str());
 
 	ui->sys->SetWorkDir(ui->scriptPath);
-	int err = luaL_loadfile(L, fileName.generic_u8string().c_str());
+	int err = luaL_loadfile(L, (const char*)fileName.generic_u8string().c_str());
 	ui->sys->SetWorkDir(ui->scriptWorkDir);
 	if (err) {
 		return 1;
@@ -1968,7 +1967,7 @@ static int l_ConPrintf(lua_State* L)
 	lua_insert(L, 1);
 	lua_call(L, n, 1);
 	ui->LAssert(L, lua_isstring(L, 1), "ConPrintf() error: string.format returned non-string");
-	ui->sys->con->Print(fmt::format("{}\n", lua_tostring(L, 1)));
+	ui->sys->con->Print(fmt::format(u8"{}\n", (const char8_t*)lua_tostring(L, 1)));
 	return 0;
 }
 
@@ -1977,16 +1976,16 @@ static void printTableItter(lua_State* L, IConsole* con, int index, int level, b
 	lua_checkstack(L, 5);
 	lua_pushnil(L);
 	while (lua_next(L, index)) {
-		for (int t = 0; t < level; t++) con->Print("  ");
+		for (int t = 0; t < level; t++) con->Print(u8"  ");
 		// Print key
 		if (lua_type(L, -2) == LUA_TSTRING) {
-			con->Print(fmt::format("[\"{}^7\"] = ", lua_tostring(L, -2)));
+			con->Print(fmt::format(u8"[\"{}^7\"] = ", (const char8_t*)lua_tostring(L, -2)));
 		}
 		else {
 			lua_pushvalue(L, 2);	// Push tostring function
 			lua_pushvalue(L, -3);	// Push key
 			lua_call(L, 1, 1);		// Call tostring
-			con->Print(fmt::format("{} = ", lua_tostring(L, -1)));
+			con->Print(fmt::format(u8"{} = ", (const char8_t*)lua_tostring(L, -1)));
 			lua_pop(L, 1);			// Pop result of tostring
 		}
 		// Print value
@@ -2002,23 +2001,23 @@ static void printTableItter(lua_State* L, IConsole* con, int index, int level, b
 				lua_pushvalue(L, -1);	// Push value
 				lua_pushboolean(L, 1);
 				lua_settable(L, 3);		// Add to printed tables list
-				con->Print(fmt::format("table: {} {{\n", lua_topointer(L, -1)));
+				con->Print(fmt::format(u8"table: {} {{\n", lua_topointer(L, -1)));
 				printTableItter(L, con, lua_gettop(L), level + 1, true);
-				for (int t = 0; t < level; t++) con->Print("  ");
-				con->Print("}\n");
+				for (int t = 0; t < level; t++) con->Print(u8"  ");
+				con->Print(u8"}\n");
 			}
 			else {
-				con->Print(fmt::format("table: {} {{ ... }}\n", lua_topointer(L, -1)));
+				con->Print(fmt::format(u8"table: {} {{ ... }}\n", lua_topointer(L, -1)));
 			}
 		}
 		else if (lua_type(L, -1) == LUA_TSTRING) {
-			con->Print(fmt::format("\"{}\"\n", lua_tostring(L, -1)));
+			con->Print(fmt::format(u8"\"{}\"\n", (const char8_t*)lua_tostring(L, -1)));
 		}
 		else {
 			lua_pushvalue(L, 2);	// Push tostring function
 			lua_pushvalue(L, -2);	// Push value
 			lua_call(L, 1, 1);		// Call tostring
-			con->Print(fmt::format("{}\n", lua_tostring(L, -1)));
+			con->Print(fmt::format(u8"{}\n", (const char8_t*)lua_tostring(L, -1)));
 			lua_pop(L, 1);			// Pop result of tostring
 		}
 		lua_pop(L, 1);	// Pop value
@@ -2048,7 +2047,7 @@ static int l_ConExecute(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: ConExecute(cmd)");
 	ui->LAssert(L, lua_isstring(L, 1), "ConExecute() argument 1: expected string, got %s", luaL_typename(L, 1));
-	ui->sys->con->Execute(lua_tostring(L, 1));
+	ui->sys->con->Execute((const char8_t*)lua_tostring(L, 1));
 	return 0;
 }
 
@@ -2068,13 +2067,13 @@ static int l_print(lua_State* L)
 		lua_pushvalue(L, -1);	// Push tostring function
 		lua_pushvalue(L, i);
 		lua_call(L, 1, 1);		// Call tostring
-		const char* s = lua_tostring(L, -1);
+		const auto* s = (const char8_t*)lua_tostring(L, -1);
 		ui->LAssert(L, s != NULL, "print() error: tostring returned non-string");
-		if (i > 1) ui->sys->con->Print(" ");
+		if (i > 1) ui->sys->con->Print(u8" ");
 		ui->sys->con->Print(s);
 		lua_pop(L, 1);			// Pop result of tostring
 	}
-	ui->sys->con->Print("\n");
+	ui->sys->con->Print(u8"\n");
 	return 0;
 }
 
@@ -2085,7 +2084,7 @@ static int l_SpawnProcess(lua_State* L)
 	ui->LAssert(L, n >= 1, "Usage: SpawnProcess(cmdName[, args])");
 	ui->LAssert(L, lua_isstring(L, 1), "SpawnProcess() argument 1: expected string, got %s", luaL_typename(L, 1));
 	auto cmdPath = std::filesystem::u8path(lua_tostring(L, 1));
-	auto args = lua_tostring(L, 2);
+	auto args = (const char8_t*)lua_tostring(L, 2);
 	ui->sys->SpawnProcess(cmdPath, args);
 	return 0;
 }
@@ -2096,8 +2095,8 @@ static int l_OpenURL(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: OpenURL(url)");
 	ui->LAssert(L, lua_isstring(L, 1), "OpenURL() argument 1: expected string, got %s", luaL_typename(L, 1));
-	if (auto errMsg = ui->sys->OpenURL(lua_tostring(L, 1))) {
-		lua_pushstring(L, errMsg->c_str());
+	if (const auto errMsg = ui->sys->OpenURL((const char8_t*)lua_tostring(L, 1))) {
+		lua_pushstring(L, (const char*)errMsg->c_str());
 		return 1;
 	}
 	return 0;
@@ -2124,17 +2123,15 @@ static int l_Exit(lua_State* L)
 		ui->LAssert(L, lua_isstring(L, 1), "Exit() argument 1: expected string or nil, got %s", luaL_typename(L, 1));
 		msg = lua_tostring(L, 1);
 	}
-	ui->sys->Exit(msg);
+	ui->sys->Exit((const char8_t*)msg);
 	ui->didExit = true;
-	//	lua_pushstring(L, "dummy");
-	//	lua_error(L);
 	return 0;
 }
 
 static int l_TakeScreenshot(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	ui->sys->con->Execute("screenshot");
+	ui->sys->con->Execute(u8"screenshot");
 	return 0;
 }
 

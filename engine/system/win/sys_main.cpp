@@ -104,11 +104,11 @@ unsigned long thread_c::statThreadProc(void* obj)
 		}
 		char err[1024];
 		sprintf_s(err, 1024, "Critical error at address %08Xh in thread %d:\n%s", static_cast<int>((ULONG_PTR)exRec->ExceptionAddress), GetCurrentThreadId(), detail);
-		thread->_sysMain->threadError = AllocString(err);
+		thread->_sysMain->threadError = (const char8_t*)err;
 	}
 #else
 	catch (std::exception& e) {
-		thread->_sysMain->threadError = AllocString(fmt::format("Exception: {}", e.what()).c_str());
+		thread->_sysMain->threadError = fmt::format(u8"Exception: {}", (const char8_t*)e.what());
 	}
 #endif
 	return 0;
@@ -136,21 +136,21 @@ find_c::find_c()
 find_c::~find_c()
 {}
 
-std::optional<std::string> BuildGlobPattern(std::filesystem::path const& glob)
+std::optional<std::u8string> BuildGlobPattern(std::filesystem::path const& glob)
 {
 	using namespace std::literals::string_view_literals;
 	auto globStr = glob.generic_u8string();
-	auto globView = std::string_view(globStr);
+	auto globView = std::u8string_view(globStr);
 
 	// Deal with traditional "everything" wildcards.
-	if (globView == "*" || globView == "*.*") {
+	if (globView == u8"*" || globView == u8"*.*") {
 		return {};
 	}
 
-	auto u32Str = IndexUTF8ToUTF32(globStr);
+	auto u32Str = IndexUTF8ToUTF32(AsStringView(globStr));
 	auto& offsets = u32Str.sourceCodeUnitOffsets;
 
-	fmt::memory_buffer buf;
+	fmt::basic_memory_buffer<char8_t> buf;
 	buf.reserve(globStr.size() * 3); // Decent estimate of final pattern size.
 
 	// If no wildcards are present, test file path verbatim.
@@ -159,37 +159,37 @@ std::optional<std::string> BuildGlobPattern(std::filesystem::path const& glob)
 		for (size_t offIdx = 0; offIdx < offsets.size(); ++offIdx) {
 			int byteOffset = offsets[offIdx];
 			int nextOffset = (offIdx + 1 < offsets.size()) ? offsets[offIdx + 1] : globStr.size();
-			fmt::format_to(fmt::appender(buf), "[{}]", globView.substr(byteOffset, nextOffset - byteOffset));
+			fmt::format_to(fmt::basic_appender(buf), u8"[{}]", globView.substr(byteOffset, nextOffset - byteOffset));
 		}
 	}
 	else {
 		// Otherwise build a regular expression from the glob and use that to match files.
-		auto it = fmt::appender(buf);
+		auto it = fmt::basic_appender(buf);
 		for (size_t offIdx = 0; offIdx < offsets.size(); ++offIdx) {
 			char32_t ch = u32Str.text[offIdx];
 			if (ch == U'*') {
-				it = fmt::format_to(it, ".*");
+				it = fmt::format_to(it, u8".*");
 			}
 			else if (ch == U'?') {
-				*it++ = '.';
+				*it++ = u8'.';
 			}
 			else if (U".+[]{}+()|"sv.find(ch) != std::u32string::npos) {
 				// Escape metacharacters
-				it = fmt::format_to(it, "\\{}", (char)ch);
+				it = fmt::format_to(it, u8"\\{}", (char8_t)ch);
 			}
 			else if (ch < 0x80 && std::isalnum((unsigned char)ch)) {
-				*it++ = (char)ch;
+				*it++ = (char8_t)ch;
 			}
 			else {
 				// Emit as \x{10FFFF}.
-				it = fmt::format_to(it, "\\x{{{:X}}}", (uint32_t)ch);
+				it = fmt::format_to(it, u8"\\x{{{:X}}}", (uint32_t)ch);
 			}
 		}
 	}
-	return to_string(buf);
+	return std::u8string(buf.data(), buf.size());
 }
 
-bool GlobMatch(std::optional<std::string> const& globPattern, std::filesystem::path const& file)
+bool GlobMatch(std::optional<std::u8string> const& globPattern, std::filesystem::path const& file)
 {
 	if (!globPattern.has_value()) {
 		// Empty pattern is like "*" and "*.*".
@@ -198,10 +198,10 @@ bool GlobMatch(std::optional<std::string> const& globPattern, std::filesystem::p
 	// Assume case-insensitive comparisons are desired.
 	RE2::Options reOpts;
 	reOpts.set_case_sensitive(false);
-	RE2 reGlob{globPattern.value(), reOpts};
+	RE2 reGlob{AsStringView(globPattern.value()), reOpts};
 
 	auto fileStr = file.generic_u8string();
-	return RE2::FullMatch(fileStr, reGlob);
+	return RE2::FullMatch(AsStringView(fileStr), reGlob);
 }
 
 bool find_c::FindFirst(std::filesystem::path const&& fileSpec)
@@ -379,14 +379,17 @@ bool sys_main_c::IsKeyDown(byte k)
 	return false;
 }
 
-void sys_main_c::ClipboardCopy(const char* str)
+void sys_main_c::ClipboardCopy(const char8_t* str)
 {
-	glfwSetClipboardString(nullptr, str);
+	glfwSetClipboardString(nullptr, (const char*)str);
 }
 
-char* sys_main_c::ClipboardPaste()
+std::optional<std::u8string> sys_main_c::ClipboardPaste()
 {
-	return AllocString(glfwGetClipboardString(nullptr));
+	if (const auto* content = glfwGetClipboardString(nullptr)) {
+		return (const char8_t*)content;
+	}
+	return std::nullopt;
 }
 
 bool sys_main_c::SetWorkDir(std::filesystem::path const& newCwd)
@@ -407,14 +410,14 @@ bool sys_main_c::SetWorkDir(std::filesystem::path const& newCwd)
 	}
 }
 
-void sys_main_c::SpawnProcess(std::filesystem::path cmdName, const char* argList)
+void sys_main_c::SpawnProcess(std::filesystem::path cmdName, const char8_t* argList)
 {
 #ifdef _WIN32
 	if (!cmdName.has_extension()) {
 		cmdName.replace_extension(".exe");
 	}
 	auto fileStr = cmdName.wstring();
-	auto wideArgs = WidenUTF8String(argList);
+	auto wideArgs = WidenUTF8String((const char*)argList);
 	SHELLEXECUTEINFOW sinfo;
 	memset(&sinfo, 0, sizeof(sinfo));
 	sinfo.cbSize       = sizeof(sinfo);
@@ -501,11 +504,11 @@ const char* PlatformOpenURL(const char* url)
 const char* PlatformOpenURL(const char* url);
 #endif
 
-std::optional<std::string> sys_main_c::OpenURL(const char* url)
+std::optional<std::u8string> sys_main_c::OpenURL(const char8_t* url)
 {
-	if (auto err = PlatformOpenURL(url))
+	if (auto err = PlatformOpenURL((const char*)url))
 	{
-		std::string ret = err;
+		std::u8string ret = (const char8_t*)err;
 		FreeString(err);
 		return ret;
 	}
@@ -516,7 +519,7 @@ std::optional<std::string> sys_main_c::OpenURL(const char* url)
 // System Initialisation/Shutdown
 // ==============================
 
-void sys_main_c::Error(const char *fmt, ...)
+void sys_main_c::Error(const char8_t *fmt, ...)
 {
 	if (errorRaised) return;
 	errorRaised = true;
@@ -530,13 +533,13 @@ void sys_main_c::Error(const char *fmt, ...)
 	va_start(va, fmt);
 #ifdef _WIN32
 	char msg[4096];
-	vsprintf_s(msg, 4096, fmt, va);
+	vsprintf_s(msg, 4096, (const char*)fmt, va);
 #else
 	char* msg{};
-	vasprintf(&msg, fmt, va);
+	vasprintf(&msg, (const char*)fmt, va);
 #endif
 	va_end(va);
-	con->Print(fmt::format("\n--- ERROR ---\n{}", msg));
+	con->Print(fmt::format(u8"\n--- ERROR ---\n{}", (const char8_t*)msg));
 #ifndef _WIN32
 	free(msg);
 #endif
@@ -556,14 +559,14 @@ void sys_main_c::Error(const char *fmt, ...)
 #endif
 }
 
-void sys_main_c::Exit(const char* msg)
+void sys_main_c::Exit(const char8_t* msg)
 {
 	if (initialised) {
 		video->SetVisible(false);
 	}
-	FreeString(exitMsg);
-	exitMsg = msg? AllocString(msg) : NULL;
-	if (exitMsg) {
+	exitMsg.reset();
+	if (msg) {
+		exitMsg = msg;
 		conWin->SetVisible(true);
 	}
 	exitFlag = true;
@@ -574,8 +577,7 @@ void sys_main_c::Restart()
 	video->SetVisible(false);
 	conWin->SetVisible(true);
 	restartFlag = true;
-	FreeString(exitMsg);
-	exitMsg = NULL;
+	exitMsg.reset();
 	exitFlag = true;
 }
 
@@ -664,8 +666,8 @@ bool sys_main_c::Run(int argc, char** argv)
 	initialised = false;
 	exitFlag = false;
 	restartFlag = false;
-	exitMsg = NULL;
-	threadError = NULL;
+	exitMsg.reset();
+	threadError.reset();
 	errorRaised = false;
 	baseTime = std::chrono::system_clock::now();
 
@@ -678,11 +680,11 @@ bool sys_main_c::Run(int argc, char** argv)
 	core = core_IMain::GetHandle(this);
 
 	// Print some handy information
-	con->Print(fmt::format(CFG_VERSION" {} {}, built " __DATE__ "\n", x64? "x64":"x86", debug? "Debug":"Release"));
+	con->Print(fmt::format(CFG_VERSION " {} {}, built " __DATE__ "\n", x64? u8"x64":u8"x86", debug? u8"Debug":u8"Release"));
 	if (debuggerRunning) {
-		con->Print("Debugger is present.\n");
+		con->Print(u8"Debugger is present.\n");
 	}
-	con->Print("\n");
+	con->Print(u8"\n");
 
 	initialised = true;
 
@@ -713,7 +715,7 @@ bool sys_main_c::Run(int argc, char** argv)
 			core->Frame();
 
 			if (threadError) {
-				Error(threadError);
+				Error(threadError->c_str());
 			}
 		}
 
@@ -734,7 +736,7 @@ bool sys_main_c::Run(int argc, char** argv)
 		} else {
 			sprintf_s(detail, 512, "Error code: %08Xh", code);
 		}
-		Error("Critical error at address %08Xh:\n%s", static_cast<int>((ULONG_PTR)exRec->ExceptionAddress), detail);
+		Error(u8"Critical error at address %08Xh:\n%s", static_cast<int>((ULONG_PTR)exRec->ExceptionAddress), detail);
 	}
 #else
 	catch (std::exception& e) {
@@ -747,9 +749,8 @@ bool sys_main_c::Run(int argc, char** argv)
 		video->SetVisible(false);
 		conWin->SetVisible(true);
 		if (exitMsg) {
-			con->Print(fmt::format("\n{}", exitMsg));
-			FreeString(exitMsg);
-			exitMsg = NULL;
+			con->Print(fmt::format(u8"\n{}", exitMsg->c_str()));
+			exitMsg.reset();
 		}
 		while (exitFlag == false) {
 			Sleep(50);

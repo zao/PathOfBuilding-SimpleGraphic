@@ -33,13 +33,13 @@ public:
 	int		GetTime();
 	void	Sleep(int msec);
 	bool	IsKeyDown(byte key);
-	void	ClipboardCopy(const char* str);
-	char*	ClipboardPaste();
+	void	ClipboardCopy(const char8_t* str);
+	std::optional<std::u8string> ClipboardPaste();
 	bool	SetWorkDir(std::filesystem::path const& newCwd = {});
-	void	SpawnProcess(std::filesystem::path cmdName, const char* argList);
-	std::optional<std::string> OpenURL(const char* url); // return value has failure reason
-	void	Error(const char* fmt, ...);
-	void	Exit(const char* msg = NULL);
+	void	SpawnProcess(std::filesystem::path cmdName, const char8_t* argList);
+	std::optional<std::u8string> OpenURL(const char8_t* url); // return value has failure reason
+	void	Error(const char8_t* fmt, ...);
+	void	Exit(const char8_t* msg = NULL);
 	void	Restart();
 
 	// Encapsulated
@@ -62,8 +62,8 @@ public:
 	bool	minimized = false;
 	volatile bool	exitFlag = false;
 	volatile bool	restartFlag = false;
-	char*	exitMsg = nullptr;
-	char*	threadError = nullptr;
+	std::optional<std::u8string> exitMsg;
+	std::optional<std::u8string> threadError;
 	bool	errorRaised = false;
 	std::chrono::system_clock::time_point baseTime;
 	std::vector<uint8_t> heldKeyState;

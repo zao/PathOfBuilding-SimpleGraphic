@@ -173,8 +173,8 @@ void ui_main_c::DoError(const char* msg, const char* error)
 {
 	auto scriptStr = scriptName.generic_u8string();
 	char* errText = AllocStringLen(strlen(msg) + scriptStr.size() + strlen(error) + 30);
-	sprintf(errText, "--- SCRIPT ERROR ---\n%s '%s':\n%s\n", msg, scriptStr.c_str(), error);
-	sys->Exit(errText);
+	sprintf(errText, "--- SCRIPT ERROR ---\n%s '%s':\n%s\n", msg, (const char*)scriptStr.c_str(), error);
+	sys->Exit((const char8_t*)errText);
 	FreeString(errText);
 	didExit = true;
 }
@@ -204,7 +204,7 @@ static int l_panicFunc(lua_State* L)
 	lua_rawgeti(L, LUA_REGISTRYINDEX, ui_main_c::REGISTRY_KEY);
 	ui_main_c* ui = (ui_main_c*)lua_touserdata(L, -1);
 	lua_pop(L, 1);
-	ui->sys->Error("Unprotected Lua error:\n%s", lua_tostring(L, -1));
+	ui->sys->Error(u8"Unprotected Lua error:\n%s", (const char8_t*)lua_tostring(L, -1));
 	return 0;
 }
 
@@ -269,19 +269,19 @@ void ui_main_c::RenderInit(r_featureFlag_e features)
 	// Create UI console handler
 	conUI = ui_IConsole::GetHandle(this);
 
-	sys->con->Print("\n");
+	sys->con->Print(u8"\n");
 	sys->SetWorkDir(scriptWorkDir);
 }
 
 void ui_main_c::ScriptInit()
 {
-	sys->con->PrintFunc("UI Init");
+	sys->con->PrintFunc(u8"UI Init");
 
-	sys->con->Print(fmt::format("Script: {}\n", scriptName.generic_u8string()));
+	sys->con->Print(fmt::format(u8"Script: {}\n", scriptName.generic_u8string()));
 	if (!scriptPath.empty()) {
-		sys->con->Print(fmt::format("Script working directory: %s\n", scriptWorkDir.generic_u8string()));
+		sys->con->Print(fmt::format(u8"Script working directory: {}\n", scriptWorkDir.generic_u8string()));
 	}
-	sys->video->SetTitle(scriptName.generic_u8string().c_str());
+	sys->video->SetTitle(scriptName.generic_u8string());
 
 	restartFlag = false;
 	didExit = false;
@@ -289,10 +289,10 @@ void ui_main_c::ScriptInit()
 	inLua = false;
 
 	// Initialise Lua
-	sys->con->Print("Initialising Lua...\n");
+	sys->con->Print(u8"Initialising Lua...\n");
 	solState.emplace();
 	L = solState->lua_state();
-	if ( !L ) sys->Error("Error: unable to create Lua state.");
+	if ( !L ) sys->Error(u8"Error: unable to create Lua state.");
 	lua_atpanic(L, l_panicFunc);
 	lua_pushlightuserdata(L, this);
 	lua_seti(L, LUA_REGISTRYINDEX, ui_main_c::REGISTRY_KEY);
@@ -309,7 +309,7 @@ void ui_main_c::ScriptInit()
 	lua_gc(L, LUA_GCSTOP, 0);
 	lua_pushcfunction(L, InitAPI);
 	int err = lua_pcall(L, 0, 0, 0);
-	if (err) sys->Error("Error initialising Lua environment: \n%s\n", lua_tostring(L, -1));
+	if (err) sys->Error(u8"Error initialising Lua environment: \n%s\n", (const char8_t*)lua_tostring(L, -1));
 	lua_gc(L, LUA_GCRESTART, -1);
 
 	// Setup subscript system
@@ -318,7 +318,7 @@ void ui_main_c::ScriptInit()
 	
 	// Load the script file
 	sys->SetWorkDir(scriptWorkDir);
- 	err = luaL_loadfile(L, scriptName.filename().generic_u8string().c_str());
+ 	err = luaL_loadfile(L, (const char*)scriptName.filename().generic_u8string().c_str());
 	if (err) {
 		DoError("Error loading", lua_tostring(L, -1));
 		return;
@@ -326,7 +326,7 @@ void ui_main_c::ScriptInit()
 	sys->SetWorkDir();
 
 	// Run the script
-	sys->con->Print("Running script...\n");
+	sys->con->Print(u8"Running script...\n");
 	for (int i = 0; i < scriptArgc; i++) {
 		lua_pushstring(L, scriptArgv[i]);
 	}
@@ -351,7 +351,7 @@ void ui_main_c::ScriptInit()
 		if (extraArgs >= 0) {
 			lua_pop(L, 1 + extraArgs);
 		} else {
-			sys->con->Print("\nScript didn't set frame callback, exiting...\n");
+			sys->con->Print(u8"\nScript didn't set frame callback, exiting...\n");
 			sys->Exit();
 		}
 	}

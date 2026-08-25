@@ -25,6 +25,7 @@
 #include <Superluminal/PerformanceAPI.h>
 
 #include <fmt/core.h>
+#include <fmt/xchar.h>
 
 #ifdef _DEBUG
 #include "common/memtrak3.h"
@@ -66,15 +67,15 @@ struct ref_s { vec3_t pos, ang; };
 class args_c {
 public:
 	int argc;
-	char* argv[256];
+	char8_t* argv[256];
 
-	args_c(const char* in);
+	args_c(const char8_t* in);
 	~args_c();
 
-	const char* operator[](int i);
+	const char8_t* operator[](int i);
 
 private:
-	char* argBuf;
+	char8_t* argBuf;
 };
 
 class textBuffer_c {
@@ -82,7 +83,7 @@ public:
 	textBuffer_c();
 	~textBuffer_c();
 
-	char*	buf;		// Buffer
+	char8_t*	buf;		// Buffer
 	int		len;		// Buffer text length
 	int		caret;		// Cursor position
 
@@ -90,7 +91,7 @@ public:
 	void	Free();		// Free the buffer
 	bool	KeyEvent(int key, int type);// Act on a keypress
 
-	textBuffer_c &operator=(std::string_view r);
+	textBuffer_c &operator=(std::u8string_view r);
 
 private:
 	void	Alloc(int sz);// Allocate the buffer
@@ -484,9 +485,10 @@ T clamp(T &v, T l, T u)
 // Common Functions
 // ================
 
-int		IsColorEscape(char const* str);
-int		IsColorEscape(std::u32string_view str);
-void	ReadColorEscape(char const* str, int len, col3_t out);
+int IsColorEscape(char8_t const* str);
+int IsColorEscape(const char* str);
+int IsColorEscape(std::u32string_view str);
+void ReadColorEscape(char const* str, int len, col3_t out);
 std::u32string_view ReadColorEscape(std::u32string_view str, col3_t out);
 
 char*	_AllocString(const char* str, const char* file, int line);
@@ -494,8 +496,7 @@ char*	_AllocString(const char* str, const char* file, int line);
 char*	_AllocStringLen(size_t len, const char* file, int line);
 #define AllocStringLen(s) _AllocStringLen(s, __FILE__, __LINE__)
 void	FreeString(const char* str);
-dword	StringHash(const char* str, int mask);
-dword	StringHash(std::string_view str, int mask);
+uint64_t StringHash(std::u8string_view str);
 
 struct IndexedUTF32String {
 	std::u32string text;
@@ -503,6 +504,9 @@ struct IndexedUTF32String {
 };
 
 IndexedUTF32String IndexUTF8ToUTF32(std::string_view str);
+
+inline std::u8string_view AsU8StringView(std::string_view sv) { return std::u8string_view((const char8_t*)sv.data(), sv.size()); }
+inline std::string_view AsStringView(std::u8string_view sv) { return std::string_view((const char*)sv.data(), sv.size()); }
 
 #ifdef _WIN32
 wchar_t* WidenANSIString(const char* str);

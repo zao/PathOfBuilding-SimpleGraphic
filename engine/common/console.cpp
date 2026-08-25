@@ -35,24 +35,26 @@ conVar_c::~conVar_c()
 
 void conVar_c::Set(int in)
 {
-	Set(fmt::format("{}", in).c_str());
+	Set(fmt::format(u8"{}", in).c_str());
 }
 
 void conVar_c::Set(float in)
 {
-	Set(fmt::format("{:f}", in).c_str());
+	Set(fmt::format(u8"{:f}", in).c_str());
 }
 
-void conVar_c::Set(char const* in)
+void conVar_c::Set(char8_t const* in)
 {
 	if (in == strVal) {
 		// No change
 		return;
 	}
 
+	const std::string_view inSv = AsStringView(in);
+
 	mod = true;			// Flag as modified
-	std::from_chars(in, in + strlen(in), intVal); // Set values
-	floatVal = (float)strtod(in, nullptr);
+	std::from_chars(inSv.data(), inSv.data() + inSv.size(), intVal); // Set values
+	floatVal = (float)strtod(inSv.data(), nullptr);
 	strVal = in;
 
 	Clamp();			// Clamp value
@@ -72,8 +74,8 @@ bool conVar_c::GetMod()
 
 void conVar_c::Reset()
 {
-	intVal = atoi(defVal.c_str());
-	floatVal = (float)atof(defVal.c_str());
+	intVal = atoi((char const*)defVal.c_str());
+	floatVal = (float)atof((char const*)defVal.c_str());
 	strVal = defVal;
 }
 
@@ -91,7 +93,7 @@ void conVar_c::Clamp()
 		return;
 	}
 	
-	con->Print(fmt::format("\"{}\" clamped to {}\n", name, intVal).c_str());
+	con->Print(fmt::format(u8"\"{}\" clamped to {}\n", name, intVal));
 }
 
 // =======
@@ -100,7 +102,7 @@ void conVar_c::Clamp()
 
 // Buffer line
 struct conLine_s {
-	std::string buf;
+	std::u8string buf;
 	bool newLine = false;
 };
 
@@ -118,19 +120,19 @@ struct conHookEntry_s {
 class console_c: public IConsole {
 public:
 	// Interface
-	void	Print(std::string_view text);
-	void	PrintFunc(std::string_view func);
-	void	Warning(std::string_view text);
+	void	Print(std::u8string_view text);
+	void	PrintFunc(std::u8string_view func);
+	void	Warning(std::u8string_view text);
 	void	Clear();
 	void	Scroll(int mode);
-	std::optional<std::string_view> EnumLines(int* index);
-	std::string BuildBuffer();
+	std::optional<std::u8string_view> EnumLines(int* index);
+	std::u8string BuildBuffer();
 
-	void	Execute(std::string_view cmd);
+	void	Execute(std::u8string_view cmd);
 	void	ExecCommands(bool deferUnknown);
 
-	conVar_c* Cvar_Add(std::string_view name, int flags, std::string_view def, int minVal = 0, int maxVal = 0);
-	conVar_c* Cvar_Ptr(std::string_view name);
+	conVar_c* Cvar_Add(std::u8string_view name, int flags, std::u8string_view def, int minVal = 0, int maxVal = 0);
+	conVar_c* Cvar_Ptr(std::u8string_view name);
 
 	conCmd_c* EnumCmd(int* index);
 	conVar_c* EnumCvar(int* index);
@@ -144,21 +146,21 @@ public:
 
 	void	Buffer_Init();
 	void	Buffer_Shutdown();
-	void	Buffer_PrintLine(std::string_view text);
+	void	Buffer_PrintLine(std::u8string_view text);
 
 	conHookEntry_s* hookFirst;
 	conHookEntry_s* hookLast;
 
-	void	Hook_RunHooks(std::string_view text);
+	void	Hook_RunHooks(std::u8string_view text);
 	void	Hook_RunClear();
 
 	std::vector<conCmd_c> cmdList;
-	conCmd_c* Cmd_Ptr(std::string_view name);
+	conCmd_c* Cmd_Ptr(std::u8string_view name);
 
 	std::vector<std::unique_ptr<conVar_c>> cvarList;
-	int Cvar_Find(std::string_view name);
+	int Cvar_Find(std::u8string_view name);
 
-	std::vector<std::string> cmdBuf_lines;
+	std::vector<std::u8string> cmdBuf_lines;
 
 	textBuffer_c input;				// Input buffer
 	std::deque<textBuffer_c> hist;	// Command history buffers
@@ -214,7 +216,7 @@ void console_c::Buffer_Shutdown()
 	bufLines.clear();
 }
 
-void console_c::Buffer_PrintLine(std::string_view text)
+void console_c::Buffer_PrintLine(std::u8string_view text)
 {
 	conLine_s* line{};
 	if (!bufLines.back().newLine) {
@@ -230,12 +232,12 @@ void console_c::Buffer_PrintLine(std::string_view text)
 	line->buf += text;
 }
 
-void console_c::Print(std::string_view text)
+void console_c::Print(std::u8string_view text)
 {
 	// Run print hooks
 	Hook_RunHooks(text);
 
-	std::string_view p = text;
+	std::u8string_view p = text;
 	while (p.size()) {
 		if (const auto newlineIdx = p.find('\n'); newlineIdx != p.npos) {
 			Buffer_PrintLine(p.substr(0, newlineIdx));
@@ -252,15 +254,15 @@ void console_c::Print(std::string_view text)
 	bufScroll = bufLines.size() - 1;
 }
 
-void console_c::PrintFunc(std::string_view func)
+void console_c::PrintFunc(std::u8string_view func)
 {
 	// Print function title
-	Print(fmt::format("\n--- {} ---\n", func).c_str());
+	Print(fmt::format(u8"\n--- {} ---\n", func));
 }
 
-void console_c::Warning(std::string_view text)
+void console_c::Warning(std::u8string_view text)
 {
-	Print(fmt::format("^4Warning: {}\n", text));
+	Print(fmt::format(u8"^4Warning: {}\n", text));
 }
 
 void console_c::Clear()
@@ -289,7 +291,7 @@ void console_c::Scroll(int mode)
 	}
 }
 
-std::optional<std::string_view> console_c::EnumLines(int* index)
+std::optional<std::u8string_view> console_c::EnumLines(int* index)
 {
 	if (*index <= -1) {
 		// Start traversing from scroll point
@@ -305,16 +307,16 @@ std::optional<std::string_view> console_c::EnumLines(int* index)
 	return bufLines[*index].buf;
 }
 
-std::string console_c::BuildBuffer()
+std::u8string console_c::BuildBuffer()
 {
-	fmt::memory_buffer buf;
+	fmt::basic_memory_buffer<char8_t> buf;
 
 	// Append the lines
 	for (const auto& line : bufLines) {
-		fmt::format_to(fmt::appender(buf), "{}\n", line.buf);
+		fmt::format_to(fmt::basic_appender<char8_t>(buf), u8"{}\n", line.buf);
 	}
 
-	return to_string(buf);
+	return std::u8string(buf.data(), buf.size());
 }
 
 // =====================
@@ -352,7 +354,7 @@ void conPrintHook_c::RemovePrintHook()
 	}
 }
 
-void console_c::Hook_RunHooks(std::string_view text)
+void console_c::Hook_RunHooks(std::u8string_view text)
 {
 	conHookEntry_s* i = hookFirst;
 	while (i) {
@@ -386,10 +388,10 @@ conCmdHandler_c::~conCmdHandler_c()
 	}), seq.end());
 }
 
-void conCmdHandler_c::Cmd_PrivAdd(const char* name, int minArgs, const char* usage, conCmdHandler_c* obj, conCmdMethod_t method)
+void conCmdHandler_c::Cmd_PrivAdd(const char8_t* name, int minArgs, const char8_t* usage, conCmdHandler_c* obj, conCmdMethod_t method)
 {
 	if (_con->Cmd_Ptr(name)) {
-		_con->Warning(fmt::format("command '{}' already exists", name));
+		_con->Warning(fmt::format(u8"command '{}' already exists", name));
 		return;
 	}
 
@@ -397,9 +399,9 @@ void conCmdHandler_c::Cmd_PrivAdd(const char* name, int minArgs, const char* usa
 	_con->cmdList.emplace_back(conCmd_c{name, minArgs, usage, obj, method});
 }
 
-conCmd_c* console_c::Cmd_Ptr(std::string_view name)
+conCmd_c* console_c::Cmd_Ptr(std::u8string_view name)
 {
-	std::string name_str(name);
+	std::u8string name_str(name);
 	const auto it = std::find_if(cmdList.begin(), cmdList.end(), [name](const conCmd_c& cmd) { return cmd.name == name; });
 	if (it != cmdList.end()) {
 		return &*it;
@@ -425,9 +427,9 @@ conCmd_c* console_c::EnumCmd(int* index)
 // Console Variables
 // =================
 
-conVar_c* console_c::Cvar_Add(std::string_view name, int flags, std::string_view def, int minVal, int maxVal)
+conVar_c* console_c::Cvar_Add(std::u8string_view name, int flags, std::u8string_view def, int minVal, int maxVal)
 {
-	std::optional<std::string> setVal;
+	std::optional<std::u8string> setVal;
 	int slot = Cvar_Find(name);
 	if (slot >= 0) {
 		if (cvarList[slot]->flags & CV_SET) {
@@ -444,9 +446,9 @@ conVar_c* console_c::Cvar_Add(std::string_view name, int flags, std::string_view
 	}
 
 	cvarList[slot] = std::make_unique<conVar_c>(this);
-	cvarList[slot]->name = (std::string)name;
+	cvarList[slot]->name = (std::u8string)name;
 	cvarList[slot]->flags = flags;
-	cvarList[slot]->defVal = (std::string)def;
+	cvarList[slot]->defVal = (std::u8string)def;
 	if (flags & CV_CLAMP) {
 		cvarList[slot]->min = minVal;
 		cvarList[slot]->max = maxVal;
@@ -461,7 +463,7 @@ conVar_c* console_c::Cvar_Add(std::string_view name, int flags, std::string_view
 	return cvarList[slot].get();
 }
 
-conVar_c* console_c::Cvar_Ptr(std::string_view name)
+conVar_c* console_c::Cvar_Ptr(std::u8string_view name)
 {
 	int slot = Cvar_Find(name);
 	if (slot >= 0) {
@@ -471,9 +473,9 @@ conVar_c* console_c::Cvar_Ptr(std::string_view name)
 	}
 }
 
-int console_c::Cvar_Find(std::string_view name)
+int console_c::Cvar_Find(std::u8string_view name)
 {
-	std::string name_str(name);
+	std::u8string name_str(name);
 	int slot = 0;
 	// Find the cvar and return the index
 	for (const auto& cv : cvarList) {
@@ -504,16 +506,16 @@ conVar_c* console_c::EnumCvar(int* index)
 // String Executor
 // ===============
 
-void console_c::Execute(std::string_view cmd)
+void console_c::Execute(std::u8string_view cmd)
 {
-	std::string_view newCmd = cmd;
-	std::string_view sep = ";\n";
+	std::u8string_view newCmd = cmd;
+	std::u8string_view sep = u8";\n";
 	while (!newCmd.empty()) {
 		auto end = newCmd.find_first_of(sep);
 		if (end == newCmd.npos) {
 			end = newCmd.size();
 		}
-		std::string lp(newCmd.substr(0, end));
+		std::u8string lp(newCmd.substr(0, end));
 		newCmd = newCmd.substr(end);
 
 		cmdBuf_lines.push_back(lp);
@@ -522,7 +524,7 @@ void console_c::Execute(std::string_view cmd)
 
 void console_c::ExecCommands(bool deferUnknown)
 {
-	std::vector<std::string> deferred;
+	std::vector<std::u8string> deferred;
 	for (auto& cmdLine : cmdBuf_lines) {
 		// Split command string
 		args_c args(cmdLine.c_str());
@@ -535,7 +537,7 @@ void console_c::ExecCommands(bool deferUnknown)
 		if (cmd) {
 			if (args.argc < cmd->minArgs + 1) {
 				// Too few arguments
-				Print(fmt::format("Usage: {} {}\n", cmd->name, cmd->usage).c_str());
+				Print(fmt::format(u8"Usage: {} {}\n", cmd->name, cmd->usage));
 			} else {
 				// We've got arguments, or the command doesn't care
 				(cmd->obj->*cmd->method)(this, args);
@@ -546,19 +548,19 @@ void console_c::ExecCommands(bool deferUnknown)
 				if (args.argc >= 2) {
 					// There are arguments, try and set cvar
 					if (cv->flags & CV_READONLY) {
-						Print(fmt::format("'{}' is read only.\n", cv->name).c_str());
+						Print(fmt::format(u8"'{}' is read only.\n", cv->name));
 					} else {
 						cv->Set(args[1]);
 					}
 				} else {
 					// No arguments, so print current value
-					Print(fmt::format("'{}' is: \"{}\" default: \"{}\"\n", cv->name, cv->strVal, cv->defVal).c_str());
+					Print(fmt::format(u8"'{}' is: \"{}\" default: \"{}\"\n", cv->name, cv->strVal, cv->defVal));
 				}
 			} else if (deferUnknown) {
 				// Defer execution of unknown commands
 				deferred.emplace_back(std::move(cmdLine));
 			} else {
-				Print(fmt::format("Unknown command '{}'\n", args[0]).c_str());
+				Print(fmt::format(u8"Unknown command '{}'\n", args[0]));
 			}
 		}
 	}
@@ -624,24 +626,24 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 		// Tab completes or finds matches for input buffer text
 		case KEY_TAB:
 			if (_con->input.len) {
-				std::string comp = _con->input.buf;
+				std::u8string comp = _con->input.buf;
 				int	compLen = comp.size();
 
 				// Build match list
 				struct Match
 				{
-					std::string match;
-					std::string args;
+					std::u8string match;
+					std::u8string args;
 				};
 				std::vector<Match> matches;
 				for (const auto& cmd : _con->cmdList) {
-					if (std::string_view(cmd.name).substr(0, comp.size()) == comp) {
+					if (std::u8string_view(cmd.name).substr(0, comp.size()) == comp) {
 						matches.emplace_back(Match{cmd.name, cmd.usage});
 					}
 				}
 				for (const auto& cv : _con->cvarList) {
-					if (cv && std::string_view(cv->name).substr(0, comp.size()) == comp) {
-						matches.emplace_back(Match{cv->name, fmt::format("= \"{}\"", cv->strVal)});
+					if (cv && std::u8string_view(cv->name).substr(0, comp.size()) == comp) {
+						matches.emplace_back(Match{cv->name, fmt::format(u8"= \"{}\"", cv->strVal)});
 					}
 				}
 
@@ -651,14 +653,14 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 						// Exact match
 						comp = matches[0].match;
 						if (!matches[0].args.empty()) {
-							comp += " ";
+							comp += u8" ";
 						}
 					} else {
 						size_t minMatchLen = ~0;
 						// Multiple matches, print them out
-						_con->Print(fmt::format("]{}\n", comp).c_str());
+						_con->Print(fmt::format(u8"]{}\n", comp));
 						for (const auto& m : matches) {
-							_con->Print(fmt::format("  {} {}\n", m.match, m.args).c_str());
+							_con->Print(fmt::format(u8"  {} {}\n", m.match, m.args));
 							minMatchLen = (std::min)(minMatchLen, m.match.size());
 						}
 
@@ -690,11 +692,11 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 		case KEY_RETURN:
 			if (_con->input.len) {
 				// Execute buffer
-				_con->Print(fmt::format("]{}\n", _con->input.buf));
+				_con->Print(fmt::format(u8"]{}\n", _con->input.buf));
 				_con->Execute(_con->input.buf);
 
 				// Add to command history if different from most recent command
-				if (_con->hist.empty() || _stricmp(_con->hist[0].buf, _con->input.buf)) {
+				if (_con->hist.empty() || _stricmp((const char*)_con->hist[0].buf, (const char*)_con->input.buf)) {
 					if (_con->hist.size() == CON_MAXHIST)
 						_con->hist.pop_back();
 					_con->hist.emplace_front() = _con->input.buf;

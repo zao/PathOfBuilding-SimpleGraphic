@@ -46,7 +46,7 @@ public:
 	bool	FindFirst(std::filesystem::path const&& fileSpec);
 	bool	FindNext();
 private:
-	std::optional<std::string> globPattern; // Empty pattern accepts all files like "*" and "*.*"
+	std::optional<std::u8string> globPattern; // Empty pattern accepts all files like "*" and "*.*"
 	std::filesystem::directory_iterator iter;
 };
 
@@ -74,12 +74,12 @@ public:
 	virtual int		GetTime() = 0;
 	virtual void	Sleep(int msec) = 0;
 	virtual bool	IsKeyDown(byte key) = 0;
-	virtual void	ClipboardCopy(const char* str) = 0;
-	virtual char*	ClipboardPaste() = 0;
+	virtual void	ClipboardCopy(const char8_t* str) = 0;
+	virtual std::optional<std::u8string> ClipboardPaste() = 0;
 	virtual bool	SetWorkDir(std::filesystem::path const& newCwd = {}) = 0;
-	virtual void	SpawnProcess(std::filesystem::path cmdName, const char* argList) = 0;
-	virtual std::optional<std::string> OpenURL(const char* url) = 0;
-	virtual void	Error(const char* fmt, ...) = 0;
-	virtual void	Exit(const char* msg = NULL) = 0;
+	virtual void	SpawnProcess(std::filesystem::path cmdName, const char8_t* argList) = 0;
+	virtual std::optional<std::u8string> OpenURL(const char8_t* url) = 0;
+	virtual void	Error(const char8_t* fmt, ...) = 0;
+	virtual void	Exit(const char8_t* msg = NULL) = 0;
 	virtual void	Restart() = 0;
 };

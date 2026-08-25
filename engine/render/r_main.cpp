@@ -47,30 +47,30 @@ enum r_takeScreenshot_e {
 class r_shader_c {
 public:
 	r_renderer_c* renderer;
-	std::string name;
-	dword nameHash;
+	std::u8string name;
+	uint64_t nameHash;
 	std::shared_ptr<r_tex_c> tex;
 
-	r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags);
-	r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags, std::unique_ptr<image_c> img);
+	r_shader_c(r_renderer_c* renderer, std::u8string_view shname, int flags);
+	r_shader_c(r_renderer_c* renderer, std::u8string_view shname, int flags, std::unique_ptr<image_c> img);
 };
 
-r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags)
+r_shader_c::r_shader_c(r_renderer_c* renderer, std::u8string_view shname, int flags)
 	: renderer(renderer)
 {
 	name = shname;
-	nameHash = StringHash(name.c_str(), 0xFFFF);
+	nameHash = StringHash(name);
 	tex = r_tex_c::CreateFromPath(renderer->texMan.get(), name, flags);
 	if (tex->error) {
-		renderer->sys->con->Warning(fmt::format("couldn't load texture '{}'", name));
+		renderer->sys->con->Warning(fmt::format(u8"couldn't load texture '{}'", name));
 	}
 }
 
-r_shader_c::r_shader_c(r_renderer_c* renderer, std::string_view shname, int flags, std::unique_ptr<image_c> img)
+r_shader_c::r_shader_c(r_renderer_c* renderer, std::u8string_view shname, int flags, std::unique_ptr<image_c> img)
 	: renderer(renderer)
 {
 	name = shname;
-	nameHash = StringHash(name.c_str(), 0xFFFF);
+	nameHash = StringHash(name);
 	tex = r_tex_c::CreateFromImage(renderer->texMan.get(), std::move(img), flags);
 }
 
@@ -732,15 +732,15 @@ InterfacePtr<r_IRenderer> r_IRenderer::GetHandle(sys_IMain* sysHnd)
 r_renderer_c::r_renderer_c(sys_IMain* sysHnd)
 	: conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
-	r_compress = sys->con->Cvar_Add("r_compress", CV_ARCHIVE, "0");
-	r_screenshotFormat = sys->con->Cvar_Add("r_screenshotFormat", CV_ARCHIVE, "jpg");
-	r_layerDebug = sys->con->Cvar_Add("r_layerDebug", CV_ARCHIVE, "0");
-	r_layerOptimize = sys->con->Cvar_Add("r_layerOptimize", CV_ARCHIVE | CV_CLAMP, "1", 0, 1);
-	r_layerShuffle = sys->con->Cvar_Add("r_layerShuffle", CV_ARCHIVE | CV_CLAMP, "0", 0, 1);
-	r_elideFrames = sys->con->Cvar_Add("r_elideFrames", CV_ARCHIVE | CV_CLAMP, "1", 0, 1);
-	r_drawCull = sys->con->Cvar_Add("r_drawCull", CV_ARCHIVE | CV_CLAMP, "1", 0, 1);
+	r_compress = sys->con->Cvar_Add(u8"r_compress", CV_ARCHIVE, u8"0");
+	r_screenshotFormat = sys->con->Cvar_Add(u8"r_screenshotFormat", CV_ARCHIVE, u8"jpg");
+	r_layerDebug = sys->con->Cvar_Add(u8"r_layerDebug", CV_ARCHIVE, u8"0");
+	r_layerOptimize = sys->con->Cvar_Add(u8"r_layerOptimize", CV_ARCHIVE | CV_CLAMP, u8"1", 0, 1);
+	r_layerShuffle = sys->con->Cvar_Add(u8"r_layerShuffle", CV_ARCHIVE | CV_CLAMP, u8"0", 0, 1);
+	r_elideFrames = sys->con->Cvar_Add(u8"r_elideFrames", CV_ARCHIVE | CV_CLAMP, u8"1", 0, 1);
+	r_drawCull = sys->con->Cvar_Add(u8"r_drawCull", CV_ARCHIVE | CV_CLAMP, u8"1", 0, 1);
 
-	Cmd_Add("screenshot", 0, "[<format>]", this, &r_renderer_c::C_Screenshot);
+	Cmd_Add(u8"screenshot", 0, u8"[<format>]", this, &r_renderer_c::C_Screenshot);
 }
 
 static bool GetShaderCompileSuccess(GLuint id)
@@ -750,13 +750,13 @@ static bool GetShaderCompileSuccess(GLuint id)
 	return success == GL_TRUE;
 }
 
-static std::string GetShaderInfoLog(GLuint id)
+static std::u8string GetShaderInfoLog(GLuint id)
 {
 	GLint len{};
 	glGetShaderiv(id, GL_INFO_LOG_LENGTH, &len);
-	std::vector<char> msg(len);
-	glGetShaderInfoLog(id, (GLsizei)msg.size(), &len, msg.data());
-	return std::string(msg.data(), msg.data() + len);
+	std::vector<char8_t> msg(len);
+	glGetShaderInfoLog(id, (GLsizei)msg.size(), &len, (char*)msg.data());
+	return std::u8string(msg.data(), msg.data() + len);
 }
 
 static bool GetProgramLinkSuccess(GLuint id)
@@ -766,16 +766,16 @@ static bool GetProgramLinkSuccess(GLuint id)
 	return success == GL_TRUE;
 }
 
-static std::string GetProgramInfoLog(GLuint id)
+static std::u8string GetProgramInfoLog(GLuint id)
 {
 	GLint len{};
 	glGetProgramiv(id, GL_INFO_LOG_LENGTH, &len);
-	std::vector<char> msg(len);
-	glGetProgramInfoLog(id, (GLsizei)msg.size(), &len, msg.data());
-	return std::string(msg.data(), msg.data() + len);
+	std::vector<char8_t> msg(len);
+	glGetProgramInfoLog(id, (GLsizei)msg.size(), &len, (char*)msg.data());
+	return std::u8string(msg.data(), msg.data() + len);
 }
 
-static char const* s_tintedTextureVertexSource = R"(#version 300 es
+constexpr char const* s_tintedTextureVertexSource = R"(#version 300 es
 
 uniform mat4 mvp_matrix;
 
@@ -807,7 +807,7 @@ void main(void)
 }
 )";
 
-static char const* s_tintedTextureFragmentTemplate = R"(#version 300 es
+constexpr char const* s_tintedTextureFragmentTemplate = R"(#version 300 es
 precision mediump float;
 
 uniform highp sampler2DArray s_tex[{SG_TEXTURE_COUNT}];
@@ -869,7 +869,7 @@ void main(void) {
 
 void r_renderer_c::Init(r_featureFlag_e features)
 {
-	sys->con->PrintFunc("Render Init");
+	sys->con->PrintFunc(u8"Render Init");
 
 	apiDpiAware = !!(features & F_DPI_AWARE);
 
@@ -884,7 +884,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	set.bStencil = 0;
 	set.vsync = true;
 	if (openGL->Init(&set)) {
-		sys->Error("OpenGL initialisation failed");
+		sys->Error(u8"OpenGL initialisation failed");
 	}
 
 	// Get strings
@@ -894,7 +894,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	st_ext = (const char*)glGetString(GL_EXTENSIONS);
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, (int*)&texMaxDim);
-	sys->con->Print(fmt::format("GL_MAX_TEXTURE_SIZE: {}\n", texMaxDim));
+	sys->con->Print(fmt::format(u8"GL_MAX_TEXTURE_SIZE: {}\n", texMaxDim));
 
 	// Set default state
 	glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -903,34 +903,34 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	glEnable(GL_BLEND);
 
 	// Load extensions
-	sys->con->Print("Loading OpenGL extensions...\n");
+	sys->con->Print(u8"Loading OpenGL extensions...\n");
 
 	if (strstr(st_ext, "GL_EXT_texture_compression_s3tc")) {
-		sys->con->Print("using GL_EXT_texture_compression_s3tc\n");
+		sys->con->Print(u8"using GL_EXT_texture_compression_s3tc\n");
 		glCompressedTexImage2D = (PFNGLCOMPRESSEDTEXIMAGE2DPROC)openGL->GetProc("glCompressedTexImage2D");
 	}
 	else {
-		sys->con->Print("GL_EXT_texture_compression_s3tc not supported\n");
+		sys->con->Print(u8"GL_EXT_texture_compression_s3tc not supported\n");
 		glCompressedTexImage2D = NULL;
 	}
 
 	if (strstr(st_ext, "GL_EXT_texture_compression_bptc")) {
-		sys->con->Print("using GL_EXT_texture_compression_bptc\n");
+		sys->con->Print(u8"using GL_EXT_texture_compression_bptc\n");
 		texBC7 = true;
 	}
 	else {
-		sys->con->Print("GL_EXT_texture_compression_bptc not supported\n");
+		sys->con->Print(u8"GL_EXT_texture_compression_bptc not supported\n");
 		texBC7 = false;
 	}
 
 	if (strstr(st_ext, "GL_EXT_debug_marker")) {
-		sys->con->Print("using GL_EXT_debug_marker\n");
+		sys->con->Print(u8"using GL_EXT_debug_marker\n");
 		glInsertEventMarkerEXT = (PFNGLINSERTEVENTMARKEREXTPROC)openGL->GetProc("glInsertEventMarkerEXT");
 		glPushGroupMarkerEXT = (PFNGLPUSHGROUPMARKEREXTPROC)openGL->GetProc("glPushGroupMarkerEXT");
 		glPopGroupMarkerEXT = (PFNGLPOPGROUPMARKEREXTPROC)openGL->GetProc("glPopGroupMarkerEXT");
 	}
 	else {
-		sys->con->Print("GL_EXT_debug_marker not supported\n");
+		sys->con->Print(u8"GL_EXT_debug_marker not supported\n");
 		glInsertEventMarkerEXT = NULL;
 		glPushGroupMarkerEXT = NULL;
 		glPopGroupMarkerEXT = NULL;
@@ -952,8 +952,8 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		glShaderSource(vs, 1, &s_tintedTextureVertexSource, nullptr);
 		glCompileShader(vs);
 		if (!GetShaderCompileSuccess(vs)) {
-			std::string log = GetShaderInfoLog(vs);
-			sys->Error("Failed to compile vertex shader:\n%s", log.c_str());
+			const auto log = GetShaderInfoLog(vs);
+			sys->Error(u8"Failed to compile vertex shader:\n%s", log.c_str());
 		}
 		GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
 		std::string textureSwitch;
@@ -985,16 +985,16 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		glShaderSource(fs, 1, &fragSourcePtr, nullptr);
 		glCompileShader(fs);
 		if (!GetShaderCompileSuccess(fs)) {
-			std::string log = GetShaderInfoLog(fs);
-			sys->Error("Failed to compile fragment shader:\n%s", log.c_str());
+			const auto log = GetShaderInfoLog(fs);
+			sys->Error(u8"Failed to compile fragment shader:\n%s", log.c_str());
 		}
 
 		glAttachShader(prog, vs);
 		glAttachShader(prog, fs);
 		glLinkProgram(prog);
 		if (!GetProgramLinkSuccess(prog)) {
-			std::string log = GetProgramInfoLog(prog);
-			sys->Error("Failed to link program:\n%s", log.c_str());
+			const auto log = GetProgramInfoLog(prog);
+			sys->Error(u8"Failed to link program:\n%s", log.c_str());
 		}
 		glDeleteShader(vs);
 		glDeleteShader(fs);
@@ -1034,13 +1034,13 @@ void r_renderer_c::Init(r_featureFlag_e features)
 
 			auto vsId = compileShader(s_scaleVsSource, GL_VERTEX_SHADER);
 			if (!GetShaderCompileSuccess(vsId)) {
-				auto log = GetShaderInfoLog(vsId);
-				sys->con->Print(fmt::format("Scaling VS compile failure: {}\n", log));
+				const auto log = GetShaderInfoLog(vsId);
+				sys->con->Print(fmt::format(u8"Scaling VS compile failure: {}\n", log));
 			}
 			auto fsId = compileShader(s_scaleFsSource, GL_FRAGMENT_SHADER);
 			if (!GetShaderCompileSuccess(fsId)) {
-				auto log = GetShaderInfoLog(fsId);
-				sys->con->Print(fmt::format("Scaling FS compile failure: {}\n", log));
+				const auto log = GetShaderInfoLog(fsId);
+				sys->con->Print(fmt::format(u8"Scaling FS compile failure: {}\n", log));
 			}
 
 			GLuint prog = rtt.blitProg = glCreateProgram();
@@ -1048,8 +1048,8 @@ void r_renderer_c::Init(r_featureFlag_e features)
 			glAttachShader(prog, fsId);
 			glLinkProgram(prog);
 			if (!GetProgramLinkSuccess(prog)) {
-				auto log = GetProgramInfoLog(prog);
-				sys->con->Print(fmt::format("Scaling program link failure: {}\n", log));
+				const auto log = GetProgramInfoLog(prog);
+				sys->con->Print(fmt::format(u8"Scaling program link failure: {}\n", log));
 			}
 
 			GLint linked = GL_FALSE;
@@ -1065,10 +1065,10 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	}
 
 	// Load render resources
-	sys->con->Print("Loading resources...\n");
+	sys->con->Print(u8"Loading resources...\n");
 
-	whiteImage = RegisterShader("@white", 0);
-	blackImage = RegisterShader("@black", 0);
+	whiteImage = RegisterShader(u8"@white", 0);
+	blackImage = RegisterShader(u8"@black", 0);
 
 	imguiCtx = ImGui::CreateContext();
 	ImGui::SetCurrentContext(imguiCtx);
@@ -1076,22 +1076,22 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	ImGui_ImplGlfw_InitForOpenGL((GLFWwindow*)sys->video->GetWindowHandle(), true);
 	ImGui_ImplOpenGL3_Init("#version 100");
 
-	fonts[F_FIXED] = new r_font_c(this, "Bitstream Vera Sans Mono");
-	fonts[F_VAR] = new r_font_c(this, "Liberation Sans");
-	fonts[F_VAR_BOLD] = new r_font_c(this, "Liberation Sans Bold");
-	fonts[F_FONTIN_SC] = new r_font_c(this, "Fontin SmallCaps");
-	fonts[F_FONTIN_SC_ITALIC] = new r_font_c(this, "Fontin SmallCaps Italic");
-	fonts[F_FONTIN] = new r_font_c(this, "Fontin");
-	fonts[F_FONTIN_ITALIC] = new r_font_c(this, "Fontin Italic");
+	fonts[F_FIXED] = new r_font_c(this, u8"Bitstream Vera Sans Mono");
+	fonts[F_VAR] = new r_font_c(this, u8"Liberation Sans");
+	fonts[F_VAR_BOLD] = new r_font_c(this, u8"Liberation Sans Bold");
+	fonts[F_FONTIN_SC] = new r_font_c(this, u8"Fontin SmallCaps");
+	fonts[F_FONTIN_SC_ITALIC] = new r_font_c(this, u8"Fontin SmallCaps Italic");
+	fonts[F_FONTIN] = new r_font_c(this, u8"Fontin");
+	fonts[F_FONTIN_ITALIC] = new r_font_c(this, u8"Fontin Italic");
 
-	sys->con->Print(fmt::format("Renderer initialised in {} msec.\n", timer.Get()));
+	sys->con->Print(fmt::format(u8"Renderer initialised in {} msec.\n", timer.Get()));
 }
 
 void r_renderer_c::Shutdown()
 {
-	sys->con->PrintFunc("Render Shutdown");
+	sys->con->PrintFunc(u8"Render Shutdown");
 
-	sys->con->Print("Unloading resources...\n");
+	sys->con->Print(u8"Unloading resources...\n");
 
 	ImGui_ImplOpenGL3_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
@@ -1128,7 +1128,7 @@ void r_renderer_c::Shutdown()
 	openGL->Shutdown();
 	openGL.reset();
 
-	sys->con->Print("Renderer shutdown complete.\n");
+	sys->con->Print(u8"Renderer shutdown complete.\n");
 }
 
 // =================
@@ -1502,19 +1502,19 @@ void r_renderer_c::EndFrame()
 	case R_SSTGA:
 	{
 		targa_c i(sys->con.get());
-		DoScreenshot(&i, IMGTYPE_RGB, "tga");
+		DoScreenshot(&i, IMGTYPE_RGB, u8"tga");
 	}
 	break;
 	case R_SSJPEG:
 	{
 		jpeg_c i(sys->con.get());
-		DoScreenshot(&i, IMGTYPE_RGB, "jpg");
+		DoScreenshot(&i, IMGTYPE_RGB, u8"jpg");
 	}
 	break;
 	case R_SSPNG:
 	{
 		png_c i(sys->con.get());
-		DoScreenshot(&i, IMGTYPE_RGB, "png");
+		DoScreenshot(&i, IMGTYPE_RGB, u8"png");
 	}
 	break;
 	}
@@ -1540,15 +1540,15 @@ void r_renderer_c::PurgeShaders()
 	shaderList.erase(std::remove_if(shaderList.begin(), shaderList.end(), [](const std::weak_ptr<r_shader_c>& entry) { return entry.expired(); }), shaderList.end());
 }
 
-r_shaderHnd_c* r_renderer_c::RegisterShader(std::string_view shname, int flags)
+r_shaderHnd_c* r_renderer_c::RegisterShader(std::u8string_view shname, int flags)
 {
 	if (shname.empty()) {
 		return NULL;
 	}
 
-	std::string name(shname);
-	PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(name.c_str());
-	dword nameHash = StringHash(name, 0xFFFF);
+	std::u8string name(shname);
+	PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA((const char*)name.c_str());
+	const auto nameHash = StringHash(name);
 	int newId = -1;
 	auto found = std::find_if(shaderList.begin(), shaderList.end(), [&name, &nameHash, &flags](const auto& entry) {
 		if (std::shared_ptr<r_shader_c> sp = entry.lock())
@@ -1569,7 +1569,7 @@ r_shaderHnd_c* r_renderer_c::RegisterShader(std::string_view shname, int flags)
 
 r_shaderHnd_c* r_renderer_c::RegisterShaderFromImage(std::unique_ptr<image_c> img, int flags)
 {
-	std::string shname = fmt::format("data:%d", shaderList.size());
+	const auto shname = fmt::format(u8"data:%d", shaderList.size());
 	std::shared_ptr sp = std::make_shared<r_shader_c>(this, shname, flags, std::move(img));
 	shaderList.push_back(sp);
 	return new r_shaderHnd_c(std::move(sp));
@@ -1579,7 +1579,7 @@ void r_renderer_c::GetShaderImageSize(r_shaderHnd_c* hnd, int& width, int& heigh
 {
 	if (hnd && hnd->sh)
 	{
-		PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(hnd->sh->name.size() ? hnd->sh->name.c_str() : "<nameless>");
+		PERFORMANCEAPI_INSTRUMENT_FUNCTION_DATA(hnd->sh->name.size() ? (const char*)hnd->sh->name.c_str() : "<nameless>");
 		auto& tex = *hnd->sh->tex;
 		tex.WaitOnStatusAtLeast(r_tex_c::SIZE_KNOWN);
 		width = tex.fileWidth;
@@ -1859,23 +1859,23 @@ void r_renderer_c::ToggleDebugImGui() {
 
 void r_renderer_c::C_Screenshot(IConsole* conHnd, args_c& args)
 {
-	const char* fmtName = args.argc >= 2 ? args.argv[1] : r_screenshotFormat->strVal.c_str();
+	const auto fmtName = args.argc >= 2 ? std::u8string_view(args.argv[1]) : std::u8string_view(r_screenshotFormat->strVal);
 	takeScreenshot = R_SSNONE;
-	if (!_stricmp(fmtName, "tga")) {
+	if (fmtName == u8"tga") {
 		takeScreenshot = R_SSTGA;
 	}
-	else if (!_stricmp(fmtName, "jpg") || !_stricmp(fmtName, "jpeg")) {
+	else if (fmtName == u8"jpg" || fmtName == u8"jpeg") {
 		takeScreenshot = R_SSJPEG;
 	}
-	else if (!_stricmp(fmtName, "png")) {
+	else if (fmtName == u8"png") {
 		takeScreenshot = R_SSPNG;
 	}
 	else {
-		conHnd->Warning(fmt::format("Unknown screenshot format '{}', valid formats: jpg, tga, png", fmtName));
+		conHnd->Warning(fmt::format(u8"Unknown screenshot format '{}', valid formats: jpg, tga, png", fmtName));
 	}
 }
 
-void r_renderer_c::DoScreenshot(image_c* i, int type, const char* ext)
+void r_renderer_c::DoScreenshot(image_c* i, int type, std::u8string_view ext)
 {
 	if (type != IMGTYPE_RGB) {
 		return;
@@ -1923,22 +1923,22 @@ void r_renderer_c::DoScreenshot(image_c* i, int type, const char* ext)
 
 	time_t curTime;
 	time(&curTime);
-	auto ssPath = std::filesystem::u8path(fmt::format(CFG_DATAPATH "Screenshots/{:%m%d%y_%H%M%S}.{}",
+	const auto ssPath = std::filesystem::u8path(fmt::format(CFG_DATAPATH "Screenshots/{:%m%d%y_%H%M%S}.{}",
 		*std::localtime(&curTime), ext));
 
 	// Make folder if it doesn't exist
 	std::error_code ec;
 	std::filesystem::create_directories(ssPath.parent_path(), ec);
 	if (ec) {
-		sys->con->Print("Couldn't create screenshot folder!\n");
+		sys->con->Print(u8"Couldn't create screenshot folder!\n");
 		return;
 	}
 
 	if (i->Save(ssPath)) {
-		sys->con->Print("Couldn't write screenshot!\n");
+		sys->con->Print(u8"Couldn't write screenshot!\n");
 		return;
 	}
-	sys->con->Print(fmt::format("Wrote screenshot to {}\n", ssPath.generic_u8string()).c_str());
+	sys->con->Print(fmt::format(u8"Wrote screenshot to {}\n", ssPath.generic_u8string()));
 }
 
 r_renderer_c::RenderTarget& r_renderer_c::GetDrawRenderTarget()
