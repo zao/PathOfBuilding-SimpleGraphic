@@ -5,7 +5,10 @@
 //
 
 #include "common.h"
+#include <algorithm>
+#include <ranges>
 #include <span>
+#include <tuple>
 #include <xxh3.h>
 
 // ===================
@@ -19,9 +22,14 @@ args_c::args_c(std::u8string_view in)
 	argBuf = in;
 	std::u8string_view view = argBuf;
 	while (!view.empty()) {
-		if (const size_t nonSpacePos = view.find_first_not_of(spaceChars); nonSpacePos != view.npos && nonSpacePos > 0) {
+		if (const size_t nonSpacePos = view.find_first_not_of(spaceChars); nonSpacePos == view.npos) {
+			break;
+		}
+		else if (nonSpacePos > 0) {
 			view = view.substr(nonSpacePos);
-		} else if (view[0] == u8'"') {
+		}
+
+		if (view[0] == u8'"') {
 			const size_t quotePos = view.find(u8'"', 1);
 			if (quotePos != view.npos) {
 				argv.push_back(view.substr(1, quotePos - 1));
@@ -55,65 +63,21 @@ std::u8string_view args_c::operator[](int i) const
 // Text Buffer Class
 // =================
 
-textBuffer_c::textBuffer_c()
-{
-	buf = NULL;
-	Init();
-}
-
-textBuffer_c::~textBuffer_c()
-{
-	Free();
-}
-
-void textBuffer_c::Alloc(int sz)
-{
-	// Allocate, set length and position, and null-teriminate.
-	Free();
-	buf = new char8_t[sz+1];
-	caret = len = sz;
-	buf[len] = 0;
-}
-
-void textBuffer_c::Init()
-{
-	// Initialise to zero length
-	Alloc(0);
-}
-
-void textBuffer_c::Free()
-{
-	// Delete buffer memory
-	delete[] buf;
-	buf = NULL;
-}
-
 textBuffer_c &textBuffer_c::operator=(std::u8string_view r)
 {
-	// Reallocate buffer and copy the string
-	Alloc((int)r.size());
-	memcpy(buf, r.data(), r.size());
+	buf = r;
+	caret = r.size();
 	return *this;
 }
 
 void textBuffer_c::IncSize()
 {
-	len++;
-	char8_t* tmp = new char8_t[len+1];
-	memcpy(tmp, buf, len);
-	tmp[len] = 0;
-	delete buf;
-	buf = tmp;	
+	buf.push_back({});
 }
 
 void textBuffer_c::DecSize()
 {
-	len--;
-	char8_t* tmp = new char8_t[len+1];
-	memcpy(tmp, buf, len);
-	tmp[len] = 0;
-	delete buf;
-	buf = tmp;
+	buf.pop_back();
 }
 
 bool textBuffer_c::KeyEvent(int key, int type)
@@ -129,15 +93,15 @@ bool textBuffer_c::KeyEvent(int key, int type)
 		if (caret > 0) {
 			caret--;
 			if (caret > 2 && (escLen = IsColorEscape(&buf[caret-1]))) {
-				caret-= escLen;
+				caret -= escLen;
 			}
 		}
 		return true;
 	case KEY_RIGHT:
-		if (caret < len) {
+		if (caret < buf.size()) {
 			caret++;
-			if (len - caret > 2 && (escLen = IsColorEscape(&buf[caret]))) {
-				caret+= escLen;
+			if (buf.size() - caret > 2 && (escLen = IsColorEscape(&buf[caret]))) {
+				caret += escLen;
 			}
 		}
 		return true;
@@ -146,34 +110,23 @@ bool textBuffer_c::KeyEvent(int key, int type)
 		caret = 0;
 		return true;
 	case KEY_END:
-		caret = len;
+		caret = buf.size();
 		return true;
 	// Backspace: delete character to left of cursor, shift remaining buffer
 	case KEY_BACK:
-		if (len && caret) {
-			for (int c = caret - 1; c <= len; c++) {
-				buf[c] = buf[c + 1];
-			}
-			if (caret > 0) caret--;
-			DecSize();
+		if (!buf.empty() && caret > 0) {
+			buf.erase(--caret);
 		}
 		return true;
 	// Delete: delete character above cursor, shift remaining buffer
 	case KEY_DELETE:
-		if (len && caret < len) {
-			for (int c = caret; c <= len; c++) {
-				buf[c] = buf[c + 1];
-			}
-			DecSize();
+		if (!buf.empty() && caret < buf.size()) {
+			buf.erase(caret);
 		}
 		return true;
 	default:
 		if (type == KE_CHAR && key >= 32) {
-			for (int c = len; c >= caret; c--) {
-				buf[c] = buf[c - 1];
-			}
-			buf[caret++] = key;
-			IncSize();
+			buf.insert(caret++, 1, (char8_t)key);
 			return true;
 		}
 		break;
@@ -367,6 +320,20 @@ static wchar_t* WidenCodepageString(const char* str, UINT codepage)
 	MultiByteToWideChar(codepage, 0, str, cb, wstr, cch);
 	wstr[cch] = '\0';
 	return wstr;
+}
+
+bool CaseInsensitiveEqual(char8_t a, char8_t b)
+{
+	return std::tolower(a) == std::tolower(b);
+}
+
+bool CaseInsensitiveEqual(std::u8string_view a, std::u8string_view b)
+{
+	if (a.size() != b.size())
+		return false;
+	return std::ranges::all_of(std::views::zip(a, b), [](auto couple) {
+		return CaseInsensitiveEqual(std::get<0>(couple), std::get<1>(couple));
+	});
 }
 
 wchar_t* WidenANSIString(const char* str)

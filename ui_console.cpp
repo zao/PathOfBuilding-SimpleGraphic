@@ -44,9 +44,9 @@ public:
 	} mode;
 	int		moveStart = 0;
 
-	char8_t	input[1024] = {};
+	std::u8string input;
 	int		caret = 0;
-	void	SetConInput(char8_t* newInput, int newCaret);
+	void	SetConInput(std::u8string_view newInput, int newCaret);
 };
 
 InterfacePtr<ui_IConsole> ui_IConsole::GetHandle(ui_main_c* ui)
@@ -201,13 +201,8 @@ void ui_console_c::Render()
 	renderer->DrawString(fontSize * 0.66f, basey, F_LEFT, fontSize, colorWhite, F_FIXED, (const char*)caretStr.c_str());
 }
 
-void ui_console_c::SetConInput(char8_t* newInput, int newCaret)
+void ui_console_c::SetConInput(std::u8string_view newInput, int newCaret)
 {
-	std::u8string_view nextInput = newInput;
-	if (nextInput.size() >= 1024) {
-		nextInput = nextInput.substr(0, 1023);
-	}
-	memcpy(input, nextInput.data(), nextInput.size());
-	input[nextInput.size()] = '\0';
-	caret = newCaret; // TOOD(LV): bounds-check new caret?
+	input = newInput;
+	caret = clamp(newCaret, 0, (int)input.size());
 }

@@ -404,7 +404,7 @@ void conCmdHandler_c::Cmd_PrivAdd(const char8_t* name, int minArgs, const char8_
 conCmd_c* console_c::Cmd_Ptr(std::u8string_view name)
 {
 	std::u8string name_str(name);
-	const auto it = std::find_if(cmdList.begin(), cmdList.end(), [name](const conCmd_c& cmd) { return cmd.name == name; });
+	const auto it = std::find_if(cmdList.begin(), cmdList.end(), [name](const conCmd_c& cmd) { return CaseInsensitiveEqual(cmd.name, name); });
 	if (it != cmdList.end()) {
 		return &*it;
 	}
@@ -413,12 +413,13 @@ conCmd_c* console_c::Cmd_Ptr(std::u8string_view name)
 
 conCmd_c* console_c::EnumCmd(int* index)
 {
-	if (*index < -1 || *index >= cmdList.size() - 1) {
+	const auto entryCount = (int)cmdList.size();
+	if (*index < -1 || *index >= entryCount - 1) {
 		return NULL;
 	}
 	while (1) {
 		(*index)++;
-		if (*index >= cmdList.size()) {
+		if (*index >= entryCount) {
 			return NULL;
 		}
 		return &cmdList[*index];
@@ -481,7 +482,7 @@ int console_c::Cvar_Find(std::u8string_view name)
 	int slot = 0;
 	// Find the cvar and return the index
 	for (const auto& cv : cvarList) {
-		if (cv && cv->name == name)
+		if (cv && CaseInsensitiveEqual(cv->name, name))
 			return slot;
 		++slot;
 	}
@@ -490,12 +491,13 @@ int console_c::Cvar_Find(std::u8string_view name)
 
 conVar_c* console_c::EnumCvar(int* index)
 {
-	if (*index < -1 || *index >= cvarList.size() - 1) {
+	const int entryCount = (int)cvarList.size();
+	if (*index < -1 || *index >= entryCount - 1) {
 		return nullptr;
 	}
 	while (1) {
 		(*index)++;
-		if (*index >= cvarList.size()) {
+		if (*index >= entryCount) {
 			return nullptr;
 		}
 		if (cvarList[*index]) {
@@ -513,14 +515,17 @@ void console_c::Execute(std::u8string_view cmd)
 	std::u8string_view newCmd = cmd;
 	std::u8string_view sep = u8";\n";
 	while (!newCmd.empty()) {
+		std::u8string_view lp;
 		auto end = newCmd.find_first_of(sep);
 		if (end == newCmd.npos) {
-			end = newCmd.size();
+			lp = newCmd;
+			newCmd = {};
 		}
-		std::u8string lp(newCmd.substr(0, end));
-		newCmd = newCmd.substr(end);
-
-		cmdBuf_lines.push_back(lp);
+		else {
+			lp = newCmd.substr(0, end);
+			newCmd = newCmd.substr(end + 1);
+		}
+		cmdBuf_lines.emplace_back(lp);
 	}
 }
 
@@ -582,7 +587,7 @@ conInputHandler_c::conInputHandler_c(IConsole* conHnd)
 void conInputHandler_c::ClearConInput()
 {
 	_con->histSel = -1;		
-	_con->input.Init();
+	_con->input = u8"";
 
 	RefreshConInput();
 }
@@ -607,7 +612,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 			return;
 		// Up/down select from command history
 		case KEY_UP:
-			if (_con->histSel < _con->hist.size()) {
+			if (_con->histSel < (int)_con->hist.size() - 1) {
 				// Copy next history item
 				_con->histSel++;
 				_con->input = _con->hist[_con->histSel].buf;
@@ -627,7 +632,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 			return;
 		// Tab completes or finds matches for input buffer text
 		case KEY_TAB:
-			if (_con->input.len) {
+			if (!_con->input.buf.empty()) {
 				std::u8string comp = _con->input.buf;
 				int	compLen = comp.size();
 
@@ -639,12 +644,12 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 				};
 				std::vector<Match> matches;
 				for (const auto& cmd : _con->cmdList) {
-					if (std::u8string_view(cmd.name).substr(0, comp.size()) == comp) {
+					if (CaseInsensitiveEqual(std::u8string_view(cmd.name).substr(0, comp.size()), comp)) {
 						matches.emplace_back(Match{cmd.name, cmd.usage});
 					}
 				}
 				for (const auto& cv : _con->cvarList) {
-					if (cv && std::u8string_view(cv->name).substr(0, comp.size()) == comp) {
+					if (cv && CaseInsensitiveEqual(std::u8string_view(cv->name).substr(0, comp.size()), comp)) {
 						matches.emplace_back(Match{cv->name, fmt::format(u8"= \"{}\"", cv->strVal)});
 					}
 				}
@@ -672,7 +677,7 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 							char c = matches[0].match[compIdx];
 							bool fail = false;
 							for (int m = 1; m < matches.size(); m++) {
-								if (matches[m].match[compIdx] != c) {
+								if (!CaseInsensitiveEqual(matches[m].match[compIdx], c)) {
 									fail = true;
 									break;
 								}
@@ -692,13 +697,13 @@ void conInputHandler_c::ConInputKeyEvent(int key, int type)
 			return;
 		// Return executes input buffer
 		case KEY_RETURN:
-			if (_con->input.len) {
+			if (!_con->input.buf.empty()) {
 				// Execute buffer
 				_con->Print(fmt::format(u8"]{}\n", _con->input.buf));
 				_con->Execute(_con->input.buf);
 
 				// Add to command history if different from most recent command
-				if (_con->hist.empty() || _stricmp((const char*)_con->hist[0].buf, (const char*)_con->input.buf)) {
+				if (_con->hist.empty() || !CaseInsensitiveEqual(_con->hist[0].buf, _con->input.buf)) {
 					if (_con->hist.size() == CON_MAXHIST)
 						_con->hist.pop_back();
 					_con->hist.emplace_front() = _con->input.buf;

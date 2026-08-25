@@ -75,7 +75,7 @@ protected:
 	void	ClearConInput();
 	void	RefreshConInput();
 	void	ConInputKeyEvent(int key, int type);
-	virtual void SetConInput(char8_t* text, int caret) = 0;
+	virtual void SetConInput(std::u8string_view text, int caret) = 0;
 private:
 	class console_c* _con;
 };

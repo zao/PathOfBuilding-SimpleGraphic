@@ -80,21 +80,14 @@ private:
 
 class textBuffer_c {
 public:
-	textBuffer_c();
-	~textBuffer_c();
+	std::u8string buf;	// Buffer;
+	int		caret = 0;	// Cursor position
 
-	char8_t*	buf;		// Buffer
-	int		len;		// Buffer text length
-	int		caret;		// Cursor position
-
-	void	Init();		// Initialise the buffer
-	void	Free();		// Free the buffer
 	bool	KeyEvent(int key, int type);// Act on a keypress
 
 	textBuffer_c &operator=(std::u8string_view r);
 
 private:
-	void	Alloc(int sz);// Allocate the buffer
 	void	IncSize();	// Increment buffer size
 	void	DecSize();	// Decrement buffer size
 };
@@ -507,6 +500,9 @@ IndexedUTF32String IndexUTF8ToUTF32(std::string_view str);
 
 inline std::u8string_view AsU8StringView(std::string_view sv) { return std::u8string_view((const char8_t*)sv.data(), sv.size()); }
 inline std::string_view AsStringView(std::u8string_view sv) { return std::string_view((const char*)sv.data(), sv.size()); }
+
+bool CaseInsensitiveEqual(char8_t a, char8_t b);
+bool CaseInsensitiveEqual(std::u8string_view a, std::u8string_view b);
 
 #ifdef _WIN32
 wchar_t* WidenANSIString(const char* str);
