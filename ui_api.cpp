@@ -2123,7 +2123,7 @@ static int l_Exit(lua_State* L)
 		ui->LAssert(L, lua_isstring(L, 1), "Exit() argument 1: expected string or nil, got %s", luaL_typename(L, 1));
 		msg = lua_tostring(L, 1);
 	}
-	ui->sys->Exit((const char8_t*)msg);
+	ui->sys->Exit(msg ? (const char8_t*)msg : u8"");
 	ui->didExit = true;
 	return 0;
 }

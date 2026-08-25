@@ -6,29 +6,25 @@
 
 #include "ui_local.h"
 
+#include <latch>
+#include <variant>
+
+#include <moodycamel/concurrentqueue.h>
+#include <readerwriterqueue/readerwriterqueue.h>
+
 // =======
 // Classes
 // =======
 
 struct ssTweenData_s {
-	ssTweenData_s* next;
-	enum {
-		NIL,
-		BOOLEAN,
-		NUM,
-		STRING
-	} type;
-	union {
-		bool boolean;
-		double num;
-		char* string;
-	};
+	std::unique_ptr<ssTweenData_s> next;
+	using Value = std::variant<std::monostate, bool, double, std::u8string>;
+	Value value;
 };
 
 struct ssCall_s {
-	ssCall_s* next = nullptr;
-	const char* name = nullptr;
-	ssTweenData_s* data = nullptr;
+	std::u8string name;
+	std::unique_ptr<ssTweenData_s> data;
 };
 
 // =======================
@@ -51,13 +47,15 @@ public:
 	uintptr_t id = 0;
 
 	lua_State* L = nullptr;
-	bool	running = false;
-	bool	finished = false;
-	bool	subWriting = false;
-	ssCall_s* subCalls = nullptr;
-	bool	funcWaiting = false;
-	ssCall_s funcCall;
-	char*	errorStr = nullptr;
+	std::atomic<bool> running = false;
+	std::latch finished{1};
+	
+	moodycamel::BlockingReaderWriterQueue<ssCall_s> subCalls{32};
+
+	moodycamel::BlockingReaderWriterQueue<ssCall_s> funcCall{1};
+	moodycamel::BlockingReaderWriterQueue<std::unique_ptr<ssTweenData_s>> funcReturn{1};
+
+	std::optional<std::u8string> errorStr;
 
 	void	Stop();
 
@@ -75,16 +73,13 @@ ui_subscript_c::ui_subscript_c(ui_main_c* ui, uintptr_t id)
 	: thread_c(ui->sys), ui(ui), id(id)
 {
 	L = NULL;
-	errorStr = NULL;
 	running = false;
-	finished = false;
 }
 
 ui_subscript_c::~ui_subscript_c()
 {
 	Stop();
 
-	FreeString(errorStr);
 	if (L) {
 		lua_close(L);
 	}
@@ -144,77 +139,58 @@ static int l_panicFunc(lua_State* L)
 // Tween Data Helpers
 // ==================
 
-static ssTweenData_s* ssBuildData(lua_State* L, int start)
+static std::unique_ptr<ssTweenData_s> ssBuildData(lua_State* L, int start)
 {
-	ssTweenData_s* ret = NULL;
-	ssTweenData_s* last = NULL;
+	std::unique_ptr<ssTweenData_s> ret;
+	ssTweenData_s* last{};
 	int n = lua_gettop(L);
 	for (int a = start; a <= n; a++) {
-		ssTweenData_s* d = new ssTweenData_s;
-		d->next = NULL;
-		if (last) {
-			last->next = d;
-			last = d;
-		} else {
-			ret = last = d;
-		}
+		auto d = std::make_unique<ssTweenData_s>();
 		switch (lua_type(L, a)) {
 		case LUA_TNIL:
-			d->type = ssTweenData_s::NIL;
 			break;
 		case LUA_TBOOLEAN:
-			d->type = ssTweenData_s::BOOLEAN;
-			d->boolean = (lua_toboolean(L, a) != 0);
+			d->value.emplace<bool>(lua_toboolean(L, a) != 0);
 			break;
 		case LUA_TNUMBER:
-			d->type = ssTweenData_s::NUM;
-			d->num = lua_tonumber(L, a);
+			d->value.emplace<double>(lua_tonumber(L, a));
 			break;
 		case LUA_TSTRING:
-			d->type = ssTweenData_s::STRING;
-			d->string = AllocString(lua_tostring(L, a));
+			d->value.emplace<std::u8string>((const char8_t*)lua_tostring(L, a));
 			break;
+		}
+		if (last) {
+			last->next = std::move(d);
+			last = last->next.get();
+		}
+		else {
+			ret = std::move(d);
+			last = ret.get();
 		}
 	}
 	lua_settop(L, start - 1);
 	return ret;
 }
 
-static void ssWipeData(ssTweenData_s* list)
-{
-	while (list) {
-		ssTweenData_s* data = list;
-		if (data->type == ssTweenData_s::STRING) {
-			delete data->string;
-		}
-		list = data->next;
-		delete data;
-	}
-}
-
-static int ssPushData(lua_State* L, ssTweenData_s* list)
+static int ssPushData(lua_State* L, std::unique_ptr<ssTweenData_s> list)
 {
 	int numdat = 0;
 	for ( ; list; numdat++) {
-		ssTweenData_s* data = list;
+		const auto data = std::move(list);
 		lua_checkstack(L, 1);
-		switch (data->type) {
-		case ssTweenData_s::NIL:
+		if (std::holds_alternative<std::monostate>(data->value)) {
 			lua_pushnil(L);
-			break;
-		case ssTweenData_s::BOOLEAN:
-			lua_pushboolean(L, data->boolean);
-			break;
-		case ssTweenData_s::NUM:
-			lua_pushnumber(L, data->num);
-			break;
-		case ssTweenData_s::STRING:
-			lua_pushstring(L, data->string);
-			delete data->string;
-			break;
 		}
-		list = data->next;
-		delete data;
+		else if (const auto* val = std::get_if<bool>(&data->value)) {
+			lua_pushboolean(L, *val);
+		}
+		else if (const auto* val = std::get_if<double>(&data->value)) {
+			lua_pushnumber(L, *val);
+		}
+		else if (const auto* val = std::get_if<std::u8string>(&data->value)) {
+			lua_pushstring(L, (const char*)val->c_str());
+		}
+		list = std::move(data->next);
 	}
 	return numdat;
 }
@@ -232,11 +208,14 @@ static int l_SubScriptFunc(lua_State* L)
 		ss->LAssert(lua_isnil(L, i) || lua_isboolean(L, i) || lua_isnumber(L, i) || lua_isstring(L, i),
 			"%s() argument %d: only nil, boolean, number and string can be passed to the main script", funcName, i);
 	}
-	ss->funcCall.name = funcName;
-	ss->funcCall.data = ssBuildData(L, 1);
-	ss->funcWaiting = true;
-	while (ss->funcWaiting) ss->ui->sys->Sleep(1);
-	return ssPushData(L, ss->funcCall.data);
+	ssCall_s call{};
+	call.name = (const char8_t*)funcName;
+	call.data = ssBuildData(L, 1);
+	ss->funcCall.emplace(std::move(call));
+
+	std::unique_ptr<ssTweenData_s> callRet;
+	ss->funcReturn.wait_dequeue(callRet);
+	return ssPushData(L, std::move(callRet));
 }
 
 static int l_SubScriptSub(lua_State* L)
@@ -248,21 +227,10 @@ static int l_SubScriptSub(lua_State* L)
 		ss->LAssert(lua_isnil(L, i) || lua_isboolean(L, i) || lua_isnumber(L, i) || lua_isstring(L, i),
 			"%s() argument %d: only nil, boolean, number and string can be passed to the main script", subName, i);
 	}
-	ss->subWriting = true;
-	ssCall_s* calls = ss->subCalls;
-	ssCall_s* call = new ssCall_s;
-	call->name = subName;
-	call->data = ssBuildData(L, 1);
-	call->next = NULL;
-	if (calls) {
-		while (calls->next) {
-			calls = calls->next;
-		}
-		calls->next = call;
-	} else {
-		ss->subCalls = call;
-	}
-	ss->subWriting = false;
+	ssCall_s call{};
+	call.name = (const char8_t*)subName;
+	call.data = ssBuildData(L, 1);
+	ss->subCalls.emplace(std::move(call));
 	return 0;
 }
 
@@ -296,11 +264,6 @@ static void l_hookStop(lua_State* L, lua_Debug* dbg)
 
 bool ui_subscript_c::Start()
 {
-	subWriting = false;
-	subCalls = NULL;
-	funcWaiting = false;
-	errorStr = NULL;
-
 	// Initialise Lua
 	L = luaL_newstate();
 	if ( !L ) return false;
@@ -342,27 +305,21 @@ bool ui_subscript_c::Start()
 
 void ui_subscript_c::Stop()
 {
+	ssCall_s call;
 	if (running) {
 		// Set hook to stop script on the next line
 		lua_sethook(L, l_hookStop, LUA_MASKLINE, 0);
-		while ( !finished && !funcWaiting ) ui->sys->Sleep(0);
+		while ( !finished.try_wait() && !funcCall.try_dequeue(call)) ui->sys->Sleep(0);
 	}
 
-	if (funcWaiting) {
+	if (call.data) {
 		// Script is waiting on function call; discard and wait for script to stop
-		ssWipeData(funcCall.data);
-		funcCall.data = NULL;
-		funcWaiting = false;
-		while ( !finished ) ui->sys->Sleep(0);
+		funcReturn.emplace();
+		finished.wait();
 	}
 
 	// Discard data for any pending sub calls
-	while (subCalls) {
-		ssCall_s* call = subCalls;
-		subCalls = call->next;
-		ssWipeData(call->data);
-		delete call;
-	}
+	while (subCalls.pop()) {}
 }
 
 void ui_subscript_c::ThreadProc()
@@ -371,43 +328,37 @@ void ui_subscript_c::ThreadProc()
 	int numarg = (int)lua_tointeger(L, -1);
 	lua_pop(L, 1);
 	if (lua_pcall(L, numarg, LUA_MULTRET, 1)) {
-		errorStr = AllocString(lua_tostring(L, -1));
+		errorStr = (const char8_t*)lua_tostring(L, -1);
 	}
-	finished = true;
+	finished.count_down();
 }
 
 void ui_subscript_c::SubScriptFrame()
 {
-	bool didFinish = finished;
+	bool didFinish = finished.try_wait();
 	if (running) {
 		// Check for sub calls
-		ssCall_s* itterSubCalls = subCalls;
-		subCalls = NULL;
-		while (subWriting) ui->sys->Sleep(0);
-		while (itterSubCalls) {
-			ssCall_s* call = itterSubCalls;
+		ssCall_s call;
+		while (subCalls.try_dequeue(call)) {
 			int extraArgs = ui->PushCallback("OnSubCall");
 			if (extraArgs >= 0) {
 				// Run the main script
-				lua_pushstring(ui->L, call->name);
-				int numdat = ssPushData(ui->L, call->data);
+				lua_pushstring(ui->L, (const char*)call.name.c_str());
+				int numdat = ssPushData(ui->L, std::move(call.data));
 				ui->PCall(extraArgs + numdat + 1, 0);
-			} else {
-				ssWipeData(call->data);
 			}
-			itterSubCalls = call->next;
-			delete call;
+			call.data.reset();
 		}
 		
-		if (funcWaiting) {
+		if (funcCall.try_dequeue(call)) {
 			// Process function call
 			int retStart = lua_gettop(ui->L) + 1;
 			bool doRet = false;
 			int extraArgs = ui->PushCallback("OnSubCall");
 			if (extraArgs >= 0) {
 				// Run the main script
-				lua_pushstring(ui->L, funcCall.name);
-				int numdat = ssPushData(ui->L, funcCall.data);
+				lua_pushstring(ui->L, (const char*)call.name.c_str());
+				int numdat = ssPushData(ui->L, std::move(call.data));
 				ui->PCall(extraArgs + numdat + 1, LUA_MULTRET);
 				doRet = true;
 
@@ -421,28 +372,25 @@ void ui_subscript_c::SubScriptFrame()
 					}
 				}
 			}
+
+			std::unique_ptr<ssTweenData_s> callRet;
 			if (doRet) {
 				// Grab return values from main script
-				funcCall.data = ssBuildData(ui->L, retStart);
-			} else {
-				ssWipeData(funcCall.data);
-				funcCall.data = NULL;
+				callRet = ssBuildData(ui->L, retStart);
 			}
-			funcWaiting = false;
+			funcReturn.emplace(std::move(callRet));
 		}
 	}
 	if (didFinish) {
 		running = false;
-		finished = false;
 		if (errorStr) {
 			int extraArgs = ui->PushCallback("OnSubError");
 			if (extraArgs >= 0) {
 				lua_pushlightuserdata(ui->L, (void*)id);
-				lua_pushstring(ui->L, errorStr);
+				lua_pushstring(ui->L, errorStr ? (const char*)errorStr->c_str() : "");
 				ui->PCall(extraArgs + 2, 0);
 			}
-			FreeString(errorStr);
-			errorStr = nullptr;
+			errorStr.reset();
 		} else {
 			int extraArgs = ui->PushCallback("OnSubFinished");
 			if (extraArgs >= 0) {
