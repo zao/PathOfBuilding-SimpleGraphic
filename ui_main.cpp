@@ -165,17 +165,15 @@ void ui_main_c::PCall(int narg, int nret)
 	inLua = false;
 	sys->SetWorkDir();
 	if (err && !didExit) {
-		DoError("Runtime error in", lua_tostring(L, -1));
+		DoError(u8"Runtime error in", (const char8_t*)lua_tostring(L, -1));
 	}
 }
 
-void ui_main_c::DoError(const char* msg, const char* error)
+void ui_main_c::DoError(std::u8string_view msg, std::u8string_view error)
 {
 	auto scriptStr = scriptName.generic_u8string();
-	char* errText = AllocStringLen(strlen(msg) + scriptStr.size() + strlen(error) + 30);
-	sprintf(errText, "--- SCRIPT ERROR ---\n%s '%s':\n%s\n", msg, (const char*)scriptStr.c_str(), error);
-	sys->Exit((const char8_t*)errText);
-	FreeString(errText);
+	std::u8string errText = fmt::format(u8"--- SCRIPT ERROR ---\n{} '{}':\n{}\n", msg, scriptStr, error);
+	sys->Exit(errText);
 	didExit = true;
 }
 
@@ -228,10 +226,9 @@ void ui_main_c::Init(int argc, char** argv)
 	scriptPath = scriptParent;
 	scriptWorkDir = scriptParent;
 
-	scriptArgc = argc;
-	scriptArgv = new char*[argc];
+	scriptArgv.resize(argc);
 	for (int a = 0; a < argc; a++) {
-		scriptArgv[a] = AllocString(argv[a]);
+		scriptArgv[a] = (const char8_t*)argv[a];
 	}
 
 	// Load config files
@@ -320,23 +317,23 @@ void ui_main_c::ScriptInit()
 	sys->SetWorkDir(scriptWorkDir);
  	err = luaL_loadfile(L, (const char*)scriptName.filename().generic_u8string().c_str());
 	if (err) {
-		DoError("Error loading", lua_tostring(L, -1));
+		DoError(u8"Error loading", (const char8_t*)lua_tostring(L, -1));
 		return;
 	}
 	sys->SetWorkDir();
 
 	// Run the script
 	sys->con->Print(u8"Running script...\n");
-	for (int i = 0; i < scriptArgc; i++) {
-		lua_pushstring(L, scriptArgv[i]);
+	for (const auto& arg : scriptArgv) {
+		lua_pushstring(L, (const char*)arg.c_str());
 	}
-	lua_createtable(L, scriptArgc - 1, 1);
-	for (int i = 0; i < scriptArgc; i++) {
-		lua_pushstring(L, scriptArgv[i]);
+	lua_createtable(L, scriptArgv.size() - 1, 1);
+	for (int i = 0; i < scriptArgv.size(); i++) {
+		lua_pushstring(L, (const char*)scriptArgv[i].c_str());
 		lua_rawseti(L, -2, i);
 	}
 	lua_setglobal(L, "arg");
-	PCall(scriptArgc, 0);
+	PCall(scriptArgv.size(), 0);
 
 	if ( !didExit && !restartFlag ) {
 		// Run initialisation callback
@@ -468,10 +465,7 @@ void ui_main_c::Shutdown()
 		core->config->SaveConfig("SimpleGraphic/SimpleGraphic.cfg");
 	}
 
-	for (int a = 0; a < scriptArgc; a++) {
-		FreeString(scriptArgv[a]);
-	}
-	delete scriptArgv;
+	scriptArgv.clear();
 }
 
 bool ui_main_c::CanExit()

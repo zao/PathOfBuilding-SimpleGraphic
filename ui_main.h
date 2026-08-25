@@ -39,8 +39,7 @@ public:
 	std::filesystem::path scriptCfg;
 	std::filesystem::path scriptPath;
 	std::filesystem::path scriptWorkDir;
-	int		scriptArgc = 0;
-	char**	scriptArgv = nullptr;
+	std::vector<std::u8string> scriptArgv;
 	bool	restartFlag = false;
 	bool	didExit = false;
 	bool	renderEnable = false;
@@ -64,7 +63,7 @@ public:
 	int		IsUserData(lua_State* L, int index, const char* metaName);
 	int		PushCallback(const char* name);
 	void	PCall(int narg, int nret);
-	void	DoError(const char* msg, const char* error);
+	void	DoError(std::u8string_view msg, std::u8string_view error);
 
 	void	CallKeyHandler(const char* hname, int key, bool dblclk);
 	const char* NameForKey(int key);

@@ -415,10 +415,8 @@ void ui_subscript_c::SubScriptFrame()
 				int n = lua_gettop(ui->L);
 				for (int i = retStart; i <= n; i++) {
 					if ( !(lua_isnil(ui->L, i) || lua_isboolean(ui->L, i) || lua_isnumber(ui->L, i) || lua_isstring(ui->L, i)) ) {
-						char* msg = AllocStringLen(128);
-						sprintf(msg, "OnSubCall() return %d: only nil, boolean, number and string can be returned to sub script", i - retStart + 1);
-						ui->DoError("Runtime error in", msg);
-						FreeString(msg);
+						const auto msg = fmt::format(u8"OnSubCall() return {}: only nil, boolean, number and string can be returned to sub script", i - retStart + 1);
+						ui->DoError(u8"Runtime error in", msg);
 						doRet = false;
 					}
 				}
@@ -452,10 +450,8 @@ void ui_subscript_c::SubScriptFrame()
 				int n = lua_gettop(L);
 				for (int i = 2; i <= n; i++) {
 					if ( !(lua_isnil(L, i) || lua_isboolean(L, i) || lua_isnumber(L, i) || lua_isstring(L, i)) ) {
-						char* msg = AllocStringLen(128);
-						sprintf(msg, "Subscript return %d: only nil, boolean, number and string can be returned from sub script", i - 1);
-						ui->DoError("Runtime error in", msg);
-						FreeString(msg);
+						const auto msg = fmt::format(u8"Subscript return {}: only nil, boolean, number and string can be returned from sub script", i - 1);
+						ui->DoError(u8"Runtime error in", msg);
 						lua_settop(L, 1);
 						break;
 					}

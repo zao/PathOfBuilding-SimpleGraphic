@@ -39,7 +39,7 @@ public:
 	void	SpawnProcess(std::filesystem::path cmdName, const char8_t* argList);
 	std::optional<std::u8string> OpenURL(const char8_t* url); // return value has failure reason
 	void	Error(const char8_t* fmt, ...);
-	void	Exit(const char8_t* msg = NULL);
+	void	Exit(std::u8string_view msg = {});
 	void	Restart();
 
 	// Encapsulated

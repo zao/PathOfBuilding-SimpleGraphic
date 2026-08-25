@@ -559,13 +559,13 @@ void sys_main_c::Error(const char8_t *fmt, ...)
 #endif
 }
 
-void sys_main_c::Exit(const char8_t* msg)
+void sys_main_c::Exit(std::u8string_view msg)
 {
 	if (initialised) {
 		video->SetVisible(false);
 	}
 	exitMsg.reset();
-	if (msg) {
+	if (!msg.empty()) {
 		exitMsg = msg;
 		conWin->SetVisible(true);
 	}

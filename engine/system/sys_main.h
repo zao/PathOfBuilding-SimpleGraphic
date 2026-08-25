@@ -80,6 +80,6 @@ public:
 	virtual void	SpawnProcess(std::filesystem::path cmdName, const char8_t* argList) = 0;
 	virtual std::optional<std::u8string> OpenURL(const char8_t* url) = 0;
 	virtual void	Error(const char8_t* fmt, ...) = 0;
-	virtual void	Exit(const char8_t* msg = NULL) = 0;
+	virtual void	Exit(std::u8string_view msg = {}) = 0;
 	virtual void	Restart() = 0;
 };
