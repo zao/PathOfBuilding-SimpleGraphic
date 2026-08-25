@@ -5,44 +5,44 @@
 //
 
 #include "common.h"
+#include <span>
 #include <xxh3.h>
 
 // ===================
 // Argument List Class
 // ===================
 
-args_c::args_c(const char8_t* in)
+args_c::args_c(std::u8string_view in)
 {
-	argc = 0;
-	memset(argv, 0, sizeof(char8_t*) * 256);
-
-	argBuf = (char8_t*)AllocString((const char*)in);
-	char8_t* ptr = argBuf;
-	while (*ptr) {
-		if (isspace(*ptr)) {
-			ptr++;
-		} else if (*ptr == u8'"') {
-			argv[argc++] = ++ptr;
-			while (*ptr && *ptr != u8'"') {
-				ptr++;
+	constexpr std::u8string_view spaceChars = u8" \f\n\r\t\v";
+	const size_t nch = in.size();
+	argBuf = in;
+	std::u8string_view view = argBuf;
+	while (!view.empty()) {
+		if (const size_t nonSpacePos = view.find_first_not_of(spaceChars); nonSpacePos != view.npos && nonSpacePos > 0) {
+			view = view.substr(nonSpacePos);
+		} else if (view[0] == u8'"') {
+			const size_t quotePos = view.find(u8'"', 1);
+			if (quotePos != view.npos) {
+				argv.push_back(view.substr(1, quotePos - 1));
+				view = view.substr(quotePos + 1);
 			}
-			if (*ptr) *(ptr++) = 0;
+			else {
+				argv.push_back(view.substr(1));
+				view = {};
+			}
 		} else {
-			argv[argc++] = ptr++;
-			while (*ptr && !isspace(*ptr)) {
-				ptr++;
-			}
-			if (*ptr) *(ptr++) = 0;
+			const size_t spacePos = view.find_first_of(spaceChars);
+			argv.push_back(view.substr(0, spacePos));
+			if (spacePos == view.npos)
+				break;
+			view = view.substr(spacePos);
 		}
 	}
+	argc = argv.size();
 }
 
-args_c::~args_c()
-{
-	FreeString((char*)argBuf);
-}
-
-const char8_t* args_c::operator[](int i)
+std::u8string_view args_c::operator[](int i) const
 {
 	if (i >= 0 && i < argc) {
 		return argv[i];

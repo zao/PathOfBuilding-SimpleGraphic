@@ -8,6 +8,7 @@
 
 #include <charconv>
 #include <deque>
+#include <span>
 #include <string>
 #include <string_view>
 #include <fmt/format.h>
@@ -43,7 +44,7 @@ void conVar_c::Set(float in)
 	Set(fmt::format(u8"{:f}", in).c_str());
 }
 
-void conVar_c::Set(char8_t const* in)
+void conVar_c::Set(std::u8string_view in)
 {
 	if (in == strVal) {
 		// No change
@@ -53,9 +54,10 @@ void conVar_c::Set(char8_t const* in)
 	const std::string_view inSv = AsStringView(in);
 
 	mod = true;			// Flag as modified
-	std::from_chars(inSv.data(), inSv.data() + inSv.size(), intVal); // Set values
-	floatVal = (float)strtod(inSv.data(), nullptr);
 	strVal = in;
+	std::span<const char> buf((const char*)strVal.c_str(), strVal.size());
+	std::from_chars(buf.data(), buf.data() + buf.size(), intVal); // Set values
+	floatVal = (float)strtod(buf.data(), nullptr);
 
 	Clamp();			// Clamp value
 }

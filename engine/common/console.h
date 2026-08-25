@@ -59,7 +59,7 @@ public:
 
 	void	Set(int val);
 	void	Set(float val);
-	void	Set(char8_t const* val);
+	void	Set(std::u8string_view val);
 	void	Toggle();
 	bool	GetMod();	// Return and clear modified flag
 	void	Reset();

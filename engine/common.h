@@ -66,16 +66,16 @@ struct ref_s { vec3_t pos, ang; };
 
 class args_c {
 public:
-	int argc;
-	char8_t* argv[256];
+	int argc = 0;
+	std::vector<std::u8string_view> argv;
 
-	args_c(const char8_t* in);
-	~args_c();
+	explicit args_c(std::u8string_view in);
+	args_c(const args_c&) = delete;
 
-	const char8_t* operator[](int i);
+	[[nodiscard]] std::u8string_view operator[](int i) const;
 
 private:
-	char8_t* argBuf;
+	std::u8string argBuf;
 };
 
 class textBuffer_c {
