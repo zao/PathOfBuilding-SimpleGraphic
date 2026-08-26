@@ -28,6 +28,7 @@ public:
 
 	conVar_c* vid_resizable;
 	conVar_c* vid_last;
+	conVar_c* vid_api;
 };
 
 InterfacePtr<core_IVideo> core_IVideo::GetHandle(sys_IMain* sysHnd)
@@ -40,6 +41,7 @@ core_video_c::core_video_c(sys_IMain* sysHnd)
 {
 	vid_resizable	= sys->con->Cvar_Add(u8"vid_resizable", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFRESIZABLE, 0, 3);
 	vid_last		= sys->con->Cvar_Add(u8"vid_last", CV_ARCHIVE, u8"");
+	vid_api			= sys->con->Cvar_Add(u8"vid_api", CV_ARCHIVE, u8"");
 }
 
 // =============
@@ -71,6 +73,14 @@ void core_video_c::Apply(bool shown)
 	set.mode[1] = 0;
 	set.minSize[0] = CFG_VID_MINWIDTH;
 	set.minSize[1] = CFG_VID_MINHEIGHT;
+	if (const auto& apiStr = vid_api->strVal; !apiStr.empty()) {
+		if (CaseInsensitiveEqual(apiStr, u8"angle"sv)) {
+			set.api = sys_vidApi_e::ANGLE;
+		}
+		else if (CaseInsensitiveEqual(apiStr, u8"dx11"sv)) {
+			set.api = sys_vidApi_e::DX11;
+		}
+	}
 	sys->video->Apply(&set);
 }
 

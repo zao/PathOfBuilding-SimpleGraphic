@@ -320,7 +320,9 @@ r_tex_c::~r_tex_c()
 	if (status >= IN_QUEUE && status < DONE) {
 		manager->AsyncRemove(*this);
 	}
-	glDeleteTextures(1, &texId);
+
+	if (dataGL)
+		glDeleteTextures(1, &dataGL->texId);
 }
 
 void r_tex_c::Kick()
@@ -340,12 +342,17 @@ void r_tex_c::Init(BorrowedInterfacePtr<r_ITexManager> i_manager, std::u8string_
 	error = 0;
 	status = INIT;
 	loadPri = 0;
-	texId = 0;
 	flags = i_flags;
 	fileName = i_fileName;
 	fileWidth = 0;
 	fileHeight = 0;
 
+	if (renderer->stateGL) {
+		dataGL.emplace();
+	}
+	else {
+		dataDX.emplace();
+	}
 }
 
 std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(BorrowedInterfacePtr<r_ITexManager> manager, std::u8string_view fileName, int flags)
@@ -364,8 +371,11 @@ std::shared_ptr<r_tex_c> r_tex_c::CreateFromImage(BorrowedInterfacePtr<r_ITexMan
 
 void r_tex_c::Bind()
 {
+	if (!dataGL)
+		return;
+
 	if (status == DONE) {
-		glBindTexture(target, texId);
+		glBindTexture(dataGL->target, dataGL->texId);
 	} else {
 		manager->blackTex->Bind();
 	}
@@ -373,17 +383,26 @@ void r_tex_c::Bind()
 
 void r_tex_c::Unbind()
 {
-	glBindTexture(target, 0);
+	if (!dataGL)
+		return;
+
+	glBindTexture(dataGL->target, 0);
 }
 
 void r_tex_c::Enable()
 {	
+	if (!dataGL)
+		return;
+
 	glEnable(GL_TEXTURE_2D);
 }
 
 void r_tex_c::Disable()
 {
 	Unbind();
+	if (!dataGL)
+		return;
+
 	glDisable(GL_TEXTURE_2D);
 }
 
@@ -675,7 +694,13 @@ static std::atomic<size_t> uploadedBytes = 0;
 
 void r_tex_c::Upload(image_c& img, int flags)
 {
+	if (!renderer->stateGL)
+		return;
+
 	static gli::gl gl(gli::gl::PROFILE_ES30);
+
+	auto& target = dataGL->target;
+	auto& texId = dataGL->texId;
 
 	const auto& tex = img.tex;
 	target = gl.translate(tex.target());

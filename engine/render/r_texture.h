@@ -13,6 +13,9 @@
 #include <mutex>
 #include <string>
 
+#include <atlcomcli.h>
+#include <d3d11.h>
+
 class image_c;
 class mip_set_c;
 
@@ -41,13 +44,25 @@ public:
 	mutable std::condition_variable statusCV;
 	std::atomic<Status> status;
 	std::atomic<int> loadPri;
-	dword	texId;
 	int		flags;
 	std::u8string fileName;
 	std::atomic<dword> fileWidth;
 	std::atomic<dword> fileHeight;
 	std::unique_ptr<image_c> img;
-	GLenum target{};
+
+	struct DataGL
+	{
+		dword texId{};
+		GLenum target{};
+	};
+
+	struct DataDX
+	{
+		CComPtr<ID3D11ShaderResourceView> srv;
+	};
+
+	std::optional<DataDX> dataDX;
+	std::optional<DataGL> dataGL;
 	size_t stackLayers = 1;
 
 	static std::shared_ptr<r_tex_c> CreateFromPath(BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);

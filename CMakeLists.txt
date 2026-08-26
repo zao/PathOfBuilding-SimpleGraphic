@@ -213,6 +213,8 @@ if (WIN32)
     )
     target_link_libraries(SimpleGraphic
         PRIVATE
+        "d3d11.lib"
+        "dxgi.lib"
         "winmm.lib"
     )
     

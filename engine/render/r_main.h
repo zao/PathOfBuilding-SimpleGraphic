@@ -18,6 +18,9 @@
 #include <unordered_set>
 #include <vector>
 
+#include <atlcomcli.h>
+#include <d3d11.h>
+
 // =======
 // Classes
 // =======
@@ -74,6 +77,36 @@ private:
 	struct r_layerCmd_s* NewCommand(size_t size);
 };
 
+struct r_stateGL_s {
+	InterfacePtr<sys_IOpenGL> openGL = nullptr;
+
+	std::u8string st_vendor;	// Vendor string
+	std::u8string st_renderer;	// Renderer string
+	std::u8string st_ver;		// Version string
+	std::u8string st_ext;		// Extension string
+
+	int tintedTextureProgram = 0;
+
+	struct RenderTarget {
+		int		width = -1, height = -1;
+		GLuint	framebuffer = 0;
+		GLuint	colorTexture = 0;
+
+		GLuint	blitProg = 0;
+		GLuint	blitAttribLocPos = 0;
+		GLuint	blitAttribLocTC = 0;
+		GLuint  blitSampleLocColour = 0;
+	};
+
+	RenderTarget rttMain[2];
+};
+
+struct r_stateDX_s {
+	CComPtr<ID3D11Device> dev;
+	CComPtr<ID3D11DeviceContext> ctx;
+	D3D_FEATURE_LEVEL featureLevel{};
+};
+
 // Renderer Main Class
 class r_renderer_c: public r_IRenderer, public conCmdHandler_c {
 public:
@@ -123,23 +156,14 @@ public:
 
 	BorrowedInterfacePtr<sys_IMain> sys = nullptr;
 
-	InterfacePtr<sys_IOpenGL> openGL = nullptr;
+	std::shared_ptr<r_stateGL_s> stateGL;
+	std::shared_ptr<r_stateDX_s> stateDX;
 
 	InterfacePtr<r_ITexManager> texMan = nullptr;	// Texture manager interface
-
-	std::u8string st_vendor;	// Vendor string
-	std::u8string st_renderer;	// Renderer string
-	std::u8string st_ver;		// Version string
-	std::u8string st_ext;		// Extension string
 
 	bool	texNonPOT = false;			// Non power-of-2 textures supported?
 	dword	texMaxDim = 0;				// Maximum texture dimension
 	bool	texBC7 = true;				// BC7 textures supported?
-
-	PFNGLCOMPRESSEDTEXIMAGE2DPROC	glCompressedTexImage2D = nullptr;
-	PFNGLINSERTEVENTMARKEREXTPROC	glInsertEventMarkerEXT = nullptr;
-	PFNGLPUSHGROUPMARKEREXTPROC		glPushGroupMarkerEXT = nullptr;
-	PFNGLPOPGROUPMARKEREXTPROC		glPopGroupMarkerEXT = nullptr;
 
 	conVar_c*	r_compress = nullptr;
 	conVar_c*	r_screenshotFormat = nullptr;
@@ -163,27 +187,13 @@ public:
 
 	std::vector<std::weak_ptr<class r_shader_c>> shaderList;
 
-	int		tintedTextureProgram = 0;
-
 	int		numLayer = 0;
 	int		layerListSize = 0;
 	std::map<r_layerId_s, std::shared_ptr<r_layer_c>> layerList;
 	std::shared_ptr<r_layer_c> curLayer;
 
-	struct RenderTarget {
-		int		width = -1, height = -1;
-		GLuint	framebuffer = 0;
-		GLuint	colorTexture = 0;
-
-		GLuint	blitProg = 0;
-		GLuint	blitAttribLocPos = 0;
-		GLuint	blitAttribLocTC = 0;
-		GLuint  blitSampleLocColour = 0;
-	};
-
 	bool apiDpiAware{};
 	int dpiScaleOverridePercent = 0;
-	RenderTarget rttMain[2];
 	int	presentRtt = 0;
 
 	uint64_t lastFrameHash{};
@@ -220,6 +230,6 @@ public:
 
 	void	C_Screenshot(IConsole* conHnd, args_c &args);
 
-	RenderTarget& GetDrawRenderTarget();
-	RenderTarget& GetPresentRenderTarget();
+	size_t GetDrawRenderTarget();
+	size_t GetPresentRenderTarget();
 };

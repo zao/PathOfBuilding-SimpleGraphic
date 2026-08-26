@@ -17,6 +17,12 @@ enum vidFlags_e {
 	VID_USESAVED = 0x10,
 };
 
+// Render API
+enum class sys_vidApi_e {
+	ANGLE,
+	DX11,
+};
+
 // Saved video state structure
 struct sys_vidSave_s {
 	glm::ivec2 size{};
@@ -24,6 +30,7 @@ struct sys_vidSave_s {
 	int maximised = false;
 	glm::ivec2 fbSize{};
 	float dpiScale = 1.0f;
+	sys_vidApi_e api{};
 };
 
 // Video settings structure
@@ -33,6 +40,7 @@ struct sys_vidSet_s {
 	glm::ivec2 mode{};		// Window size
 	glm::ivec2 minSize{};	// Minimum size for resizable windows
 	sys_vidSave_s save;		// Saved state
+	std::optional<sys_vidApi_e> api; // Preferred render API
 };
 
 // ==========

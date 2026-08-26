@@ -47,6 +47,9 @@ public:
 	sys_video_c(sys_IMain* sysHnd);
 	~sys_video_c();
 
+	bool IsOpenGL() const noexcept { return vid.api == sys_vidApi_e::ANGLE; }
+	bool IsDirectX() const noexcept { return vid.api == sys_vidApi_e::DX11; }
+
 	sys_main_c* sys = nullptr;
 
 	bool	initialised = false;
@@ -346,6 +349,7 @@ bool ShouldIgnoreDpiScale() {
 int sys_video_c::Apply(sys_vidSet_s* set)
 {
 	cur = *set;
+	vid.api = cur.api.value_or(sys_vidApi_e::ANGLE);
 
 	GLFWmonitor** monitors = glfwGetMonitors(&numMon);
 	for (int i = 0; i < numMon; ++i) {
@@ -448,11 +452,16 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		glfwWindowHint(GLFW_RESIZABLE, !!(cur.flags & VID_RESIZABLE));
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Start hidden to not flash the user with a stock window.
 		glfwWindowHint(GLFW_MAXIMIZED, GLFW_FALSE); // Start restored in order to position the window before maximizing.
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-		glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_EGL_CONTEXT_API);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-		glfwWindowHint(GLFW_DEPTH_BITS, 24);
+		if (IsOpenGL()) {
+			glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+			glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_EGL_CONTEXT_API);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+			glfwWindowHint(GLFW_DEPTH_BITS, 24);
+		}
+		else {
+			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+		}
 
 		wnd = glfwCreateWindow(cur.mode[0], cur.mode[1], (const char*)curTitle.c_str(), nullptr, nullptr);
 		if (!wnd) {
@@ -461,8 +470,10 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			sys->con->Print(fmt::format(u8"Could not create window, {}\n", (const char8_t*)errDesc));
 		}
 
-		glfwMakeContextCurrent(wnd);
-		gladLoadGLES2(glfwGetProcAddress);
+		if (IsOpenGL()) {
+			glfwMakeContextCurrent(wnd);
+			gladLoadGLES2(glfwGetProcAddress);
+		}
 
 		// Set up all our window callbacks
 		glfwSetWindowUserPointer(wnd, sys);
@@ -633,9 +644,11 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		glfwShowWindow(wnd);
 
 		// Clear early to avoid flash
-		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-		glfwSwapBuffers(wnd);
+		if (IsOpenGL()) {
+			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+			glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+			glfwSwapBuffers(wnd);
+		}
 	}
 
 	glfwGetFramebufferSize(wnd, &vid.fbSize[0], &vid.fbSize[1]);
