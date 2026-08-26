@@ -18,6 +18,7 @@
 #include <map>
 #include <numeric>
 #include <random>
+#include <ranges>
 #include <sstream>
 #include <vector>
 
@@ -152,13 +153,17 @@ struct r_layerCmdQuad_s {
 };
 #pragma pack(pop, r_layerCmd)
 
-r_layer_c::r_layer_c(r_renderer_c* renderer, int layer, int subLayer)
-	: renderer(renderer), layer(layer), subLayer(subLayer)
+r_layer_c::r_layer_c(r_renderer_c* renderer, r_layerId_s id)
+	: renderer(renderer), id(id)
 {
 	cmdStorage.resize(1ull << 23);
 	cmdCursor = 0;
 	numCmd = 0;
 }
+
+r_layer_c::r_layer_c(r_renderer_c* renderer, int layer, int subLayer)
+	: r_layer_c(renderer, r_layerId_s{layer, subLayer})
+{}
 
 r_layer_c::~r_layer_c()
 {
@@ -557,7 +562,7 @@ struct AdjacentMergeStrategy : RenderStrategy {
 			Dispatch();
 		}
 		if (showStats_) {
-			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex);
+			ImGui::BulletText("Layer %d:%d - %d batches", layer_->id.layer, layer_->id.subLayer, batchIndex);
 		}
 	}
 
@@ -681,7 +686,7 @@ bool r_layer_c::Render()
 	if (renderer->glPushGroupMarkerEXT)
 	{
 		std::ostringstream oss;
-		oss << "Layer " << layer << ", sub-layer " << subLayer;
+		oss << "Layer " << id.layer << ", sub-layer " << id.subLayer;
 		renderer->glPushGroupMarkerEXT(0, oss.str().c_str());
 	}
 
@@ -689,7 +694,7 @@ bool r_layer_c::Render()
 		bool showStats{};
 		if (renderer->debugLayers) {
 			if (ImGui::Begin("Layers", &renderer->debugLayers)) {
-				std::string heading = fmt::format("Layer {}:{}", layer, subLayer);
+				std::string heading = fmt::format("Layer {}:{}", id.layer, id.subLayer);
 				showStats = ImGui::CollapsingHeader(heading.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 			}
 		}
@@ -888,10 +893,10 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	}
 
 	// Get strings
-	st_vendor = (const char*)glGetString(GL_VENDOR);
-	st_renderer = (const char*)glGetString(GL_RENDERER);
-	st_ver = (const char*)glGetString(GL_VERSION);
-	st_ext = (const char*)glGetString(GL_EXTENSIONS);
+	st_vendor = (const char8_t*)glGetString(GL_VENDOR);
+	st_renderer = (const char8_t*)glGetString(GL_RENDERER);
+	st_ver = (const char8_t*)glGetString(GL_VERSION);
+	st_ext = (const char8_t*)glGetString(GL_EXTENSIONS);
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, (int*)&texMaxDim);
 	sys->con->Print(fmt::format(u8"GL_MAX_TEXTURE_SIZE: {}\n", texMaxDim));
@@ -905,7 +910,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	// Load extensions
 	sys->con->Print(u8"Loading OpenGL extensions...\n");
 
-	if (strstr(st_ext, "GL_EXT_texture_compression_s3tc")) {
+	if (st_ext.contains(u8"GL_EXT_texture_compression_s3tc"sv)) {
 		sys->con->Print(u8"using GL_EXT_texture_compression_s3tc\n");
 		glCompressedTexImage2D = (PFNGLCOMPRESSEDTEXIMAGE2DPROC)openGL->GetProc("glCompressedTexImage2D");
 	}
@@ -914,7 +919,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		glCompressedTexImage2D = NULL;
 	}
 
-	if (strstr(st_ext, "GL_EXT_texture_compression_bptc")) {
+	if (st_ext.contains(u8"GL_EXT_texture_compression_bptc"sv)) {
 		sys->con->Print(u8"using GL_EXT_texture_compression_bptc\n");
 		texBC7 = true;
 	}
@@ -923,7 +928,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		texBC7 = false;
 	}
 
-	if (strstr(st_ext, "GL_EXT_debug_marker")) {
+	if (st_ext.contains(u8"GL_EXT_debug_marker"sv)) {
 		sys->con->Print(u8"using GL_EXT_debug_marker\n");
 		glInsertEventMarkerEXT = (PFNGLINSERTEVENTMARKEREXTPROC)openGL->GetProc("glInsertEventMarkerEXT");
 		glPushGroupMarkerEXT = (PFNGLPUSHGROUPMARKEREXTPROC)openGL->GetProc("glPushGroupMarkerEXT");
@@ -1002,15 +1007,7 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	}
 
 	// Initialise layer array
-	numLayer = 1;
-	layerListSize = 16;
-	layerList = new r_layer_c * [layerListSize];
-	layerList[0] = new r_layer_c(this, 0, 0);
-
-	// Initialise layer command bin
-	layerCmdBinCount = 0;
-	layerCmdBinSize = 1024;
-	layerCmdBin = new r_layerCmd_s * [layerCmdBinSize];
+	layerList[{0, 0}] = std::make_shared<r_layer_c>(this, 0, 0);
 
 	takeScreenshot = R_SSNONE;
 
@@ -1105,14 +1102,8 @@ void r_renderer_c::Shutdown()
 
 	shaderList.clear();
 
-	for (int l = 0; l < numLayer; l++) {
-		delete layerList[l];
-	}
-	delete layerList;
-	for (int c = 0; c < layerCmdBinCount; c++) {
-		delete layerCmdBin[c];
-	}
-	delete layerCmdBin;
+	curLayer.reset();
+	layerList.clear();
 
 	for (int i = 0; i < 2; ++i) {
 		auto& rtt = rttMain[i];
@@ -1178,31 +1169,14 @@ void r_renderer_c::BeginFrame()
 		}
 	}
 
-	curLayer = layerList[0];
+	assert(layerList.size());
+	curLayer = layerList.begin()->second;
 
 	SetViewport();
 	SetBlendMode(RB_ALPHA);
 	DrawColor();
 
 	beginFrameToc = std::chrono::steady_clock::now();
-}
-
-static int layerCompFunc(const void* va, const void* vb)
-{
-	r_layer_c* a = *(r_layer_c**)va;
-	r_layer_c* b = *(r_layer_c**)vb;
-	if (a->layer < b->layer) {
-		return -1;
-	}
-	else if (a->layer > b->layer) {
-		return 1;
-	}
-	else if (a->subLayer < b->subLayer) {
-		return -1;
-	}
-	else {
-		return 1;
-	}
 }
 
 void CVarSliderInt(char const* label, conVar_c* cvar) {
@@ -1277,21 +1251,17 @@ void r_renderer_c::EndFrame()
 		ImGui::ShowMetricsWindow(&showMetrics);
 	}
 
-	r_layer_c** layerSort = new r_layer_c * [numLayer];
-	for (int l = 0; l < numLayer; l++) {
-		layerSort[l] = layerList[l];
-	}
-	qsort(layerSort, numLayer, sizeof(r_layer_c*), layerCompFunc);
+	auto layerSort = std::views::transform(layerList, [](auto& kv) { return kv.second.get(); }) | std::ranges::to<std::vector>();
 	if (r_layerDebug->intVal) {
 		size_t totalCmd = 0;
-		for (int l = 0; l < numLayer; l++) {
-			totalCmd += layerSort[l]->numCmd;
+		for (const auto& [layerIdx, layer] : layerSort | std::views::enumerate) {
+			totalCmd += layer->numCmd;
 			char str[1024];
-			sprintf(str, "%zu (%4d,%4d) [%2d]", layerSort[l]->numCmd, layerSort[l]->layer, layerSort[l]->subLayer, l);
+			sprintf(str, "%zu (%4d,%4d) [%2d]", layer->numCmd, layer->id.layer, layer->id.subLayer, (int)layerIdx);
 			float w = (float)DrawStringWidth(16, F_FIXED, str);
 			DrawColor(0x7F000000);
-			DrawImage(NULL, { (float)VirtualScreenWidth() - w, VirtualScreenHeight() - (l + 2) * 16.0f }, { w, 16 });
-			DrawStringFormat(0, VirtualScreenHeight() - (l + 2) * 16.0f, F_RIGHT, 16, colorWhite, F_FIXED, str);
+			DrawImage(NULL, { (float)VirtualScreenWidth() - w, VirtualScreenHeight() - (layerIdx + 2) * 16.0f }, { w, 16 });
+			DrawStringFormat(0, VirtualScreenHeight() - (layerIdx + 2) * 16.0f, F_RIGHT, 16, colorWhite, F_FIXED, str);
 		}
 		char str[1024];
 		sprintf(str, "%zu", totalCmd);
@@ -1301,7 +1271,7 @@ void r_renderer_c::EndFrame()
 		DrawStringFormat(0, VirtualScreenHeight() - 16.0f, F_RIGHT, 16, colorWhite, F_FIXED, str);
 	}
 
-	std::optional<std::pair<int, int>> layerBreak;
+	std::optional<r_layerId_s> layerBreak;
 	if (debugLayers) {
 		if (ImGui::Begin("Layers", &debugLayers)) {
 			ImGui::Text("Layers: %d", numLayer);
@@ -1313,64 +1283,44 @@ void r_renderer_c::EndFrame()
 			ImGui::EndDisabled();
 			CVarCheckbox("Draw command culling", r_drawCull);
 
-			size_t totalFootprint{}, totalDenseFootprint{};
-			for (int l = 0; l < numLayer; ++l) {
+			size_t totalHistoricalFootprint{}, totalDenseFootprint{};
+			for (auto& layer : layerSort) {
 				size_t byteAcc{};
-				auto layer = layerSort[l];
 				size_t const numCmd = layer->numCmd;
-				totalFootprint += numCmd * sizeof(r_layerCmdQuad_s); // legacy footprint
+				totalHistoricalFootprint += numCmd * sizeof(r_layerCmdQuad_s); // legacy footprint with uniform union commands
 				totalDenseFootprint += layer->cmdCursor;
 			}
 
-			ImGui::Text("Total payload footprint: %sB", BinaryUnitPrefix(totalFootprint).c_str());
+			ImGui::Text("Total historical footprint: %sB", BinaryUnitPrefix(totalHistoricalFootprint).c_str());
 			ImGui::Text("Total dense footprint: %sB", BinaryUnitPrefix(totalDenseFootprint).c_str());
 
-			size_t totalCmd{};
-			if (ImGui::BeginTable("Layer stats", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
+			if (ImGui::BeginTable("Layer stats", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
 				ImGui::TableSetupColumn("Index");
 				ImGui::TableSetupColumn("Layer");
 				ImGui::TableSetupColumn("Sublayer");
 				ImGui::TableSetupColumn("Command count");
 				ImGui::TableSetupColumn("Dense");
 				ImGui::TableSetupColumn("Debug");
-				ImGui::TableSetupColumn("XXH3-64");
-				ImGui::TableSetupColumn("MH64A");
 				ImGui::TableHeadersRow();
-				for (int l = 0; l < numLayer; ++l) {
-					auto layer = layerSort[l];
-					ImGui::PushID(layer->layer);
-					ImGui::PushID(layer->subLayer);
-					totalCmd += layer->numCmd;
+				for (const auto& [layerIdx, layer] : layerSort | std::views::enumerate) {
+					ImGui::PushID(layer->id.layer);
+					ImGui::PushID(layer->id.subLayer);
+
 					ImGui::TableNextRow();
 					ImGui::TableNextColumn();
-					ImGui::Text("%d", l);
+					ImGui::Text("%d", layerIdx);
 					ImGui::TableNextColumn();
-					ImGui::Text("%d", layer->layer);
+					ImGui::Text("%d", layer->id.layer);
 					ImGui::TableNextColumn();
-					ImGui::Text("%d", layer->subLayer);
+					ImGui::Text("%d", layer->id.subLayer);
 					ImGui::TableNextColumn();
 					ImGui::Text("%d", layer->numCmd);
 					ImGui::TableNextColumn();
 					ImGui::Text("%sB", BinaryUnitPrefix(layer->cmdCursor).c_str());
 					ImGui::TableNextColumn();
 					if (ImGui::Button("Debug")) {
-						layerBreak = { layer->layer, layer->subLayer };
+						layerBreak = { layer->id.layer, layer->id.subLayer };
 					}
-
-					std::chrono::high_resolution_clock::time_point tic;
-					std::chrono::microseconds dt;
-
-					ImGui::TableNextColumn();
-					tic = std::chrono::high_resolution_clock::now();
-					volatile auto xxh_hash = XXH3_64bits(layer->cmdStorage.data(), layer->cmdCursor);
-					dt = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - tic);
-					ImGui::Text("%d µs", dt.count());
-
-					ImGui::TableNextColumn();
-					tic = std::chrono::high_resolution_clock::now();
-					volatile auto mh_hash = MurmurHash64A(layer->cmdStorage.data(), (int)layer->cmdCursor, 0ull);
-					dt = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - tic);
-					ImGui::Text("%d µs", dt.count());
 
 					ImGui::PopID();
 					ImGui::PopID();
@@ -1393,8 +1343,7 @@ void r_renderer_c::EndFrame()
 		std::shared_ptr<XXH3_state_t> hashState(XXH3_createState(), XXH3_freeState);
 		XXH3_64bits_reset(hashState.get());
 
-		for (auto lIdx = 0; lIdx < numLayer; ++lIdx) {
-			auto layer = layerSort[lIdx];
+		for (auto& layer : layerSort) {
 			uint64_t subHash = XXH3_64bits(layer->cmdStorage.data(), (int)layer->cmdCursor);
 			XXH3_64bits_update(hashState.get(), &subHash, sizeof(subHash));
 		}
@@ -1408,9 +1357,8 @@ void r_renderer_c::EndFrame()
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, GetDrawRenderTarget().framebuffer);
 		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-		for (int l = 0; l < numLayer; l++) {
-			auto& layer = layerSort[l];
-			if (layerBreak && layerBreak->first == layer->layer && layerBreak->second == layer->subLayer) {
+		for (auto& layer : layerSort) {
+			if (layerBreak && *layerBreak == layer->id) {
 #ifdef _WIN32
 				DebugBreak();
 #endif
@@ -1424,10 +1372,10 @@ void r_renderer_c::EndFrame()
 	// If we explicitly inhibited elision due to things like incomplete textures, make sure that the next frame is drawn.
 	lastFrameHash = inhibitElision ? 0 : commandDigest;
 
-	for (int l = 0; l < numLayer; ++l) {
-		layerSort[l]->Discard();
+	for (auto& layer : layerSort) {
+		layer->Discard();
 	}
-	delete[] layerSort;
+	layerSort.clear();
 
 	{
 		auto& rtt = GetPresentRenderTarget();
@@ -1614,38 +1562,27 @@ void r_renderer_c::SetClearColor(const col4_t col)
 
 void r_renderer_c::SetDrawLayer(int layer, int subLayer)
 {
-	if (layer == curLayer->layer && subLayer == curLayer->subLayer) {
+	r_layerId_s id{layer, subLayer};
+	if (layer == curLayer->id.layer && subLayer == curLayer->id.subLayer) {
 		return;
 	}
-	r_layer_c* newCurLayer = NULL;
-	for (int l = 0; l < numLayer; l++) {
-		if (layerList[l]->layer == layer && layerList[l]->subLayer == subLayer) {
-			newCurLayer = layerList[l];
-			break;
-		}
+	auto it = layerList.find(id);
+	if (it == layerList.end()) {
+		it = layerList.emplace(id, std::make_shared<r_layer_c>(this, layer, subLayer)).first;
 	}
-	if (!newCurLayer) {
-		if (numLayer == layerListSize) {
-			layerListSize <<= 1;
-			trealloc(layerList, layerListSize);
-		}
-		layerList[numLayer] = new r_layer_c(this, layer, subLayer);
-		newCurLayer = layerList[numLayer];
-		numLayer++;
-	}
-	curLayer = newCurLayer;
+	curLayer = it->second;
 	curLayer->SetViewport(&curViewport);
 	curLayer->SetBlendMode(curBlendMode);
 }
 
 void r_renderer_c::SetDrawSubLayer(int subLayer)
 {
-	SetDrawLayer(curLayer->layer, subLayer);
+	SetDrawLayer(curLayer->id.layer, subLayer);
 }
 
 int r_renderer_c::GetDrawLayer()
 {
-	return curLayer->subLayer;
+	return curLayer->id.subLayer;
 }
 
 void r_renderer_c::SetViewport(int x, int y, int width, int height)

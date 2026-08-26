@@ -31,10 +31,15 @@
 #include "common/memtrak3.h"
 #endif
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
+
+using namespace std::chrono_literals;
+using namespace std::string_literals;
+using namespace std::string_view_literals;
 
 // =======
 // Classes

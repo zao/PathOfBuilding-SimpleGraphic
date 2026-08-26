@@ -14,6 +14,7 @@
 #include <chrono>
 #include <deque>
 #include <imgui.h>
+#include <map>
 #include <unordered_set>
 #include <vector>
 
@@ -29,6 +30,14 @@ struct r_viewport_s {
 	int height;
 };
 
+struct r_layerId_s
+{
+	int layer{};
+	int subLayer{};
+
+	auto operator<=>(const r_layerId_s&) const = default;
+};
+
 // Render layer
 class r_layer_c {
 public:
@@ -37,9 +46,9 @@ public:
 	size_t	numCmd{};
 	std::unordered_set< std::shared_ptr< r_tex_c > > referencedTextures; // keeps textures alive for the duration of the frame
 
-	int		layer;
-	int		subLayer;
+	r_layerId_s id;
 
+	r_layer_c(r_renderer_c* renderer, r_layerId_s id);
 	r_layer_c(r_renderer_c* renderer, int i_layer, int i_subLayer);
 	~r_layer_c();
 
@@ -118,10 +127,10 @@ public:
 
 	InterfacePtr<r_ITexManager> texMan = nullptr;	// Texture manager interface
 
-	const char*	st_vendor = nullptr;	// Vendor string
-	const char*	st_renderer = nullptr;	// Renderer string
-	const char*	st_ver = nullptr;		// Version string
-	const char*	st_ext = nullptr;		// Exntension string
+	std::u8string st_vendor;	// Vendor string
+	std::u8string st_renderer;	// Renderer string
+	std::u8string st_ver;		// Version string
+	std::u8string st_ext;		// Extension string
 
 	bool	texNonPOT = false;			// Non power-of-2 textures supported?
 	dword	texMaxDim = 0;				// Maximum texture dimension
@@ -158,12 +167,8 @@ public:
 
 	int		numLayer = 0;
 	int		layerListSize = 0;
-	r_layer_c** layerList = nullptr;
-	r_layer_c* curLayer = nullptr;
-
-	int		layerCmdBinCount = 0;
-	int		layerCmdBinSize = 0;
-	struct r_layerCmd_s** layerCmdBin = nullptr;
+	std::map<r_layerId_s, std::shared_ptr<r_layer_c>> layerList;
+	std::shared_ptr<r_layer_c> curLayer;
 
 	struct RenderTarget {
 		int		width = -1, height = -1;
