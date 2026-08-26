@@ -4,6 +4,8 @@
 // System Video Header
 //
 
+#include <glm/vec2.hpp>
+
 // =======
 // Classes
 // =======
@@ -17,20 +19,20 @@ enum vidFlags_e {
 
 // Saved video state structure
 struct sys_vidSave_s {
-	int		size[2] = {};
-	int		pos[2] = {};
-	bool	maximised = false;
-	int		fbSize[2] = {};
-	float	dpiScale = 1.0f;
+	glm::ivec2 size{};
+	glm::ivec2 pos{};
+	int maximised = false;
+	glm::ivec2 fbSize{};
+	float dpiScale = 1.0f;
 };
 
 // Video settings structure
 struct sys_vidSet_s {
-	bool	shown = false;		// Show window?
+	bool	shown = false;	// Show window?
 	int		flags = 0;		// Flags
-	int		mode[2] = {};	// Window size
-	int		minSize[2] = {};	// Minimum size for resizable windows
-	sys_vidSave_s save; // Saved state
+	glm::ivec2 mode{};		// Window size
+	glm::ivec2 minSize{};	// Minimum size for resizable windows
+	sys_vidSave_s save;		// Saved state
 };
 
 // ==========

@@ -65,24 +65,21 @@ public:
 		int		height = 0;
 	} mon[16];					// Array of monitor specs
 
-	int		defRes[2] = {};		// Default resolution
-	sys_vidSet_s cur;			// Current settings
-	int		scrSize[2] = {};	// Screen size
-	int		minSize[2] = {};	// Minimum window size
-	std::u8string curTitle;		// Window title
+	glm::ivec2 defRes{};	// Default resolution
+	sys_vidSet_s cur;		// Current settings
+	glm::ivec2 scrSize{};	// Screen size
+	glm::ivec2 minSize{};	// Minimum window size
+	std::u8string curTitle;	// Window title
 
 	bool cursorInWindow = false;
 
-	struct CursorPos {
-		int x, y;
-	};
-	std::optional<CursorPos> lastCursorPos;
+	std::optional<glm::ivec2> lastCursorPos;
 
 	struct ClickEvent
 	{
 		std::chrono::system_clock::time_point time;
-		CursorPos pos;
-		byte button;
+		glm::ivec2 pos{};
+		byte button{};
 	};
 	std::optional<ClickEvent> lastClick;
 };
@@ -386,10 +383,10 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 
 	if (cur.mode[0] == 0) {
 		// Use default resolution if one isn't specified
-		Vector2Copy(defRes, cur.mode);
+		cur.mode = defRes;
 	}
-	Vector2Copy(cur.mode, vid.size);
-	Vector2Copy(defRes, scrSize);
+	vid.size = cur.mode;
+	scrSize = defRes;
 
 	// Get window rectangle
 	WindowRect wrec{};
@@ -456,7 +453,6 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 		glfwWindowHint(GLFW_DEPTH_BITS, 24);
-		//glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
 
 		wnd = glfwCreateWindow(cur.mode[0], cur.mode[1], (const char*)curTitle.c_str(), nullptr, nullptr);
 		if (!wnd) {
@@ -485,7 +481,7 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 				return;
 			}
 			auto video = (sys_video_c*)sys->video.get();
-			video->lastCursorPos = CursorPos{ (int)x, (int)y };
+			video->lastCursorPos = { (int)x, (int)y };
 			});
 		glfwSetWindowCloseCallback(wnd, [](GLFWwindow* wnd) {
 			auto sys = (sys_main_c*)glfwGetWindowUserPointer(wnd);

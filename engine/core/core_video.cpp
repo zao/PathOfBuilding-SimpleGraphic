@@ -11,25 +11,6 @@
 
 #include <algorithm>
 
-// ======
-// Locals
-// ======
-
-#define VID_NUMMODES 11
-static const int vid_modeList[VID_NUMMODES][2] = {
-	1280, 1024,	// 5:4
-	1024, 768,	// 4:3
-	1280, 960,
-	1600, 1200,
-	1920, 1440,
-	1280, 800,	// 16:10
-	1680, 1050,
-	1920, 1200,
-	1280, 720,	// 16:9
-	1600, 900,
-	1920, 1080
-};
-
 // =====================
 // core_IVideo Interface
 // =====================
@@ -45,13 +26,8 @@ public:
 
 	sys_IMain* sys;
 
-	conVar_c* vid_mode;
-	conVar_c* vid_fullscreen;
 	conVar_c* vid_resizable;
 	conVar_c* vid_last;
-
-	void	C_Vid_Apply(IConsole* conHnd, args_c &args);
-	void	C_Vid_ModeList(IConsole* conHnd, args_c &args);
 };
 
 InterfacePtr<core_IVideo> core_IVideo::GetHandle(sys_IMain* sysHnd)
@@ -62,13 +38,8 @@ InterfacePtr<core_IVideo> core_IVideo::GetHandle(sys_IMain* sysHnd)
 core_video_c::core_video_c(sys_IMain* sysHnd)
 	: conCmdHandler_c(sysHnd->con.get()), sys(sysHnd)
 {
-	vid_mode		= sys->con->Cvar_Add(u8"vid_mode", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFMODE, -1, VID_NUMMODES-1);
-	vid_fullscreen	= sys->con->Cvar_Add(u8"vid_fullscreen", CV_ARCHIVE, CFG_VID_DEFFULLSCREEN);
 	vid_resizable	= sys->con->Cvar_Add(u8"vid_resizable", CV_ARCHIVE|CV_CLAMP, CFG_VID_DEFRESIZABLE, 0, 3);
 	vid_last		= sys->con->Cvar_Add(u8"vid_last", CV_ARCHIVE, u8"");
-
-	Cmd_Add(u8"vid_apply", 0, u8"", this, &core_video_c::C_Vid_Apply);
-	Cmd_Add(u8"vid_modeList", 0, u8"", this, &core_video_c::C_Vid_ModeList);
 }
 
 // =============
@@ -86,7 +57,7 @@ void core_video_c::Apply(bool shown)
 		if (vid_resizable->intVal == 2) {
 			set.flags|= VID_MAXIMIZE;
 		} else if (vid_resizable->intVal == 3) {
-			if (sscanf((const char*)vid_last->strVal.c_str(), "%d,%d,%d,%d,%d", set.save.size + 0, set.save.size + 1, set.save.pos + 0, set.save.pos + 1, (int*)&set.save.maximised) == 5) {
+			if (sscanf((const char*)vid_last->strVal.c_str(), "%d,%d,%d,%d,%d", &set.save.size.x, &set.save.size.y, &set.save.pos.x, &set.save.pos.y, (int*)&set.save.maximised) == 5) {
 				// Clamp saved window size as it may be persisted as zero before.
 				set.save.size[0] = (std::max)(CFG_VID_MINWIDTH, set.save.size[0]);
 				set.save.size[1] = (std::max)(CFG_VID_MINHEIGHT, set.save.size[1]);
@@ -96,13 +67,8 @@ void core_video_c::Apply(bool shown)
 			}
 		}
 	}
-	if (vid_mode->intVal >= 0) {
-		set.mode[0] = (std::max)(vid_modeList[vid_mode->intVal][0], CFG_VID_MINWIDTH);
-		set.mode[1] = (std::max)(vid_modeList[vid_mode->intVal][1], CFG_VID_MINHEIGHT);
-	} else {
-		set.mode[0] = 0;
-		set.mode[1] = 0;
-	}
+	set.mode[0] = 0;
+	set.mode[1] = 0;
 	set.minSize[0] = CFG_VID_MINWIDTH;
 	set.minSize[1] = CFG_VID_MINHEIGHT;
 	sys->video->Apply(&set);
@@ -113,20 +79,7 @@ void core_video_c::Save()
 	// Save video size/pos if needed
 	if (vid_resizable->intVal == 3) {
 		char spec[64];
-		sprintf(spec, "%d,%d,%d,%d,%d", sys->video->vid.size[0], sys->video->vid.size[1], sys->video->vid.pos[0], sys->video->vid.pos[1], sys->video->vid.maximised);
+		sprintf(spec, "%d,%d,%d,%d,%d", sys->video->vid.size.x, sys->video->vid.size.y, sys->video->vid.pos.x, sys->video->vid.pos.y, sys->video->vid.maximised);
 		vid_last->Set((const char8_t*)spec);
-	}
-}
-
-void core_video_c::C_Vid_Apply(IConsole* conHnd, args_c &args)
-{
-	Apply();
-}
-
-void core_video_c::C_Vid_ModeList(IConsole* conHnd, args_c &args)
-{
-	sys->con->Print(u8"Mode -1: Use desktop resolution\n");
-	for (int m = 0; m < VID_NUMMODES; m++) {
-		sys->con->Print(fmt::format(u8"Mode {}: {}x{}\n", m, vid_modeList[m][0], vid_modeList[m][1]));
 	}
 }
