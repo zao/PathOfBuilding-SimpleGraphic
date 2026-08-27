@@ -64,6 +64,12 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/core/core_tex_manipulation.h"
     "engine/core/core_video.cpp"
     "engine/core/core_video.h"
+    "engine/render/r_api.cpp"
+    "engine/render/r_api.h"
+    "engine/render/r_api_angle.cpp"
+    "engine/render/r_api_angle.h"
+    "engine/render/r_api_dx11.cpp"
+    "engine/render/r_api_dx11.h"
     "engine/render/r_font.cpp"
     "engine/render/r_font.h"
     "engine/render/r_main.cpp"
@@ -159,6 +165,8 @@ add_library(imgui STATIC
     dep/imgui/imstb_rectpack.h
     dep/imgui/imstb_textedit.h
     dep/imgui/imstb_truetype.h
+    dep/imgui/backends/imgui_impl_dx11.cpp
+    dep/imgui/backends/imgui_impl_dx11.h
     dep/imgui/backends/imgui_impl_glfw.cpp
     dep/imgui/backends/imgui_impl_glfw.h
     dep/imgui/backends/imgui_impl_opengl3.cpp

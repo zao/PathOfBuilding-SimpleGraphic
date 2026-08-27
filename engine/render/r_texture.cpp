@@ -419,7 +419,7 @@ std::unique_ptr<image_c> r_tex_c::BuildMipSet(std::unique_ptr<image_c> img)
 	const bool hasExistingMips = img->tex.layers() > 1;
 
 	auto extent = img->tex.extent();
-	const auto maxDim = (int)renderer->texMaxDim;
+	const auto maxDim = (int)renderer->api->texMaxDim;
 	auto numLevels = img->tex.levels();
 
 	const auto shrinksNeeded = [&t = img->tex, maxDim] {
@@ -639,7 +639,7 @@ void r_tex_c::LoadFile()
 		}
 	}
 
-	const bool useTextureFormatFallback = !renderer->texBC7;
+	const bool useTextureFormatFallback = !renderer->api->texBC7;
 	if (useTextureFormatFallback) {
 		if (img->tex.format() == gli::FORMAT_RGBA_BP_UNORM_BLOCK16)
 			img->tex = TranscodeTexture(img->tex, gli::FORMAT_RGBA8_UNORM_PACK8, true);
