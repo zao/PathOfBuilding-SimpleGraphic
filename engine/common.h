@@ -27,10 +27,6 @@
 #include <fmt/core.h>
 #include <fmt/xchar.h>
 
-#ifdef _DEBUG
-#include "common/memtrak3.h"
-#endif
-
 #include <chrono>
 #include <memory>
 #include <string>
@@ -125,17 +121,6 @@ static const col4_t colorDarkGray={0.4f, 0.4f, 0.4f, 1.0f};
 // =========
 // Templates
 // =========
-
-template <class T>
-void _trealloc(T* &ptr, size_t count, const char* file, int line)
-{
-#ifdef _MEMTRAK_H
-	ptr = (T*)_memTrak_realloc(ptr, count * sizeof(T), file, line);
-#else
-	ptr = (T*)realloc(ptr, count * sizeof(T));
-#endif
-}
-#define trealloc(ptr, count) _trealloc(ptr, count, __FILE__, __LINE__)
 
 template <class T>
 T endianSwap16(T a)

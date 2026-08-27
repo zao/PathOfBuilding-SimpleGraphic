@@ -78,9 +78,6 @@
 extern "C" SIMPLEGRAPHIC_DLL_PUBLIC int RunLuaFileAsWin(int argc, char** argv)
 {
 	PerformanceAPI_SetCurrentThreadName("Main");
-#ifdef _MEMTRAK_H
-	strcpy_s(_memTrak_reportName, 512, "SimpleGraphic/memtrak.log");
-#endif
 
 #ifdef _WIN32
 	timeBeginPeriod(1);

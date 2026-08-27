@@ -549,9 +549,6 @@ void sys_main_c::Error(const char8_t *fmt, ...)
 		Sleep(50);
 	}
 
-#ifdef _MEMTRAK_H
-	_memTrak_suppressReport = true;
-#endif
 #ifdef _WIN32
 	ExitProcess(0);
 #else

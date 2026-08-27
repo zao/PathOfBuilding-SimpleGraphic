@@ -38,7 +38,6 @@ public:
 	void	C_Exec(IConsole* conHnd, args_c &args);
 	void	C_Exit(IConsole* conHnd, args_c &args);
 	void	C_Restart(IConsole* conHnd, args_c &args);
-	void	C_MemReport(IConsole* conHnd, args_c &args);
 
 	conVar_c* con_log;
 	bool	logOpen;
@@ -65,7 +64,6 @@ core_config_c::core_config_c(sys_IMain* sysHnd)
 	Cmd_Add(u8"exit", 0, u8"", this, &core_config_c::C_Exit);
 	Cmd_Add(u8"quit", 0, u8"", this, &core_config_c::C_Exit);
 	Cmd_Add(u8"restart", 0, u8"", this, &core_config_c::C_Restart);
-	Cmd_Add(u8"memreport", 0, u8"", this, &core_config_c::C_MemReport);
 
 	con_log = sys->con->Cvar_Add(u8"con_log", CV_ARCHIVE, u8"0");
 	logOpen = false;
@@ -134,16 +132,6 @@ void core_config_c::C_Exit(IConsole* conHnd, args_c &args)
 void core_config_c::C_Restart(IConsole* conHnd, args_c &args)
 {
 	sys->Restart();
-}
-
-void core_config_c::C_MemReport(IConsole* conHnd, args_c &args)
-{
-#ifdef _MEMTRAK_H
-	_memTrak_memReport("memreport.log");
-	conHnd->Print(u8"Memory report saved to memreport.log\n");
-#else
-	conHnd->Print(u8"Memory report not available in Release builds.\n");
-#endif
 }
 
 // ============

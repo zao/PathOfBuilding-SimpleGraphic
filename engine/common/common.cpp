@@ -260,13 +260,6 @@ std::u32string_view ReadColorEscape(std::u32string_view str, col3_t out)
 // String Functions
 // ================
 
-// MemTrak hack
-#ifdef _MEMTRAK_H
-#undef new
-#else
-#define new(f,l) new
-#endif
-
 char* _AllocString(const char* str, const char* file, int line)
 {
 	if (str == NULL) {
@@ -274,14 +267,14 @@ char* _AllocString(const char* str, const char* file, int line)
 	}
 
 	size_t aslen = strlen(str) + 1;
-	char* al = new(file, line) char[aslen];
+	char* al = new char[aslen];
 	strcpy(al, str);
 	return al;
 }
 
 char* _AllocStringLen(size_t len, const char* file, int line)
 {
-	char* al = new(file, line) char[len+1];
+	char* al = new char[len+1];
 	al[len] = 0;
 	return al;
 }

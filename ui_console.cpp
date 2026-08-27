@@ -164,14 +164,6 @@ void ui_console_c::Render()
 		memTotal+= subscript->GetScriptMemory();
 	}
 	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%dkB used by Lua", memTotal);
-#ifdef _MEMTRAK_H 
-	liney-= fontSize;
-	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%dkB tracking overhead", _memTrak_getOverhead()>>10);
-	liney-= fontSize;
-	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%d allocations", _memTrak_getAllocCount());
-	liney-= fontSize;
-	renderer->DrawStringFormat(0, liney, F_RIGHT, fontSize, colorWhite, F_FIXED, "%dkB used by engine", _memTrak_getAllocSize()>>10);
-#endif
 
 	// Draw the text lines
 	liney = basey - fontSize;
