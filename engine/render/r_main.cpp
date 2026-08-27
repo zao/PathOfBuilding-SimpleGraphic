@@ -4,8 +4,6 @@
 // Module: Render Main
 //
 
-#define GLAD_GLES2_IMPLEMENTATION
-#define IMGUI_DEFINE_MATH_OPERATORS
 #include "r_local.h"
 
 #include "common/base64.h"
@@ -41,6 +39,38 @@ enum r_takeScreenshot_e {
 	R_SSJPEG,
 	R_SSPNG
 };
+
+// =================
+// Geometric queries
+// =================
+
+r_aabb_s AabbFromCmdQuad(const r_layerCmdQuad_s::Quad& q)
+{
+	r_aabb_s r{
+		{+FLT_MAX, +FLT_MAX},
+		{-FLT_MAX, -FLT_MAX},
+	};
+	for (size_t i = 0; i < 4; ++i) {
+		r.lo[0] = (std::min)(r.lo[0], q.x[i]);
+		r.lo[1] = (std::min)(r.lo[1], q.y[i]);
+		r.hi[0] = (std::max)(r.hi[0], q.x[i]);
+		r.hi[1] = (std::max)(r.hi[1], q.y[i]);
+	}
+	return r;
+}
+
+r_aabb_s AabbFromViewport(const r_viewport_s& vp)
+{
+	glm::vec2 lo = vp.lo;
+	glm::vec2 hi = vp.lo + vp.extent;
+	return { lo, hi };
+}
+
+bool AabbAabbIntersects(const r_aabb_s& a, const r_aabb_s& b)
+{
+	// A.lo <= B.hi && A.hi >= B.lo
+	return a.lo[0] <= b.hi[0] && a.lo[1] <= b.hi[1] && a.hi[0] >= b.lo[0] && a.hi[1] >= b.lo[1];
+}
 
 // ============
 // Shader Class
@@ -85,74 +115,9 @@ r_shaderHnd_c::r_shaderHnd_c(std::shared_ptr<r_shader_c>&& sh)
 {
 }
 
-struct Mat4 {
-	float m[16];
-
-	float const* data() const {
-		return m;
-	}
-};
-
-Mat4 OrthoMatrix(double left, double right, double bottom, double top, double nearVal, double farVal)
-{
-	Mat4 ret;
-	std::fill_n(ret.m, 16, 0.0f);
-	ret.m[0] = (float)(2.0f / (right - left));
-	ret.m[5] = (float)(2.0f / (top - bottom));
-	ret.m[10] = (float)(-2.0f / (farVal - nearVal));
-	ret.m[12] = (float)-((right + left) / (right - left));
-	ret.m[13] = (float)-((top + bottom) / (top - bottom));
-	ret.m[14] = (float)-((farVal + nearVal) / (farVal - nearVal));
-	ret.m[15] = 1.0f;
-	return ret;
-}
-
 // =================
 // Layer queue class
 // =================
-
-#pragma pack(push, r_layerCmd, 1)
-struct r_layerCmd_s {
-	enum Command : uint8_t {
-		VIEWPORT,
-		BLEND,
-		BIND,
-		COLOR,
-		QUAD,
-	} cmd;
-};
-
-struct r_layerCmdViewport_s {
-	r_layerCmd_s::Command cmd;
-	r_viewport_s viewport;
-};
-
-struct r_layerCmdBlend_s {
-	r_layerCmd_s::Command cmd;
-	int blendMode;
-};
-
-struct r_layerCmdBind_s {
-	r_layerCmd_s::Command cmd;
-	r_tex_c* tex;
-};
-
-struct r_layerCmdColor_s {
-	r_layerCmd_s::Command cmd;
-	col4_t col;
-};
-
-struct r_layerCmdQuad_s {
-	r_layerCmd_s::Command cmd;
-	struct {
-		float s[4];
-		float t[4];
-		float x[4];
-		float y[4];
-		int stackLayer, maskLayer;
-	} quad;
-};
-#pragma pack(pop, r_layerCmd)
 
 r_layer_c::r_layer_c(r_renderer_c* renderer, r_layerId_s id)
 	: renderer(renderer), id(id)
@@ -223,10 +188,7 @@ void r_layer_c::SetViewport(r_viewport_s* viewport)
 {
 	if (auto* cmd = (r_layerCmdViewport_s*)NewCommand(CommandSize(r_layerCmd_s::VIEWPORT))) {
 		cmd->cmd = r_layerCmd_s::VIEWPORT;
-		cmd->viewport.x = viewport->x;
-		cmd->viewport.y = viewport->y;
-		cmd->viewport.width = viewport->width;
-		cmd->viewport.height = viewport->height;
+		cmd->viewport = *viewport;
 	}
 }
 
@@ -269,430 +231,16 @@ void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1,
 	}
 }
 
-// =================
-// Geometric queries
-// =================
-
-struct r_aabb_s {
-	float lo[2];
-	float hi[2];
-};
-
-r_aabb_s AabbFromCmdQuad(decltype(r_layerCmdQuad_s::quad)& q, r_viewport_s& vp)
-{
-	r_aabb_s r{
-		{+FLT_MAX, +FLT_MAX},
-		{-FLT_MAX, -FLT_MAX},
-	};
-	for (size_t i = 0; i < 4; ++i) {
-		r.lo[0] = (std::min)(r.lo[0], (float)q.x[i]);
-		r.lo[1] = (std::min)(r.lo[1], (float)q.y[i]);
-		r.hi[0] = (std::max)(r.hi[0], (float)q.x[i]);
-		r.hi[1] = (std::max)(r.hi[1], (float)q.y[i]);
-	}
-	r.lo[0] += vp.x;
-	r.lo[1] += vp.y;
-	r.hi[0] += vp.x;
-	r.hi[1] += vp.y;
-	return r;
-}
-
-r_aabb_s AabbFromViewport(r_viewport_s& vp)
-{
-	r_aabb_s r{
-		{(float)vp.x, (float)vp.y },
-		{(float)(vp.x + vp.width), (float)(vp.y + vp.height) },
-	};
-	return r;
-}
-
-bool AabbAabbIntersects(r_aabb_s& a, r_aabb_s& b)
-{
-	// A.lo <= B.hi && A.hi >= B.lo
-	return a.lo[0] <= b.hi[0] && a.lo[1] <= b.hi[1] && a.hi[0] >= b.lo[0] && a.hi[1] >= b.lo[1];
-}
-
-struct Vertex {
-	float x, y;
-	float u, v;
-	float r, g, b, a;
-	float viewX, viewY, viewW, viewH;
-	float texId, stackIdx, maskIdx;
-};
-
-struct Batch {
-	explicit Batch(GLuint prog);
-	Batch(Batch&& rhs);
-	Batch& operator = (Batch&& rhs);
-	Batch(Batch const&) = delete;
-	Batch& operator = (Batch const&) = delete;
-	~Batch();
-
-	GLuint prog;
-	GLint xyAttr;
-	GLint uvAttr;
-	GLint tintAttr;
-	GLint viewportAttr;
-	GLint texIdAttr;
-
-	std::vector<Vertex> vertices;
-
-	void Execute(GLuint sharedVbo, size_t vertexBase);
-};
-
-Batch::Batch(GLuint prog)
-	: prog(prog)
-{
-	xyAttr = glGetAttribLocation(prog, "a_vertex");
-	uvAttr = glGetAttribLocation(prog, "a_texcoord");
-	tintAttr = glGetAttribLocation(prog, "a_tint");
-	viewportAttr = glGetAttribLocation(prog, "a_viewport");
-	texIdAttr = glGetAttribLocation(prog, "a_texId");
-}
-
-Batch::Batch(Batch&& rhs)
-	: prog(rhs.prog)
-	, xyAttr(rhs.xyAttr)
-	, uvAttr(rhs.uvAttr)
-	, tintAttr(rhs.tintAttr)
-	, viewportAttr(rhs.viewportAttr)
-	, texIdAttr(rhs.texIdAttr)
-	, vertices(std::move(rhs.vertices))
-{
-}
-
-Batch& Batch::operator = (Batch&& rhs) {
-	prog = rhs.prog;
-	xyAttr = rhs.xyAttr;
-	uvAttr = rhs.uvAttr;
-	tintAttr = rhs.tintAttr;
-	viewportAttr = rhs.viewportAttr;
-	texIdAttr = rhs.texIdAttr;
-	vertices = std::move(rhs.vertices);
-
-	return *this;
-}
-
-Batch::~Batch() {}
-
-void Batch::Execute(GLuint sharedVbo, size_t vertexBase)
-{
-	if (vertices.empty()) {
-		return;
-	}
-
-	glBindBuffer(GL_ARRAY_BUFFER, sharedVbo);
-	auto dataPtr = (uint8_t const*)vertices.data();
-	auto dataOff = vertexBase * sizeof(Vertex);
-	auto dataSize = vertices.size() * sizeof(Vertex);
-	glBufferSubData(GL_ARRAY_BUFFER, dataOff, dataSize, dataPtr);
-	glVertexAttribPointer(xyAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, x));
-	glVertexAttribPointer(uvAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, u));
-	glVertexAttribPointer(tintAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, r));
-	glVertexAttribPointer(viewportAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, viewX));
-	glVertexAttribPointer(texIdAttr, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, texId));
-	glEnableVertexAttribArray(xyAttr);
-	glEnableVertexAttribArray(uvAttr);
-	glEnableVertexAttribArray(tintAttr);
-	glEnableVertexAttribArray(viewportAttr);
-	glEnableVertexAttribArray(texIdAttr);
-	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size());
-	glDisableVertexAttribArray(xyAttr);
-	glDisableVertexAttribArray(uvAttr);
-	glDisableVertexAttribArray(tintAttr);
-	glDisableVertexAttribArray(viewportAttr);
-	glDisableVertexAttribArray(texIdAttr);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	vertices.clear();
-}
-
-struct RenderStrategy {
-	virtual ~RenderStrategy() = default;
-
-	virtual void ProcessCommand(r_layerCmd_s* cmd) = 0;
-	virtual void Flush() = 0;
-	virtual void SetShowStats(bool showStats) { showStats_ = showStats; }
-	virtual bool UsedIncompleteTextures() const { return false; }
-
-protected:
-	bool showStats_{};
-};
-
-static std::map<r_blendMode_e, char const*> const s_blendModeString{
-	{RB_ALPHA, "RB_ALPHA"},
-	{RB_PRE_ALPHA, "RB_PRE_ALPHA"},
-	{RB_ADDITIVE, "RB_ADDITIVE"},
-};
-
-struct AdjacentMergeStrategy : RenderStrategy {
-	AdjacentMergeStrategy(r_layer_c* layer, r_renderer_c* renderer, GLuint prog)
-		: layer_(layer), renderer_(renderer), prog_(prog), batch_(prog)
-	{
-		for (size_t i = 0;; ++i) {
-			GLint loc = glGetUniformLocation(prog, fmt::format("s_tex[{}]", i).c_str());
-			if (loc == -1) {
-				break;
-			}
-			texLocs_.push_back(loc);
-		}
-		mvpMatrixLoc_ = glGetUniformLocation(prog_, "mvp_matrix");
-		batchTextureCap_ = texLocs_.size();
-		glGenBuffers(1, &vbo_);
-	}
-
-	~AdjacentMergeStrategy() {
-		glDeleteBuffers(1, &vbo_);
-	}
-
-	struct BatchKey {
-		int blendMode = -1;
-
-		bool operator < (BatchKey const& rhs) const {
-			return blendMode < rhs.blendMode;
-		}
-
-		bool operator == (BatchKey const& rhs) const {
-			return !(*this < rhs) && !(rhs < *this);
-		}
-
-		bool operator != (BatchKey const& rhs) const {
-			return !(*this == rhs);
-		}
-	};
-
-	void ProcessCommand(r_layerCmd_s* cmd) override {
-		switch (cmd->cmd) {
-		case r_layerCmd_s::VIEWPORT: {
-			auto* c = (r_layerCmdViewport_s*)cmd;
-			nextViewport_ = c->viewport;
-			if (showStats_) {
-				// ImGui::Text("VIEWPORT: %dx%d @ %d,%d", c->viewport.width, c->viewport.height, c->viewport.x, c->viewport.y);
-			}
-		} break;
-		case r_layerCmd_s::BLEND: {
-			auto* c = (r_layerCmdBlend_s*)cmd;
-			latchKey_.blendMode = c->blendMode;
-			if (showStats_) {
-				// ImGui::Text("BLEND: %s", s_blendModeString.at((r_blendMode_e)c->blendMode));
-			}
-		} break;
-		case r_layerCmd_s::BIND: {
-			auto* c = (r_layerCmdBind_s*)cmd;
-			nextTex_ = c->tex;
-			if (showStats_) {
-				// ImGui::Text("TEX: %s", c->tex->fileName.c_str());
-			}
-		} break;
-		case r_layerCmd_s::COLOR: {
-			auto* c = (r_layerCmdColor_s*)cmd;
-			std::copy_n(c->col, 4, tint_.data());
-		} break;
-		case r_layerCmd_s::QUAD: {
-			auto* c = (r_layerCmdQuad_s*)cmd;
-			if (showStats_) {
-				// ImGui::Text("QUAD");
-			}
-
-			// Cull the quad first before it influences any boundary cuts.
-			if (!!renderer_->r_drawCull->intVal) {
-				auto a = AabbFromCmdQuad(c->quad, nextViewport_);
-				auto b = AabbFromViewport(nextViewport_);
-				bool intersects = AabbAabbIntersects(a, b);
-				if (!intersects) {
-					break;
-				}
-			}
-
-			// If the current batch is incompatible key-wise, dispatch it to get a fresh
-			// batch to grow in.
-			if (!batch_.batch.vertices.empty() && batch_.key != latchKey_) {
-				Dispatch();
-			}
-			batch_.key = latchKey_;
-
-			// Check current (and only) batch if the texture set has the latched texture.
-			// If it's there, use its index as vertex attribute.
-			// If it's not, insert it if room, otherwise dispatch batch and prepare a fresh one.
-			size_t texSlot{};
-			{
-				auto& textures = batch_.textures;
-				auto texI = std::find(textures.begin(), textures.end(), nextTex_);
-				if (texI == textures.end()) {
-					if (textures.size() == batchTextureCap_) {
-						Dispatch();
-					}
-					texI = textures.insert(textures.end(), nextTex_);
-				}
-				texSlot = std::distance(textures.begin(), texI);
-			}
-
-			Vertex quad[4]{};
-			for (int v = 0; v < 4; v++) {
-				auto& q = quad[v];
-				auto& vp = nextViewport_;
-				q.u = c->quad.s[v];
-				q.v = c->quad.t[v];
-				q.x = c->quad.x[v];
-				q.y = c->quad.y[v];
-				q.r = tint_[0];
-				q.g = tint_[1];
-				q.b = tint_[2];
-				q.a = tint_[3];
-				q.viewX = (float)vp.x;
-				q.viewY = (float)vp.y;
-				q.viewW = (float)vp.width;
-				q.viewH = (float)vp.height;
-				q.texId = (float)texSlot;
-				q.stackIdx = (float)c->quad.stackLayer;
-				q.maskIdx = (float)c->quad.maskLayer;
-			}
-			// 3-2
-			// |/|
-			// 0-1
-			size_t indices[] = { 0, 1, 2, 0, 2, 3 };
-			for (auto idx : indices) {
-				batch_.batch.vertices.push_back(quad[idx]);
-			}
-			totalVertexCount_ += std::size(indices);
-		} break;
-		}
-	}
-
-	void Flush() {
-		if (!batch_.batch.vertices.empty()) {
-			Dispatch();
-		}
-		if (showStats_) {
-			ImGui::BulletText("Layer %d:%d - %d batches", layer_->id.layer, layer_->id.subLayer, batchIndex);
-		}
-	}
-
-	bool UsedIncompleteTextures() const override { return usedIncompleteTextures; };
-
-private:
-	void Dispatch() {
-		glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-		auto& batch = batch_.batch;
-		auto& textures = batch_.textures;
-		size_t vertexCount = batch.vertices.size();
-		glBufferData(GL_ARRAY_BUFFER, vertexCount * sizeof(Vertex), nullptr, GL_STREAM_DRAW);
-		glUseProgram(prog_);
-
-		auto& key = batch_.key;
-		auto& lastKey = lastDispatchKey_;
-
-		if (showStats_) {
-			ImGui::Text("Batch %d", batchIndex);
-			ImGui::Text("%d verts", batch.vertices.size());
-		}
-
-		{
-			auto& vid = renderer_->sys->video->vid;
-			float fbScaleX = vid.fbSize[0] / (float)vid.size[0];
-			float fbScaleY = vid.fbSize[1] / (float)vid.size[1];
-			int virtualW = renderer_->VirtualScreenWidth();
-			int virtualH = renderer_->VirtualScreenHeight();
-			glViewport(0, 0, virtualW, virtualH);
-			Mat4 mvpMatrix = OrthoMatrix(0, virtualW, virtualH, 0, -9999, 9999);
-			glUniformMatrix4fv(mvpMatrixLoc_, 1, GL_FALSE, mvpMatrix.data());
-		}
-		if (!lastKey || lastKey->blendMode != key.blendMode) {
-			if (showStats_) {
-				ImGui::Text("New blend mode %s", s_blendModeString.at((r_blendMode_e)key.blendMode));
-			}
-			switch (key.blendMode) {
-			case RB_ALPHA:
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				break;
-			case RB_PRE_ALPHA:
-				glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-				break;
-			case RB_ADDITIVE:
-				glBlendFunc(GL_ONE, GL_ONE);
-				break;
-			}
-		}
-		{
-			for (size_t i = 0, numTex = texLocs_.size(); i < numTex; ++i) {
-				glUniform1i(texLocs_[i], (GLint)i);
-				glActiveTexture((GLenum)(GL_TEXTURE0 + i));
-				if (i < textures.size()) {
-					auto tex = textures[i];
-					tex->Bind();
-					if (showStats_) {
-						ImGui::Text("New tex %llX (% s) % d", tex->dataGL ? (uintptr_t)tex->dataGL->texId : (uintptr_t)tex->dataDX->srv.p, tex->fileName.c_str(), tex->status.load());
-					}
-					if (!usedIncompleteTextures && tex->status != r_tex_c::Status::DONE) {
-						usedIncompleteTextures = true;
-					}
-				}
-				else {
-					glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-				}
-			}
-			glActiveTexture(GL_TEXTURE0);
-		}
-
-		batch.Execute(vbo_, 0);
-
-		lastDispatchKey_ = key;
-		batch_.batch.vertices.clear();
-		batch_.textures.clear();
-
-		glUseProgram(0);
-
-		batchIndex += 1;
-	}
-
-	r_layer_c* layer_{};
-	r_renderer_c* renderer_{};
-	GLuint prog_{};
-	std::vector<GLint> texLocs_;
-	GLint mvpMatrixLoc_{};
-
-	size_t batchTextureCap_{};
-	GLuint vbo_{};
-
-	struct TexturedBatch {
-		explicit TexturedBatch(GLuint prog) : batch(prog) {
-			textures.reserve(128);
-		}
-
-		BatchKey key{};
-		Batch batch;
-		std::vector<r_tex_c*> textures;
-	};
-
-	BatchKey latchKey_{};
-	r_viewport_s nextViewport_{};
-	r_tex_c* nextTex_{};
-	std::optional<BatchKey> lastDispatchKey_;
-	TexturedBatch batch_;
-
-	std::array<float, 4> tint_{ 1.0f, 1.0f, 1.0f, 1.0f };
-
-	size_t totalVertexCount_ = 0;
-	size_t batchIndex = 0;
-
-	bool usedIncompleteTextures = false;
-};
-
 bool r_layer_c::Render()
 {
-	if (!renderer->stateGL)
-		return false;
-
 	int const optLevel = renderer->r_layerOptimize->intVal;
 	bool const shuffle = renderer->r_layerShuffle->intVal == 1;
 
-	std::unique_ptr<RenderStrategy> strat(new AdjacentMergeStrategy(this, renderer, renderer->stateGL->tintedTextureProgram));
+	std::shared_ptr<r_IRenderStrategy> strat = renderer->api->GetRenderStrategy(*this);
+	if (!strat)
+		return true;
 
-	if (glPushGroupMarkerEXT)
-	{
-		std::ostringstream oss;
-		oss << "Layer " << id.layer << ", sub-layer " << id.subLayer;
-		glPushGroupMarkerEXT(0, oss.str().c_str());
-	}
+	auto debugMarker = renderer->api->ScopedDebugMarker(fmt::format(u8"Layer {}, sub-layer {}", id.layer, id.subLayer));
 
 	if (strat) {
 		bool showStats{};
@@ -713,10 +261,6 @@ bool r_layer_c::Render()
 		if (renderer->debugLayers) {
 			ImGui::End();
 		}
-	}
-
-	if (glPopGroupMarkerEXT) {
-		glPopGroupMarkerEXT();
 	}
 
 	return strat->UsedIncompleteTextures();
@@ -1089,11 +633,9 @@ void r_renderer_c::EndFrame()
 
 	ImGui::Render();
 	api->ImGuiEndFrame();
-	api->EndFrame();
 
-	// Swap output buffers
-	if (stateGL)
-		stateGL->openGL->Swap();
+	// End frame and present
+	api->EndFrame();
 
 	// Take screenshot
 	switch (takeScreenshot) {
@@ -1207,7 +749,7 @@ int r_renderer_c::GetTexAsyncCount()
 
 void r_renderer_c::SetClearColor(const col4_t col)
 {
-	glClearColor(col[0], col[1], col[2], col[3]);
+	clearColor = glm::make_vec4(col);
 }
 
 void r_renderer_c::SetDrawLayer(int layer, int subLayer)
@@ -1242,10 +784,8 @@ void r_renderer_c::SetViewport(int x, int y, int width, int height)
 		width = VirtualScreenWidth();
 		height = VirtualScreenHeight();
 	}
-	curViewport.x = x;
-	curViewport.y = y;
-	curViewport.width = width;
-	curViewport.height = height;
+	curViewport.lo = {x, y};
+	curViewport.extent = {width, height};
 	curLayer->SetViewport(&curViewport);
 }
 
@@ -1257,23 +797,17 @@ void r_renderer_c::SetBlendMode(int mode)
 
 void r_renderer_c::DrawColor(const col4_t col)
 {
-	if (col) {
-		Vector4Copy(col, drawColor);
-	}
-	else {
-		drawColor[0] = 1.0f;
-		drawColor[1] = 1.0f;
-		drawColor[2] = 1.0f;
-		drawColor[3] = 1.0f;
-	}
+	drawColor = col ? glm::make_vec4(col) : glm::vec4(1.0f);
 }
 
 void r_renderer_c::DrawColor(dword col)
 {
-	drawColor[0] = ((col >> 16) & 0xFF) / 255.0f;
-	drawColor[1] = ((col >> 8) & 0xFF) / 255.0f;
-	drawColor[2] = (col & 0xFF) / 255.0f;
-	drawColor[3] = (col >> 24) / 255.0f;
+	drawColor = glm::vec4(
+		((col >> 16) & 0xFF) / 255.0f,
+		((col >> 8) & 0xFF) / 255.0f,
+		(col & 0xFF) / 255.0f,
+		(col >> 24) / 255.0f
+	);
 }
 
 void r_renderer_c::GetDrawColor(col4_t color)
@@ -1308,7 +842,7 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1,
 		curLayer->Bind(whiteImage->sh->tex);
 		stackLayer = 0;
 	}
-	curLayer->Color(drawColor);
+	curLayer->Color(glm::value_ptr(drawColor));
 	curLayer->Quad(
 		uv0.s, uv0.t, p0.x, p0.y,
 		uv1.s, uv1.t, p1.x, p1.y,
@@ -1331,7 +865,7 @@ void r_renderer_c::DrawString(float x, float y, int align, int height, const col
 		fonts[font]->Draw(pos, align, height, tcol, idxStr.text);
 	}
 	else {
-		fonts[font]->Draw(pos, align, height, drawColor, idxStr.text);
+		fonts[font]->Draw(pos, align, height, glm::value_ptr(drawColor), idxStr.text);
 	}
 }
 
@@ -1351,7 +885,7 @@ void r_renderer_c::DrawStringFormat(float x, float y, int align, int height, con
 		fonts[font]->VDraw(pos, align, height, tcol, fmt, va);
 	}
 	else {
-		fonts[font]->VDraw(pos, align, height, drawColor, fmt, va);
+		fonts[font]->VDraw(pos, align, height, glm::value_ptr(drawColor), fmt, va);
 	}
 
 	va_end(va);
@@ -1464,53 +998,13 @@ void r_renderer_c::C_Screenshot(IConsole* conHnd, args_c& args)
 
 void r_renderer_c::DoScreenshot(image_c* i, int type, std::u8string_view ext)
 {
-	if (type != IMGTYPE_RGB) {
+	if (!i || type != IMGTYPE_RGB) {
 		return;
 	}
 
-	if (!stateGL)
+	if (!api->DoScreenshot(*i, type)) {
 		return;
-
-	auto& rt = stateGL->rttMain[GetPresentRenderTarget()];
-	int const xs = rt.width;
-	int const ys = rt.height;
-
-	// Pixel reading only supports RGBA and an implementation-specific format.
-	// Use RGBA for convenience as that's close enough to what we want to save in the end.
-	int const readSize = xs * ys * 4;
-	int const writeSize = xs * ys * 3;
-	std::vector<byte> sbuf(readSize);
-
-	// Read the front buffer
-	GLint oldFb{};
-	GLenum oglErr = glGetError();
-	GLenum implColorReadFormat{}, implColorReadType{};
-	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFb);
-	glBindFramebuffer(GL_FRAMEBUFFER, rt.framebuffer);
-	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-	glReadPixels(0, 0, xs, ys, GL_RGBA, GL_UNSIGNED_BYTE, sbuf.data());
-	oglErr = glGetError();
-	glBindFramebuffer(GL_FRAMEBUFFER, oldFb);
-
-	// Flip and convert the image to RGB
-	int const readSpan = xs * 4;
-	int	const writeSpan = xs * 3;
-	std::vector<byte> ss(writeSize);
-	byte* p1 = sbuf.data();
-	byte* p2 = ss.data() + writeSize - writeSpan;
-	for (int y = 0; y < ys; ++y, p2 -= writeSpan * 2) {
-		for (int x = 0; x < xs; ++x) {
-			*p2++ = *p1++; // R
-			*p2++ = *p1++; // G
-			*p2++ = *p1++; // B
-			p1++; // A
-		}
 	}
-	sbuf.clear();
-
-	// Set image info
-	i->CopyRaw(IMGTYPE_RGB, xs, ys, ss.data());
-	ss.clear();
 
 	time_t curTime;
 	time(&curTime);

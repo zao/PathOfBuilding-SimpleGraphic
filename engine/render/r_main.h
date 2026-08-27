@@ -24,11 +24,46 @@
 
 // Render viewport
 struct r_viewport_s {
-	int	x;
-	int	y;
-	int	width;
-	int height;
+	glm::ivec2 lo;
+	glm::ivec2 extent;
 };
+
+struct r_aabb_s {
+	glm::vec2 lo;
+	glm::vec2 hi;
+};
+
+inline r_aabb_s AabbOffset(r_aabb_s box, glm::vec2 offset)
+{
+	box.lo += offset;
+	box.hi += offset;
+	return box;
+}
+
+r_aabb_s AabbFromViewport(const r_viewport_s& vp);
+bool AabbAabbIntersects(const r_aabb_s& a, const r_aabb_s& b);
+
+struct r_mat4_s {
+	std::array<float, 16> m;
+
+	const float* data() const {
+		return m.data();
+	}
+};
+
+inline r_mat4_s OrthoMatrix(double left, double right, double bottom, double top, double nearVal, double farVal)
+{
+	r_mat4_s ret;
+	ret.m.fill(0.0f);
+	ret.m[0] = (float)(2.0f / (right - left));
+	ret.m[5] = (float)(2.0f / (top - bottom));
+	ret.m[10] = (float)(-2.0f / (farVal - nearVal));
+	ret.m[12] = (float)-((right + left) / (right - left));
+	ret.m[13] = (float)-((top + bottom) / (top - bottom));
+	ret.m[14] = (float)-((farVal + nearVal) / (farVal - nearVal));
+	ret.m[15] = 1.0f;
+	return ret;
+}
 
 struct r_layerId_s
 {
@@ -144,15 +179,16 @@ public:
 
 	r_font_c* fonts[F_NUMFONTS] = {}; // Font objects
 
-	col4_t	drawColor = {};		// Current draw color
+	glm::vec4 clearColor = {};	// Current clear color
+	glm::vec4 drawColor = {};	// Current draw color
 
-	r_viewport_s curViewport; // Current viewport
-	int		curBlendMode = 0;	// Current blend mode
+	r_viewport_s curViewport;	// Current viewport
+	int curBlendMode = 0;		// Current blend mode
 
 	std::vector<std::weak_ptr<class r_shader_c>> shaderList;
 
-	int		numLayer = 0;
-	int		layerListSize = 0;
+	int numLayer = 0;
+	int layerListSize = 0;
 	std::map<r_layerId_s, std::shared_ptr<r_layer_c>> layerList;
 	std::shared_ptr<r_layer_c> curLayer;
 
@@ -196,4 +232,16 @@ public:
 
 	size_t GetDrawRenderTarget();
 	size_t GetPresentRenderTarget();
+};
+
+struct r_IRenderStrategy {
+	virtual ~r_IRenderStrategy() = default;
+
+	virtual void ProcessCommand(r_layerCmd_s* cmd) = 0;
+	virtual void Flush() = 0;
+	virtual void SetShowStats(bool showStats) { showStats_ = showStats; }
+	virtual bool UsedIncompleteTextures() const { return false; }
+
+protected:
+	bool showStats_{};
 };

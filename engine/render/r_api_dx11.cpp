@@ -3,12 +3,26 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_dx11.h>
 
+#include <atlcomcli.h>
+#include <d3d11.h>
+
+struct TexDataDX
+{
+	CComPtr<ID3D11ShaderResourceView> srv;
+};
+
+struct r_stateDX_s::Impl
+{
+	CComPtr<ID3D11Device> dev;
+	CComPtr<ID3D11DeviceContext> ctx;
+	D3D_FEATURE_LEVEL featureLevel{};
+};
+
 r_stateDX_s::r_stateDX_s(r_renderer_c* renderer)
 	: r_api_c(renderer)
 {
-	auto* sys = renderer->sys;
-
-	HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &dev, &featureLevel, &ctx);
+	impl = std::make_shared<Impl>();
+	HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &impl->dev, &impl->featureLevel, &impl->ctx);
 
 	texMaxDim = 16384; // DX11.1
 	texBC7 = true; //DX11.1
@@ -17,7 +31,7 @@ r_stateDX_s::r_stateDX_s(r_renderer_c* renderer)
 void r_stateDX_s::Init()
 {
 	ImGui_ImplGlfw_InitForOther((GLFWwindow*)sys->video->GetWindowHandle(), true);
-	ImGui_ImplDX11_Init(dev.p, ctx.p);
+	ImGui_ImplDX11_Init(impl->dev.p, impl->ctx.p);
 }
 
 void r_stateDX_s::Shutdown()

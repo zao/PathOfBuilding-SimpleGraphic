@@ -5,6 +5,7 @@
 //
 
 #include <glm/vec2.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 // =======
 // Classes

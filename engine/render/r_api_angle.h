@@ -15,25 +15,12 @@ struct r_stateGL_s : public r_api_c {
 	void PrepareDrawTarget() override;
 	void DrawPresentTarget() override;
 
-	InterfacePtr<sys_IOpenGL> openGL = nullptr;
+	std::shared_ptr<r_IRenderStrategy> GetRenderStrategy(const r_layer_c& layer) override;
 
-	std::u8string st_vendor;	// Vendor string
-	std::u8string st_renderer;	// Renderer string
-	std::u8string st_ver;		// Version string
-	std::u8string st_ext;		// Extension string
+	std::shared_ptr<void> ScopedDebugMarker(std::u8string_view label) override;
+	bool DoScreenshot(image_c& outImg, int type) override;
+	std::shared_ptr<void> UploadTextureData(r_tex_c*) override;
 
-	int tintedTextureProgram = 0;
-
-	struct RenderTarget {
-		int		width = -1, height = -1;
-		GLuint	framebuffer = 0;
-		GLuint	colorTexture = 0;
-
-		GLuint	blitProg = 0;
-		GLuint	blitAttribLocPos = 0;
-		GLuint	blitAttribLocTC = 0;
-		GLuint  blitSampleLocColour = 0;
-	};
-
-	RenderTarget rttMain[2];
+	struct Impl;
+	std::shared_ptr<Impl> impl;
 };

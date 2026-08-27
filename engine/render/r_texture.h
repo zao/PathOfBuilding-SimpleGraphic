@@ -50,28 +50,11 @@ public:
 	std::atomic<dword> fileHeight;
 	std::unique_ptr<image_c> img;
 
-	struct DataGL
-	{
-		dword texId{};
-		GLenum target{};
-	};
-
-	struct DataDX
-	{
-		CComPtr<ID3D11ShaderResourceView> srv;
-	};
-
-	std::optional<DataDX> dataDX;
-	std::optional<DataGL> dataGL;
+	std::shared_ptr<void> apiData;
 	size_t stackLayers = 1;
 
 	static std::shared_ptr<r_tex_c> CreateFromPath(BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);
 	static std::shared_ptr<r_tex_c> CreateFromImage(BorrowedInterfacePtr<class r_ITexManager> manager, std::unique_ptr<image_c> img, int flags);
-
-	void Bind();
-	void Unbind();
-	void Enable();
-	void Disable();
 
 	void AbortLoad();
 	void LoadFile();
@@ -85,8 +68,8 @@ public:
 private:
 	class t_manager_c* manager;
 	class r_renderer_c* renderer;
-	void	Init(BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);
-	void	Upload(image_c& img, int flags);
+	void Init(BorrowedInterfacePtr<class r_ITexManager> manager, std::u8string_view fileName, int flags);
+	void Upload();
 	std::unique_ptr<image_c> BuildMipSet(std::unique_ptr<image_c> img);
 };
 

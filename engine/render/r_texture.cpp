@@ -12,8 +12,6 @@
 #include "cmp_core.h"
 #include "stb_image_resize.h"
 #include <fmt/core.h>
-#include <gli/gl.hpp>
-#include <gli/generate_mipmaps.hpp>
 
 // ===================
 // Predefined textures
@@ -320,9 +318,7 @@ r_tex_c::~r_tex_c()
 	if (status >= IN_QUEUE && status < DONE) {
 		manager->AsyncRemove(*this);
 	}
-
-	if (dataGL)
-		glDeleteTextures(1, &dataGL->texId);
+	apiData.reset();
 }
 
 void r_tex_c::Kick()
@@ -346,13 +342,6 @@ void r_tex_c::Init(BorrowedInterfacePtr<r_ITexManager> i_manager, std::u8string_
 	fileName = i_fileName;
 	fileWidth = 0;
 	fileHeight = 0;
-
-	if (renderer->stateGL) {
-		dataGL.emplace();
-	}
-	else {
-		dataDX.emplace();
-	}
 }
 
 std::shared_ptr<r_tex_c> r_tex_c::CreateFromPath(BorrowedInterfacePtr<r_ITexManager> manager, std::u8string_view fileName, int flags)
@@ -367,43 +356,6 @@ std::shared_ptr<r_tex_c> r_tex_c::CreateFromImage(BorrowedInterfacePtr<r_ITexMan
 	auto ptr = std::make_shared<r_tex_c>(CreateToken{}, manager, std::move(img), flags);
 	ptr->Kick();
 	return ptr;
-}
-
-void r_tex_c::Bind()
-{
-	if (!dataGL)
-		return;
-
-	if (status == DONE) {
-		glBindTexture(dataGL->target, dataGL->texId);
-	} else {
-		manager->blackTex->Bind();
-	}
-}
-
-void r_tex_c::Unbind()
-{
-	if (!dataGL)
-		return;
-
-	glBindTexture(dataGL->target, 0);
-}
-
-void r_tex_c::Enable()
-{	
-	if (!dataGL)
-		return;
-
-	glEnable(GL_TEXTURE_2D);
-}
-
-void r_tex_c::Disable()
-{
-	Unbind();
-	if (!dataGL)
-		return;
-
-	glDisable(GL_TEXTURE_2D);
 }
 
 void r_tex_c::AbortLoad()
@@ -684,105 +636,12 @@ void r_tex_c::WaitOnStatusAtLeast(Status bound) const noexcept
 
 void r_tex_c::PerformUpload()
 {
-	Upload(*img, flags);
+	Upload();
 	img.reset();
 	SetStatus(DONE);
 }
 
-static std::atomic<size_t> inputBytes = 0;
-static std::atomic<size_t> uploadedBytes = 0;
-
-void r_tex_c::Upload(image_c& img, int flags)
+void r_tex_c::Upload()
 {
-	if (!renderer->stateGL)
-		return;
-
-	static gli::gl gl(gli::gl::PROFILE_ES30);
-
-	auto& target = dataGL->target;
-	auto& texId = dataGL->texId;
-
-	const auto& tex = img.tex;
-	target = gl.translate(tex.target());
-	const auto format = gl.translate(tex.format(), tex.swizzles());
-
-	// Find and bind texture name
-	glGenTextures(1, &texId);
-	glBindTexture(target, texId);
-
-	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-	glTexParameteri(target, GL_TEXTURE_BASE_LEVEL, 0);
-	glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, (GLint)tex.levels());
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_R, format.Swizzles.r);
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_G, format.Swizzles.g);
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_B, format.Swizzles.b);
-	glTexParameteri(target, GL_TEXTURE_SWIZZLE_A, format.Swizzles.a);
-
-	const int miplevels = (int)tex.levels();
-
-	// Set filters
-	if (miplevels == 1) {
-		glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	}
-	else {
-		glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-	}
-	if (flags & TF_NEAREST) {
-		glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	}
-	else {
-		glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	}
-
-	constexpr float anisotropyCap = 16.0f;
-	static const float maxAnisotropy = [] {
-		float ret{};
-		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &ret);
-		return ret;
-		}();
-	glTexParameterf(target, GL_TEXTURE_MAX_ANISOTROPY, (std::min)(maxAnisotropy, anisotropyCap));
-
-	// Set repeating
-	if (flags & TF_CLAMP) {
-		glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	}
-	else {
-		glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	}
-
-	const int layers = (int)tex.layers();
-	const auto extent = tex.extent();
-	const bool isTextureArray = target == GL_TEXTURE_2D_ARRAY;
-
-	if (isTextureArray)
-		glTexStorage3D(target, miplevels, format.Internal, extent.x, extent.y, layers);
-	else
-		glTexStorage2D(target, miplevels, format.Internal, extent.x, extent.y);
-
-	for (int layer = 0; layer < layers; ++layer) {
-		for (int miplevel = 0; miplevel < miplevels; ++miplevel) {
-
-			const auto extent = tex.extent(miplevel);
-
-			const int up_w = extent.x;
-			const int up_h = extent.y;
-
-			// Upload the mipmap
-			uploadedBytes += tex.size(miplevel);
-			const auto* data = tex.data(layer, 0, miplevel);
-			if (is_compressed(tex.format()))
-				if (isTextureArray)
-					glCompressedTexSubImage3D(target, miplevel, 0, 0, layer, extent.x, extent.y, 1, format.Internal, (GLsizei)tex.size(miplevel), data);
-				else
-					glCompressedTexSubImage2D(target, miplevel, 0, 0, extent.x, extent.y, format.Internal, (GLsizei)tex.size(miplevel), data);
-			else
-				if (isTextureArray)
-					glTexSubImage3D(target, miplevel, 0, 0, layer, extent.x, extent.y, 1, format.External, format.Type, data);
-				else
-					glTexSubImage2D(target, miplevel, 0, 0, extent.x, extent.y, format.External, format.Type, data);
-		}
-	}
+	apiData = renderer->api->UploadTextureData(this);
 }

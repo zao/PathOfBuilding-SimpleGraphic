@@ -28,6 +28,7 @@ find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(gli CONFIG REQUIRED)
 find_package(LuaJIT REQUIRED)
+find_package(magic_enum CONFIG REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(re2 CONFIG REQUIRED)
@@ -70,8 +71,10 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/render/r_api_angle.h"
     "engine/render/r_api_dx11.cpp"
     "engine/render/r_api_dx11.h"
+    "engine/render/r_command.h"
     "engine/render/r_font.cpp"
     "engine/render/r_font.h"
+    "engine/render/r_local.h"
     "engine/render/r_main.cpp"
     "engine/render/r_main.h"
     "engine/render/r_texture.cpp"
@@ -120,6 +123,7 @@ add_library(SimpleGraphic SHARED
 )
 target_compile_definitions(SimpleGraphic
     PRIVATE
+    "NOMINMAX"
     "UNICODE"
     "_CRT_SECURE_NO_DEPRECATE"
     "_CRT_SECURE_NO_WARNINGS"
@@ -130,6 +134,8 @@ target_compile_definitions(SimpleGraphic
     "SIMPLEGRAPHIC_EXPORTS"
     "PERFORMANCEAPI_ENABLED=$<BOOL:${SuperluminalAPI_FOUND}>"
 )
+
+target_compile_options(SimpleGraphic PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/MP>")
 
 target_include_directories(SimpleGraphic
     PUBLIC
@@ -177,6 +183,7 @@ add_library(imgui STATIC
 )
 
 target_compile_definitions(imgui PUBLIC
+    "IMGUI_DEFINE_MATH_OPERATORS"
     "IMGUI_IMPL_OPENGL_ES2"
 )
 
@@ -254,6 +261,7 @@ target_link_libraries(SimpleGraphic
     glm::glm
     imgui
     LuaJIT::LuaJIT
+    magic_enum::magic_enum
     Microsoft.GSL::GSL
     re2::re2
     readerwriterqueue::readerwriterqueue
