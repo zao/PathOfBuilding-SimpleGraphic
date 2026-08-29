@@ -11,6 +11,7 @@ struct r_stateWG_s : public r_api_c {
 
 	void BeginFrame() override;
 	void EndFrame() override;
+	void PrepareDrawTarget() override;
 
 	struct Impl;
 	std::shared_ptr<Impl> impl;

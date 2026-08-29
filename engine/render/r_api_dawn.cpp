@@ -25,10 +25,13 @@ struct r_stateWG_s::Impl
 	wgpu::Surface surface{};
 	wgpu::SurfaceCapabilities surfCaps{};
 
+	glm::ivec2 lastFbSize{};
+
 	struct FrameState
 	{
 		wgpu::SurfaceTexture surfaceTexture{};
-		wgpu::TextureView textureView{};
+		wgpu::TextureView targetView{};
+		wgpu::CommandEncoder encoder;
 	};
 	std::optional<FrameState> frameState;
 
@@ -120,7 +123,9 @@ r_stateWG_s::r_stateWG_s(r_renderer_c* renderer)
 	descriptor.requiredFeatureCount = requiredFeatures.size();
 	descriptor.requiredFeatures = requiredFeatures.data();
 	descriptor.SetDeviceLostCallback(wgpu::CallbackMode::AllowProcessEvents, [this](const wgpu::Device& device, wgpu::DeviceLostReason reason, wgpu::StringView message) {
-		sys->con->Warning(fmt::format(u8"[WGPU] Device loss: {}", AsU8StringView(message)));
+		if (reason != wgpu::DeviceLostReason::CallbackCancelled) {
+			sys->con->Warning(fmt::format(u8"[WGPU] Device loss: {}", AsU8StringView(message)));
+		}
 	});
 	descriptor.SetUncapturedErrorCallback([](const wgpu::Device& device, wgpu::ErrorType type, wgpu::StringView message, r_stateWG_s* self) {
 		self->sys->con->Warning(fmt::format(u8"[WGPU] Uncaptured error: {}", AsU8StringView(message)));
@@ -150,18 +155,6 @@ r_stateWG_s::r_stateWG_s(r_renderer_c* renderer)
 	if (WGPUStatus_Success != impl->surface.GetCapabilities(impl->adapter, &impl->surfCaps)) {
 		sys->con->Warning(u8"Could not obtain present surface caps.");
 	}
-
-	wgpu::SurfaceConfiguration surfConfig{};
-	surfConfig.width = sys->video->vid.fbSize.x;
-	surfConfig.height = sys->video->vid.fbSize.y;
-	assert(surfCaps.formatCount > 0);
-	surfConfig.format = impl->surfCaps.formats[0];
-	surfConfig.usage = wgpu::TextureUsage::RenderAttachment;
-	surfConfig.device = impl->device;
-	assert(surfCaps.presentModeCount > 0);
-	surfConfig.presentMode = impl->surfCaps.presentModes[0];
-
-	impl->surface.Configure(&surfConfig);
 }
 
 void r_stateWG_s::Init()
@@ -189,21 +182,69 @@ void r_stateWG_s::ImGuiBeginFrame()
 
 void r_stateWG_s::ImGuiEndFrame()
 {
-	WGPURenderPassEncoder enc{};
-	//ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), {}); // TODO(zao): implement
+	wgpu::RenderPassColorAttachment colorAttachment{};
+	colorAttachment.view = impl->frameState->targetView;
+	colorAttachment.loadOp = wgpu::LoadOp::Load;
+	colorAttachment.storeOp = wgpu::StoreOp::Store;
+
+	wgpu::RenderPassDescriptor renderPassDesc{};
+	renderPassDesc.colorAttachmentCount = 1;
+	renderPassDesc.colorAttachments = &colorAttachment;
+	renderPassDesc.label = "Dear ImGui";
+
+	wgpu::RenderPassEncoder enc = impl->frameState->encoder.BeginRenderPass(&renderPassDesc);
+	ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), enc.Get());
+	enc.End();
 }
 
 void r_stateWG_s::BeginFrame()
 {
+	const auto fbSize = sys->video->vid.fbSize;
+	if (fbSize != impl->lastFbSize) {
+		impl->surface.Unconfigure();
+
+		wgpu::SurfaceConfiguration surfConfig{};
+		surfConfig.width = fbSize.x;
+		surfConfig.height = fbSize.y;
+		assert(surfCaps.formatCount > 0);
+		surfConfig.format = impl->surfCaps.formats[0];
+		surfConfig.usage = wgpu::TextureUsage::RenderAttachment;
+		surfConfig.device = impl->device;
+		assert(surfCaps.presentModeCount > 0);
+		surfConfig.presentMode = impl->surfCaps.presentModes[0];
+
+		impl->surface.Configure(&surfConfig);
+		impl->lastFbSize = fbSize;
+	}
+
 	impl->AdvanceFrameState();
 	impl->device.Tick();
 }
 
 void r_stateWG_s::EndFrame()
 {
+	wgpu::CommandBuffer command = impl->frameState->encoder.Finish();
+	impl->queue.Submit(1, &command);
 	impl->surface.Present();
 	impl->device.Tick();
 	impl->frameState.reset();
+}
+
+void r_stateWG_s::PrepareDrawTarget()
+{
+	wgpu::RenderPassColorAttachment colorAttachment{};
+	colorAttachment.view = impl->frameState->targetView;
+	colorAttachment.loadOp = wgpu::LoadOp::Clear;
+	colorAttachment.storeOp = wgpu::StoreOp::Store;
+	auto clear = renderer->clearColor;
+	colorAttachment.clearValue = wgpu::Color{.r = clear.r, .g = clear.g, .b = clear.b, .a = clear.a};
+	wgpu::RenderPassDescriptor renderPassDesc{};
+	renderPassDesc.colorAttachmentCount = 1;
+	renderPassDesc.colorAttachments = &colorAttachment;
+	renderPassDesc.label = "PrepareDrawTarget";
+
+	wgpu::RenderPassEncoder enc = impl->frameState->encoder.BeginRenderPass(&renderPassDesc);
+	enc.End();
 }
 
 r_stateWG_s::Impl::~Impl()
@@ -213,7 +254,6 @@ r_stateWG_s::Impl::~Impl()
 void r_stateWG_s::Impl::AdvanceFrameState()
 {
 	frameState.emplace();
-
 	surface.GetCurrentTexture(&frameState->surfaceTexture);
 
 	wgpu::TextureViewDescriptor viewDesc{};
@@ -224,5 +264,7 @@ void r_stateWG_s::Impl::AdvanceFrameState()
 	viewDesc.baseArrayLayer = 0;
 	viewDesc.arrayLayerCount = 1;
 	viewDesc.aspect = wgpu::TextureAspect::All;
-	frameState->textureView = frameState->surfaceTexture.texture.CreateView(&viewDesc);
+	frameState->targetView = frameState->surfaceTexture.texture.CreateView(&viewDesc);
+
+	frameState->encoder = device.CreateCommandEncoder();
 }
