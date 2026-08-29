@@ -1,0 +1,83 @@
+From 7c561c636cc2c5aebc433b63513cfc6c3bb53670 Mon Sep 17 00:00:00 2001
+From: Beato <cristianobeato_dm@hotmail.com>
+Date: Mon, 2 Feb 2026 11:46:59 -0300
+Subject: [PATCH] remove GLI GLM "make_vec4" conflict
+
+---
+ gli/core/convert_func.hpp |  8 ++++----
+ gli/type.hpp              | 25 +------------------------
+ 2 files changed, 5 insertions(+), 28 deletions(-)
+
+diff --git a/gli/core/convert_func.hpp b/gli/core/convert_func.hpp
+index 8f3e7a88a..b9bcede9f 100644
+--- a/gli/core/convert_func.hpp
++++ b/gli/core/convert_func.hpp
+@@ -176,7 +176,7 @@ namespace detail
+ 
+ 		static vec<4, retType, P> fetch(textureType const & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level)
+ 		{
+-			return make_vec4<retType, P>(vec<L, retType, P>(access::load(Texture, TexelCoord, Layer, Face, Level)));
++			return glm::make_vec4<retType, P>(vec<L, retType, P>(access::load(Texture, TexelCoord, Layer, Face, Level)));
+ 		}
+ 
+ 		static void write(textureType & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level, vec<4, retType, P> const & Texel)
+@@ -205,7 +205,7 @@ namespace detail
+ 		static vec<4, retType, P> fetch(textureType const & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level)
+ 		{
+ 			static_assert(std::numeric_limits<retType>::is_iec559, "CONVERT_MODE_NORM requires a float sampler");
+-			return make_vec4<retType, P>(compNormalize<retType>(access::load(Texture, TexelCoord, Layer, Face, Level)));
++			return glm::make_vec4<retType, P>(compNormalize<retType>(access::load(Texture, TexelCoord, Layer, Face, Level)));
+ 		}
+ 
+ 		static void write(textureType & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level, vec<4, retType, P> const & Texel)
+@@ -223,7 +223,7 @@ namespace detail
+ 		static vec<4, retType, P> fetch(textureType const & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level)
+ 		{
+ 			static_assert(std::numeric_limits<retType>::is_iec559, "CONVERT_MODE_SRGB requires a float sampler");
+-			return make_vec4<retType, P>(convertSRGBToLinear(compNormalize<retType>(access::load(Texture, TexelCoord, Layer, Face, Level))));
++			return glm::make_vec4<retType, P>(convertSRGBToLinear(compNormalize<retType>(access::load(Texture, TexelCoord, Layer, Face, Level))));
+ 		}
+ 
+ 		static void write(textureType & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level, vec<4, retType, P> const & Texel)
+@@ -277,7 +277,7 @@ namespace detail
+ 		static vec<4, retType, P> fetch(textureType const & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level)
+ 		{
+ 			static_assert(std::numeric_limits<retType>::is_iec559, "CONVERT_MODE_HALF requires a float sampler");
+-			return make_vec4<retType, P>(vec<L, retType, P>(unpackHalf(access::load(Texture, TexelCoord, Layer, Face, Level))));
++			return glm::make_vec4<retType, P>(vec<L, retType, P>(unpackHalf(access::load(Texture, TexelCoord, Layer, Face, Level))));
+ 		}
+ 
+ 		static void write(textureType & Texture, typename textureType::extent_type const & TexelCoord, typename textureType::size_type Layer, typename textureType::size_type Face, typename textureType::size_type Level, vec<4, retType, P> const & Texel)
+diff --git a/gli/type.hpp b/gli/type.hpp
+index 6b88cede2..e38220aaf 100644
+--- a/gli/type.hpp
++++ b/gli/type.hpp
+@@ -40,27 +40,4 @@ namespace gli
+ 	typedef ivec3 extent3d;
+ 	typedef ivec4 extent4d;
+ 
+-	template <typename T, qualifier P>
+-	inline vec<4, T, P> make_vec4(vec<1, T, P> const & v)
+-	{
+-		return vec<4, T, P>(v.x, static_cast<T>(0), static_cast<T>(0), static_cast<T>(1));
+-	}
+-
+-	template <typename T, qualifier P>
+-	inline vec<4, T, P> make_vec4(vec<2, T, P> const & v)
+-	{
+-		return vec<4, T, P>(v.x, v.y, static_cast<T>(0), static_cast<T>(1));
+-	}
+-
+-	template <typename T, qualifier P>
+-	inline vec<4, T, P> make_vec4(vec<3, T, P> const & v)
+-	{
+-		return vec<4, T, P>(v.x, v.y, v.z, static_cast<T>(1));
+-	}
+-
+-	template <typename T, qualifier P>
+-	inline vec<4, T, P> make_vec4(vec<4, T, P> const & v)
+-	{
+-		return v;
+-	}
+-}//namespace gli
++} //namespace gli
