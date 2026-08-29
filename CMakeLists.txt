@@ -123,16 +123,17 @@ add_library(SimpleGraphic SHARED
 )
 target_compile_definitions(SimpleGraphic
     PRIVATE
-    "NOMINMAX"
-    "UNICODE"
     "_CRT_SECURE_NO_DEPRECATE"
     "_CRT_SECURE_NO_WARNINGS"
     "_SCL_SECURE_NO_DEPRECATE"
     "_SCL_SECURE_NO_WARNINGS"
-    "GLFW_INCLUDE_NONE"
     "GL_SILENCE_DEPRECATION"
-    "SIMPLEGRAPHIC_EXPORTS"
+    "GLFW_INCLUDE_NONE"
+    "GLM_ENABLE_EXPERIMENTAL"
+    "NOMINMAX"
     "PERFORMANCEAPI_ENABLED=$<BOOL:${SuperluminalAPI_FOUND}>"
+    "SIMPLEGRAPHIC_EXPORTS"
+    "UNICODE"
 )
 
 target_compile_options(SimpleGraphic PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/MP>")
