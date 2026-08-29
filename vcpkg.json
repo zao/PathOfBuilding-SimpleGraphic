@@ -5,6 +5,7 @@
     "angle",
     "concurrentqueue",
     "curl",
+    "dawn",
     "fmt",
     "glfw3",
     "gli",

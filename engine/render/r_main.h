@@ -161,6 +161,7 @@ public:
 	std::shared_ptr<r_api_c> api;
 	std::shared_ptr<class r_stateGL_s> stateGL;
 	std::shared_ptr<class r_stateDX_s> stateDX;
+	std::shared_ptr<class r_stateWG_s> stateWG;
 
 	InterfacePtr<r_ITexManager> texMan = nullptr;	// Texture manager interface
 

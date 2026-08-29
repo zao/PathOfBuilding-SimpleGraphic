@@ -49,6 +49,7 @@ public:
 
 	bool IsOpenGL() const noexcept { return vid.api == sys_vidApi_e::ANGLE; }
 	bool IsDirectX() const noexcept { return vid.api == sys_vidApi_e::DX11; }
+	bool IsWebGPU() const noexcept { return vid.api == sys_vidApi_e::WebGPU; }
 
 	sys_main_c* sys = nullptr;
 

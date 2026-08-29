@@ -80,6 +80,9 @@ void core_video_c::Apply(bool shown)
 		else if (CaseInsensitiveEqual(apiStr, u8"dx11"sv)) {
 			set.api = sys_vidApi_e::DX11;
 		}
+		else if (CaseInsensitiveEqual(apiStr, u8"wgpu"sv)) {
+			set.api = sys_vidApi_e::WebGPU;
+		}
 	}
 	sys->video->Apply(&set);
 }

@@ -24,6 +24,7 @@ add_subdirectory(dep/glm)
 find_package(unofficial-angle CONFIG REQUIRED)
 find_package(concurrentqueue CONFIG)
 find_package(CURL CONFIG REQUIRED)
+find_package(Dawn CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(gli CONFIG REQUIRED)
@@ -69,6 +70,8 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/render/r_api.h"
     "engine/render/r_api_angle.cpp"
     "engine/render/r_api_angle.h"
+    "engine/render/r_api_dawn.cpp"
+    "engine/render/r_api_dawn.h"
     "engine/render/r_api_dx11.cpp"
     "engine/render/r_api_dx11.h"
     "engine/render/r_command.h"
@@ -179,6 +182,8 @@ add_library(imgui STATIC
     dep/imgui/backends/imgui_impl_opengl3.cpp
     dep/imgui/backends/imgui_impl_opengl3.h
     dep/imgui/backends/imgui_impl_opengl3_loader.h
+    dep/imgui/backends/imgui_impl_wgpu.cpp
+    dep/imgui/backends/imgui_impl_wgpu.h
     dep/imgui/misc/cpp/imgui_stdlib.cpp
     dep/imgui/misc/cpp/imgui_stdlib.h
 )
@@ -186,6 +191,7 @@ add_library(imgui STATIC
 target_compile_definitions(imgui PUBLIC
     "IMGUI_DEFINE_MATH_OPERATORS"
     "IMGUI_IMPL_OPENGL_ES2"
+    "IMGUI_IMPL_WEBGPU_BACKEND_DAWN"
 )
 
 target_include_directories(imgui PUBLIC
@@ -195,6 +201,7 @@ target_include_directories(imgui PUBLIC
 )
 
 target_link_libraries(imgui PUBLIC
+    dawn::webgpu_dawn
     unofficial::angle::libGLESv2
     glfw
 )
@@ -224,6 +231,7 @@ if (WIN32)
         "_CRT_SECURE_NO_WARNINGS=1"
         "_SCL_SECURE_NO_DEPRECATE=1"
         "_SCL_SECURE_NO_WARNINGS=1"
+        "GLFW_EXPOSE_NATIVE_WIN32"
     )
     target_link_libraries(SimpleGraphic
         PRIVATE
@@ -256,6 +264,7 @@ target_link_libraries(SimpleGraphic
     unofficial::angle::libGLESv2
     cmp_core
     concurrentqueue::concurrentqueue
+    dawn::webgpu_dawn
     fmt::fmt
     glfw
     gli

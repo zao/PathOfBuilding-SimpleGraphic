@@ -21,6 +21,7 @@ enum vidFlags_e {
 enum class sys_vidApi_e {
 	ANGLE,
 	DX11,
+	WebGPU,
 };
 
 // Saved video state structure

@@ -17,4 +17,5 @@
 #include "r_main.h"
 #include "r_command.h"
 #include "r_api_angle.h"
+#include "r_api_dawn.h"
 #include "r_api_dx11.h"

@@ -309,11 +309,16 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	timer_c timer;
 	timer.Start();
 
-	if (sys->video->vid.api == sys_vidApi_e::ANGLE) {
+	switch (sys->video->vid.api) {
+	case sys_vidApi_e::ANGLE:
 		api = stateGL = std::make_shared<r_stateGL_s>(this);
-	}
-	else {
+		break;
+	case sys_vidApi_e::DX11:
 		api = stateDX = std::make_shared<r_stateDX_s>(this);
+		break;
+	case sys_vidApi_e::WebGPU:
+		api = stateWG = std::make_shared<r_stateWG_s>(this);
+		break;
 	}
 
 	// Initialise texture manager
