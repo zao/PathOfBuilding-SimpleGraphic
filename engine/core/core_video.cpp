@@ -10,6 +10,7 @@
 #include "core_video.h"
 
 #include <algorithm>
+#include <ranges>
 
 // =====================
 // core_IVideo Interface
@@ -74,14 +75,26 @@ void core_video_c::Apply(bool shown)
 	set.minSize[0] = CFG_VID_MINWIDTH;
 	set.minSize[1] = CFG_VID_MINHEIGHT;
 	if (const auto& apiStr = vid_api->strVal; !apiStr.empty()) {
-		if (CaseInsensitiveEqual(apiStr, u8"angle"sv)) {
-			set.api = sys_vidApi_e::ANGLE;
-		}
-		else if (CaseInsensitiveEqual(apiStr, u8"dx11"sv)) {
-			set.api = sys_vidApi_e::DX11;
-		}
-		else if (CaseInsensitiveEqual(apiStr, u8"wgpu"sv)) {
-			set.api = sys_vidApi_e::WebGPU;
+		for (const auto& [from, to] : apiStr | std::views::split(',')) {
+			std::u8string_view cand(from, to);
+#if SIMPLEGRAPHIC_HAVE_ANGLE
+			if (CaseInsensitiveEqual(cand, u8"angle"sv)) {
+				set.api = sys_vidApi_e::ANGLE;
+				break;
+			}
+#endif
+#if SIMPLEGRAPHIC_HAVE_DIRECTX
+			if (CaseInsensitiveEqual(cand, u8"dx11"sv)) {
+				set.api = sys_vidApi_e::DX11;
+				break;
+			}
+#endif
+#if SIMPLEGRAPHIC_HAVE_WEBGPU
+			if (CaseInsensitiveEqual(cand, u8"wgpu"sv)) {
+				set.api = sys_vidApi_e::WebGPU;
+				break;
+			}
+#endif
 		}
 	}
 	sys->video->Apply(&set);

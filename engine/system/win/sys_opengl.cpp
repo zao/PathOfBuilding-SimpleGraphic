@@ -8,6 +8,7 @@
 #include "sys_local.h"
 
 #include <GLFW/glfw3.h>
+#include <glad/gles2.h>
 
 // =====================
 // sys_IOpenGL Interface
@@ -44,6 +45,9 @@ sys_openGL_c::sys_openGL_c(sys_IMain* sysHnd)
 
 bool sys_openGL_c::Init(sys_glSet_s* set)
 {
+	glfwMakeContextCurrent((GLFWwindow*)sys->video->GetWindowHandle());
+	gladLoadGLES2(glfwGetProcAddress);
+
 	// Set swap interval
 	glfwSwapInterval(set->vsync ? 1 : 0);
 

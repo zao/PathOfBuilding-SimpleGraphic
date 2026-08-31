@@ -3,6 +3,7 @@
 #define GLAD_GLES2_IMPLEMENTATION
 #include <glad/gles2.h>
 #include <glad/egl.h>
+#include <GLFW/glfw3.h>
 
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -21,6 +22,29 @@ struct TexDataGL
 	}
 
 	TexDataGL& operator = (const TexDataGL&) = delete;
+};
+
+struct r_stateGL_s : public r_api_c {
+	explicit r_stateGL_s(class r_renderer_c* renderer);
+
+	void Init() override;
+	void Shutdown() override;
+	void ImGuiBeginFrame() override;
+	void ImGuiEndFrame() override;
+
+	void BeginFrame() override;
+	void EndFrame() override;
+	void PrepareDrawTarget() override;
+	void DrawPresentTarget() override;
+
+	std::shared_ptr<r_IRenderStrategy> GetRenderStrategy(const r_layer_c& layer) override;
+
+	std::shared_ptr<void> ScopedDebugMarker(std::u8string_view label) override;
+	bool DoScreenshot(image_c& outImg, int type) override;
+	std::shared_ptr<void> UploadTextureData(r_tex_c*) override;
+
+	struct Impl;
+	std::shared_ptr<Impl> impl;
 };
 
 struct r_stateGL_s::Impl
@@ -183,6 +207,16 @@ r_stateGL_s::r_stateGL_s(r_renderer_c* renderer)
 		sys->Error(u8"OpenGL initialisation failed");
 	}
 
+	// Set default state
+	glClearColor(0.0, 0.0, 0.0, 1.0);
+	glEnable(GL_TEXTURE_2D);
+	glDisable(GL_DEPTH_TEST);
+	glEnable(GL_BLEND);
+
+	// Clear early to avoid flash
+	glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+	impl->openGL->Swap();
+
 	// Get strings
 	impl->st_vendor = (const char8_t*)glGetString(GL_VENDOR);
 	impl->st_renderer = (const char8_t*)glGetString(GL_RENDERER);
@@ -191,12 +225,6 @@ r_stateGL_s::r_stateGL_s(r_renderer_c* renderer)
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, (int*)&texMaxDim);
 	sys->con->Print(fmt::format(u8"GL_MAX_TEXTURE_SIZE: {}\n", texMaxDim));
-
-	// Set default state
-	glClearColor(0.0, 0.0, 0.0, 1.0);
-	glEnable(GL_TEXTURE_2D);
-	glDisable(GL_DEPTH_TEST);
-	glEnable(GL_BLEND);
 
 	// Load extensions
 	sys->con->Print(u8"Loading OpenGL extensions...\n");
@@ -967,4 +995,9 @@ private:
 std::shared_ptr<r_IRenderStrategy> r_stateGL_s::GetRenderStrategy(const r_layer_c& layer)
 {
 	return std::make_shared<AdjacentMergeStrategy>(&layer, renderer, impl->tintedTextureProgram);
+}
+
+std::shared_ptr<r_api_c> MakeANGLERendererAPI(r_renderer_c* renderer)
+{
+	return std::make_shared<r_stateGL_s>(renderer);
 }

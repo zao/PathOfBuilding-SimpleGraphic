@@ -5,8 +5,6 @@
 // Platform: Windows
 //
 
-#include <glad/gles2.h>
-
 #include "sys_local.h"
 #include "core.h"
 
@@ -350,7 +348,17 @@ bool ShouldIgnoreDpiScale() {
 int sys_video_c::Apply(sys_vidSet_s* set)
 {
 	cur = *set;
-	vid.api = cur.api.value_or(sys_vidApi_e::ANGLE);
+	vid.api = cur.api
+#if SIMPLEGRAPHIC_HAVE_ANGLE
+		.value_or(sys_vidApi_e::ANGLE)
+#elif SIMPLEGRAPHIC_HAVE_WEBGPU
+		.value_or(sys_vidApi_e::WebGPU)
+#elif SIMPLEGRAPHIC_HAVE_DIRECTX
+		.value_or(sys_vidApi_e::DirectX)
+#else
+		.value()
+#endif
+	;
 
 	GLFWmonitor** monitors = glfwGetMonitors(&numMon);
 	for (int i = 0; i < numMon; ++i) {
@@ -469,11 +477,6 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			char const* errDesc = "Unknown error";
 			glfwGetError(&errDesc);
 			sys->con->Print(fmt::format(u8"Could not create window, {}\n", (const char8_t*)errDesc));
-		}
-
-		if (IsOpenGL()) {
-			glfwMakeContextCurrent(wnd);
-			gladLoadGLES2(glfwGetProcAddress);
 		}
 
 		// Set up all our window callbacks
@@ -643,13 +646,6 @@ int sys_video_c::Apply(sys_vidSet_s* set)
 			glfwMaximizeWindow(wnd);
 		}
 		glfwShowWindow(wnd);
-
-		// Clear early to avoid flash
-		if (IsOpenGL()) {
-			glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-			glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-			glfwSwapBuffers(wnd);
-		}
 	}
 
 	glfwGetFramebufferSize(wnd, &vid.fbSize[0], &vid.fbSize[1]);

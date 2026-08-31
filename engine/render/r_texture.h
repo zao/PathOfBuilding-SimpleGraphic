@@ -13,9 +13,6 @@
 #include <mutex>
 #include <string>
 
-#include <atlcomcli.h>
-#include <d3d11.h>
-
 class image_c;
 class mip_set_c;
 

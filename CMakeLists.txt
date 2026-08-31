@@ -3,11 +3,16 @@ project(SimpleGraphic C CXX)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 23)
 
+option(SIMPLEGRAPHIC_WITH_ANGLE "Support using ANGLE as render backend" ON)
+option(SIMPLEGRAPHIC_WITH_WEBGPU "Support using WebGPU as render backend" ON)
+
 if (APPLE)
     enable_language(OBJCXX)
 endif ()
 
 if (MSVC)
+	option(SIMPLEGRAPHIC_WITH_DIRECTX "Support using DirectX as render backend" ON)
+
     add_compile_options("/Zi")
     add_link_options("/DEBUG:FULL")
 endif ()
@@ -21,10 +26,8 @@ set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
 include(InstallRequiredSystemLibraries)
 add_subdirectory(dep/glm)
 
-find_package(unofficial-angle CONFIG REQUIRED)
 find_package(concurrentqueue CONFIG)
 find_package(CURL CONFIG REQUIRED)
-find_package(Dawn CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(gli CONFIG REQUIRED)
@@ -68,12 +71,6 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/core/core_video.h"
     "engine/render/r_api.cpp"
     "engine/render/r_api.h"
-    "engine/render/r_api_angle.cpp"
-    "engine/render/r_api_angle.h"
-    "engine/render/r_api_dawn.cpp"
-    "engine/render/r_api_dawn.h"
-    "engine/render/r_api_dx11.cpp"
-    "engine/render/r_api_dx11.h"
     "engine/render/r_command.h"
     "engine/render/r_font.cpp"
     "engine/render/r_font.h"
@@ -84,11 +81,9 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/render/r_texture.h"
     "engine/system/win/sys_local.h"
     "engine/system/win/sys_main.cpp"
-    "engine/system/win/sys_opengl.cpp"
     "engine/system/win/sys_video.cpp"
     "engine/system/sys_console.h"
     "engine/system/sys_main.h"
-    "engine/system/sys_opengl.h"
     "engine/system/sys_video.h"
     "win/entry.cpp"
     "ui.h"
@@ -102,28 +97,67 @@ set(SIMPLEGRAPHIC_SOURCES
     "ui_subscript.h"
 )
 
-set (SIMPLEGRAPHIC_PLATFORM_SOURCES)
+add_library(SimpleGraphic SHARED
+    ${SIMPLEGRAPHIC_SOURCES}
+)
+
+if (SIMPLEGRAPHIC_WITH_ANGLE)
+    set(SIMPLEGRAPHIC_HAVE_ANGLE ON)
+    find_package(unofficial-angle CONFIG REQUIRED)
+    target_sources(SimpleGraphic PRIVATE
+        "engine/render/r_api_angle.cpp"
+        "engine/render/r_api_angle.h"
+        "engine/system/win/sys_opengl.cpp"
+        "engine/system/sys_opengl.h"
+    )
+    target_link_libraries(SimpleGraphic PRIVATE
+        unofficial::angle::libEGL
+        unofficial::angle::libGLESv2
+    )
+endif ()
+
+if (SIMPLEGRAPHIC_WITH_DIRECTX)
+    set(SIMPLEGRAPHIC_HAVE_DIRECTX ON)
+    target_sources(SimpleGraphic PRIVATE
+        "engine/render/r_api_dx11.cpp"
+        "engine/render/r_api_dx11.h"
+    )
+    target_link_libraries(SimpleGraphic PRIVATE
+        "d3d11.lib"
+        "dxgi.lib"
+    )
+endif ()
+
+if (SIMPLEGRAPHIC_WITH_WEBGPU)
+    set(SIMPLEGRAPHIC_HAVE_WEBGPU ON)
+    find_package(Dawn CONFIG REQUIRED)
+
+    target_sources(SimpleGraphic PRIVATE
+        "engine/render/r_api_dawn.cpp"
+        "engine/render/r_api_dawn.h"
+    )
+    target_link_libraries(SimpleGraphic PRIVATE
+        dawn::webgpu_dawn
+    )
+endif ()
+
 if (APPLE)
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    target_sources(SimpleGraphic PRIVATE
         "engine/system/win/sys_macos.mm"
     )
 endif()
 
 if (WIN32)
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    target_sources(SimpleGraphic PRIVATE
         "engine/system/win/sys_console.cpp"
         "SimpleGraphic.rc"
     )
 else()
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    target_sources(SimpleGraphic PRIVATE
         "engine/system/win/sys_console_unix.cpp"
     )
 endif()
 
-add_library(SimpleGraphic SHARED
-    ${SIMPLEGRAPHIC_SOURCES}
-    ${SIMPLEGRAPHIC_PLATFORM_SOURCES}
-)
 target_compile_definitions(SimpleGraphic
     PRIVATE
     "_CRT_SECURE_NO_DEPRECATE"
@@ -136,6 +170,9 @@ target_compile_definitions(SimpleGraphic
     "NOMINMAX"
     "PERFORMANCEAPI_ENABLED=$<BOOL:${SuperluminalAPI_FOUND}>"
     "SIMPLEGRAPHIC_EXPORTS"
+    "SIMPLEGRAPHIC_HAVE_ANGLE=$<BOOL:${SIMPLEGRAPHIC_HAVE_ANGLE}>"
+    "SIMPLEGRAPHIC_HAVE_DIRECTX=$<BOOL:${SIMPLEGRAPHIC_HAVE_DIRECTX}>"
+    "SIMPLEGRAPHIC_HAVE_WEBGPU=$<BOOL:${SIMPLEGRAPHIC_HAVE_WEBGPU}>"
     "UNICODE"
 )
 
@@ -175,23 +212,52 @@ add_library(imgui STATIC
     dep/imgui/imstb_rectpack.h
     dep/imgui/imstb_textedit.h
     dep/imgui/imstb_truetype.h
-    dep/imgui/backends/imgui_impl_dx11.cpp
-    dep/imgui/backends/imgui_impl_dx11.h
     dep/imgui/backends/imgui_impl_glfw.cpp
     dep/imgui/backends/imgui_impl_glfw.h
-    dep/imgui/backends/imgui_impl_opengl3.cpp
-    dep/imgui/backends/imgui_impl_opengl3.h
-    dep/imgui/backends/imgui_impl_opengl3_loader.h
-    dep/imgui/backends/imgui_impl_wgpu.cpp
-    dep/imgui/backends/imgui_impl_wgpu.h
     dep/imgui/misc/cpp/imgui_stdlib.cpp
     dep/imgui/misc/cpp/imgui_stdlib.h
 )
 
+if (SIMPLEGRAPHIC_HAVE_ANGLE)
+    target_compile_definitions(imgui PRIVATE
+        "IMGUI_IMPL_OPENGL_ES2"
+    )
+
+    target_link_libraries(imgui PUBLIC
+        unofficial::angle::libGLESv2
+    )
+
+    target_sources(imgui PRIVATE
+        dep/imgui/backends/imgui_impl_opengl3.cpp
+        dep/imgui/backends/imgui_impl_opengl3.h
+        dep/imgui/backends/imgui_impl_opengl3_loader.h        
+    )
+endif ()
+
+if (SIMPLEGRAPHIC_HAVE_DIRECTX)
+    target_sources(imgui PRIVATE
+        dep/imgui/backends/imgui_impl_dx11.cpp
+        dep/imgui/backends/imgui_impl_dx11.h
+    )
+endif ()
+
+if (SIMPLEGRAPHIC_HAVE_WEBGPU)
+    target_compile_definitions(imgui PRIVATE
+        "IMGUI_IMPL_WEBGPU_BACKEND_DAWN"
+    )
+    
+    target_link_libraries(imgui PUBLIC
+        dawn::webgpu_dawn
+    )
+
+    target_sources(imgui PRIVATE
+        dep/imgui/backends/imgui_impl_wgpu.cpp
+        dep/imgui/backends/imgui_impl_wgpu.h
+    )
+endif ()
+
 target_compile_definitions(imgui PUBLIC
     "IMGUI_DEFINE_MATH_OPERATORS"
-    "IMGUI_IMPL_OPENGL_ES2"
-    "IMGUI_IMPL_WEBGPU_BACKEND_DAWN"
 )
 
 target_include_directories(imgui PUBLIC
@@ -201,8 +267,6 @@ target_include_directories(imgui PUBLIC
 )
 
 target_link_libraries(imgui PUBLIC
-    dawn::webgpu_dawn
-    unofficial::angle::libGLESv2
     glfw
 )
 
@@ -235,8 +299,6 @@ if (WIN32)
     )
     target_link_libraries(SimpleGraphic
         PRIVATE
-        "d3d11.lib"
-        "dxgi.lib"
         "winmm.lib"
     )
     
@@ -260,11 +322,8 @@ endif ()
 
 target_link_libraries(SimpleGraphic
     PRIVATE
-    unofficial::angle::libEGL
-    unofficial::angle::libGLESv2
     cmp_core
     concurrentqueue::concurrentqueue
-    dawn::webgpu_dawn
     fmt::fmt
     glfw
     gli

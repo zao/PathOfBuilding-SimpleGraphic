@@ -25,6 +25,10 @@
 #include "r_api_angle.h"
 #include "r_api_dx11.h"
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 #include <xxh3.h>
 
 static uint64_t MurmurHash64A(void const* data, int len, uint64_t seed);
@@ -310,15 +314,21 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	timer.Start();
 
 	switch (sys->video->vid.api) {
+#if SIMPLEGRAPHIC_HAVE_ANGLE
 	case sys_vidApi_e::ANGLE:
-		api = stateGL = std::make_shared<r_stateGL_s>(this);
+		api = MakeANGLERendererAPI(this);
 		break;
+#endif
+#if SIMPLEGRAPHIC_HAVE_DIRECTX
 	case sys_vidApi_e::DX11:
-		api = stateDX = std::make_shared<r_stateDX_s>(this);
+		api = MakeDirectXRendererAPI(this);
 		break;
+#endif
+#if SIMPLEGRAPHIC_HAVE_WEBGPU
 	case sys_vidApi_e::WebGPU:
-		api = stateWG = std::make_shared<r_stateWG_s>(this);
+		api = MakeWebGPURendererAPI(this);
 		break;
+#endif
 	}
 
 	// Initialise texture manager

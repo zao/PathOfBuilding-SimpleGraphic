@@ -11,6 +11,21 @@ struct TexDataDX
 	CComPtr<ID3D11ShaderResourceView> srv;
 };
 
+struct r_stateDX_s : public r_api_c {
+	explicit r_stateDX_s(class r_renderer_c* renderer);
+
+	void Init() override;
+	void Shutdown() override;
+	void ImGuiBeginFrame() override;
+	void ImGuiEndFrame() override;
+
+	//void BeginFrame() override;
+	//void EndFrame() override;
+
+	struct Impl;
+	std::shared_ptr<Impl> impl;
+};
+
 struct r_stateDX_s::Impl
 {
 	CComPtr<ID3D11Device> dev;
@@ -49,4 +64,9 @@ void r_stateDX_s::ImGuiBeginFrame()
 void r_stateDX_s::ImGuiEndFrame()
 {
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+std::shared_ptr<r_api_c> MakeDirectXRendererAPI(r_renderer_c* renderer)
+{
+	return std::make_shared<r_stateDX_s>(renderer);
 }
