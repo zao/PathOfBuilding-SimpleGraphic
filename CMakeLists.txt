@@ -26,7 +26,8 @@ set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
 include(InstallRequiredSystemLibraries)
 add_subdirectory(dep/glm)
 
-find_package(concurrentqueue CONFIG)
+find_package(CMakeRC CONFIG REQUIRED)
+find_package(concurrentqueue CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -36,13 +37,13 @@ find_package(magic_enum CONFIG REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(re2 CONFIG REQUIRED)
-find_package(readerwriterqueue CONFIG)
+find_package(readerwriterqueue CONFIG REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 find_package(SuperluminalAPI)
 find_package(Threads REQUIRED)
 find_package(zstd REQUIRED)
 find_package(ZLIB REQUIRED)
-find_package(WebP)
+find_package(WebP REQUIRED)
 
 set(SIMPLEGRAPHIC_SOURCES
     "config.h"
@@ -101,6 +102,8 @@ add_library(SimpleGraphic SHARED
     ${SIMPLEGRAPHIC_SOURCES}
 )
 
+cmrc_add_resource_library(SimpleGraphic-Assets ALIAS SimpleGraphic::Assets NAMESPACE SimpleGraphic)
+
 if (SIMPLEGRAPHIC_WITH_ANGLE)
     set(SIMPLEGRAPHIC_HAVE_ANGLE ON)
     find_package(unofficial-angle CONFIG REQUIRED)
@@ -113,6 +116,13 @@ if (SIMPLEGRAPHIC_WITH_ANGLE)
     target_link_libraries(SimpleGraphic PRIVATE
         unofficial::angle::libEGL
         unofficial::angle::libGLESv2
+    )
+
+    cmrc_add_resources(SimpleGraphic-Assets
+        "assets/gles/display_render_target.frag"
+        "assets/gles/display_render_target.vert"
+        "assets/gles/tinted_texture.frag"
+        "assets/gles/tinted_texture.vert"
     )
 endif ()
 
@@ -334,6 +344,7 @@ target_link_libraries(SimpleGraphic
     Microsoft.GSL::GSL
     re2::re2
     readerwriterqueue::readerwriterqueue
+    SimpleGraphic::Assets
     Threads::Threads
     WebP::webpdecoder
     ZLIB::ZLIB
