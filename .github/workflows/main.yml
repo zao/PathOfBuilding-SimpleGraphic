@@ -10,7 +10,7 @@ jobs:
       matrix:
         include:
           - platform: x64
-            os: windows-2022
+            os: windows-latest
             triplet: x64-windows
     runs-on: ${{ matrix.os }}
     env:
@@ -37,7 +37,6 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgJsonGlob: "./vcpkg.json"
-          runVcpkgInstall: true
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -47,7 +46,7 @@ jobs:
         with:
           source-dir: "."
           build-dir: "build"
-          generator: "Visual Studio 17 2022"
+          generator: "Visual Studio 18 2026"
           options: CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake CMAKE_INSTALL_PREFIX="${{ env.INST_DIR }}" VCPKG_TARGET_TRIPLET="${{ env.VCPKG_TARGET_TRIPLET }}"
 
       - name: Build DLL
