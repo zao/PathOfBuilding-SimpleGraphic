@@ -441,44 +441,35 @@ std::unique_ptr<image_c> r_tex_c::BuildMipSet(std::unique_ptr<image_c> img)
 	return img;
 }
 
-static gli::texture2d_array TranscodeTexture(gli::texture2d_array src, gli::format dstFormat, bool dropFinestMipIfPossible)
+namespace
 {
-	// Very limited format support, only really sufficient as a fallback when BC7 isn't available.
+	struct Transcoder {
+		virtual ~Transcoder() = default;
 
-	// Source formats: BC7
-	const auto srcFormat = src.format();
-	if (src.format() != gli::FORMAT_RGBA_BP_UNORM_BLOCK16)
-		return src;
+		virtual bool ProcessLayer(const gli::image& src, gli::image dst) = 0;
+	};
 
-	// Destination formats: BC3 or RGBA8
-	if (dstFormat != gli::FORMAT_RGBA_DXT5_UNORM_BLOCK16 && dstFormat != gli::FORMAT_RGBA8_UNORM_PACK8)
-		return src;
+	struct BC7Transcoder : Transcoder {
+		bool ProcessLayer(const gli::image& src, gli::image dst) override
+		{
+			std::array<uint8_t, 64> rgba{};
 
-	// To save VRAM and processing costs, there is the option to discard the finest mip level of the source if there's coarser levels available.
-	// If so, the transcoding will generate destination levels 0..n-1 from levels 1..n of the source.
-	size_t firstLevel = 0;
-	if (dropFinestMipIfPossible && src.levels() > 1)
-		firstLevel = 1;
+			auto* dstData = (uint8_t*)dst.data();
 
-	const auto outExtent = src.extent(firstLevel);
-	const auto outLayers = src.layers();
-	const auto outLevels = src.levels() - firstLevel;
-
-	gli::texture2d_array dst(dstFormat, outExtent, outLayers, outLevels);
-
-	std::array<uint8_t, 64> rgba{};
-	for (size_t layer = 0; layer < outLayers; ++layer) {
-		for (size_t dstLevel = 0; dstLevel < outLevels; ++dstLevel) {
-			auto* dstData = (uint8_t*)dst.data(layer, 0, dstLevel);
-			const auto dstExtent = dst.extent(dstLevel);
+			const auto dstFormat = dst.format();
+			const auto dstExtent = dst.extent();
 			const auto dstRowStride = dstExtent.x * 4;
 
-			const size_t srcLevel = dstLevel + firstLevel;
-			const auto* srcData = (const uint8_t*)src.data(layer, 0, srcLevel);
+			const auto* srcData = static_cast<const uint8_t*>(src.data());
 
+			const auto srcExtent = src.extent();
+			const auto srcFormat = src.format();
 			const auto srcBlockSize = gli::block_extent(srcFormat);
 			const auto srcBlocksPerRow = (dstExtent.y + srcBlockSize.y - 1) / srcBlockSize.y; // round up partial blocks
 			const auto srcBlocksPerColumn = (dstExtent.x + srcBlockSize.x - 1) / srcBlockSize.x; // -''-
+
+			if (srcExtent != dstExtent)
+				return false;
 
 			for (size_t blockRow = 0; blockRow < srcBlocksPerRow; ++blockRow) {
 				const size_t rowBase = blockRow * srcBlockSize.y;
@@ -518,14 +509,117 @@ static gli::texture2d_array TranscodeTexture(gli::texture2d_array src, gli::form
 					dstData += dstRowStride * rowsLeft;
 			}
 
-			const auto* srcEnd = srcData + src.size(srcLevel);
-			const auto* dstEnd = dstData + dst.size(dstLevel);
+			const auto* srcEnd = srcData + src.size();
+			const auto* dstEnd = dstData + dst.size();
 			assert(srcData == srcEnd);
 			assert(dstData == dstEnd);
+			return true;
 		}
-	}
+	};
 
-	return dst;
+	struct LinearWidenTranscoder : Transcoder
+	{
+		bool ProcessLayer(const gli::image& src, gli::image dst) override
+		{
+			const auto srcFormat = src.format();
+			const auto dstFormat = dst.format();
+			const bool isSrgb = gli::is_srgb(srcFormat);
+			if (isSrgb != gli::is_srgb(dstFormat))
+				return false;
+
+			const auto srcComp = gli::component_count(srcFormat);
+			const auto dstComp = gli::component_count(dstFormat);
+
+			const uint8_t* p = (const uint8_t*)src.data();
+			uint8_t* q = (uint8_t*)dst.data();
+			const auto extent = src.extent();
+			uint8_t* qEnd = q + dst.size();
+			if (const auto comp = srcComp; comp == 1) {
+				const bool justRed = srcFormat == gli::FORMAT_R8_UNORM_PACK8;
+				while (q != qEnd) {
+					uint8_t val = p[0];
+					q[0] = val;
+					q[1] = justRed ? 0x00u : val;
+					q[2] = justRed ? 0x00u : val;
+					q[3] = 0xFFu;
+					p += 1;
+					q += 4;
+				}
+			}
+			else if (comp == 3) {
+				while (q != qEnd) {
+					q[0] = p[0];
+					q[1] = p[1];
+					q[2] = p[2];
+					q[3] = 0xFFu;
+					p += 3;
+					q += 4;
+				}
+			}
+			else {
+				return false;
+			}
+			return true;
+		}
+	};
+
+	gli::texture2d_array TranscodeTexture(gli::texture2d_array src, gli::format dstFormat, bool dropFinestMipIfPossible)
+	{
+		// Very limited format support, mostly for when BC7 isn't available or for formats not supported by APIs.
+
+		std::unique_ptr<Transcoder> transcoder;
+		if (src.format() == gli::FORMAT_RGBA_BP_UNORM_BLOCK16) {
+			// BC7 -> {BC3, RGBA8}
+			if (dstFormat == gli::FORMAT_RGBA_DXT5_UNORM_BLOCK16 || dstFormat == gli::FORMAT_RGBA8_UNORM_PACK8) {
+				transcoder = std::make_unique<BC7Transcoder>();
+			}
+		}
+		else if (src.format() == gli::FORMAT_L8_UNORM_PACK8) {
+			// L8 -> RGBA8
+			if (dstFormat == gli::FORMAT_RGBA8_UNORM_PACK8) {
+				transcoder = std::make_unique<LinearWidenTranscoder>();
+			}
+		}
+		else if (src.format() == gli::FORMAT_RGB8_UNORM_PACK8) {
+			// RGB8 -> RGBA8
+			if (dstFormat == gli::FORMAT_RGBA8_UNORM_PACK8) {
+				transcoder = std::make_unique<LinearWidenTranscoder>();
+			}
+		}
+		else if (src.format() == gli::FORMAT_RGB8_SRGB_PACK8) {
+			// RGB8S -> RGBA8S
+			if (dstFormat == gli::FORMAT_RGBA8_UNORM_PACK8) {
+				transcoder = std::make_unique<LinearWidenTranscoder>();
+			}
+		}
+
+		if (!transcoder) {
+			return src;
+		}
+
+		// To save VRAM and processing costs, there is the option to discard the finest mip level of the source if there's coarser levels available.
+		// If so, the transcoding will generate destination levels 0..n-1 from levels 1..n of the source.
+		size_t firstLevel = 0;
+		if (dropFinestMipIfPossible && src.levels() > 1)
+			firstLevel = 1;
+
+		const auto outExtent = src.extent(firstLevel);
+		const auto outLayers = src.layers();
+		const auto outLevels = src.levels() - firstLevel;
+
+		gli::texture2d_array dst(dstFormat, outExtent, outLayers, outLevels);
+
+		for (size_t layer = 0; layer < outLayers; ++layer) {
+			const auto srcSlice = src[layer];
+			auto dstSlice = dst[layer];
+			for (size_t dstLevel = 0; dstLevel < outLevels; ++dstLevel) {
+				auto dstImage = dstSlice[dstLevel];
+				transcoder->ProcessLayer(srcSlice[firstLevel + dstLevel], dstImage);
+			}
+		}
+
+		return dst;
+	}
 }
 
 struct BuiltinImageSpec
@@ -591,11 +685,24 @@ void r_tex_c::LoadFile()
 		}
 	}
 
-	const bool useTextureFormatFallback = !renderer->api->texBC7;
-	if (useTextureFormatFallback) {
-		if (img->tex.format() == gli::FORMAT_RGBA_BP_UNORM_BLOCK16)
+	// Transcode formats unsupported by current API or low-spec path
+	switch (img->tex.format()) {
+	case gli::FORMAT_RGBA_BP_UNORM_BLOCK16:
+		if (!renderer->api->texBC7) {
 			img->tex = TranscodeTexture(img->tex, gli::FORMAT_RGBA8_UNORM_PACK8, true);
+		}
+		break;
+	case gli::FORMAT_L8_UNORM_PACK8:
+	case gli::FORMAT_RGB8_SRGB_PACK8:
+	case gli::FORMAT_RGB8_UNORM_PACK8:
+		if (renderer->sys->video->vid.api == sys_vidApi_e::WebGPU) {
+			const auto dstFormat = gli::is_srgb(img->tex.format()) ? gli::FORMAT_RGBA8_SRGB_PACK32 : gli::FORMAT_RGBA8_UNORM_PACK8;
+			img->tex = TranscodeTexture(img->tex, dstFormat, false);
+		}
+		break;
+	default:
 	}
+
 	stackLayers = img->tex.layers();
 	if (!no_mipmap)
 		img = BuildMipSet(std::move(img));

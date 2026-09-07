@@ -149,6 +149,11 @@ if (SIMPLEGRAPHIC_WITH_WEBGPU)
     target_link_libraries(SimpleGraphic PRIVATE
         dawn::webgpu_dawn
     )
+
+    cmrc_add_resources(SimpleGraphic-Assets
+        "assets/webgpu/display_render_target.wgsl"
+        "assets/webgpu/tinted_texture.wgsl"
+    )
 endif ()
 
 if (APPLE)
@@ -358,12 +363,20 @@ if (WIN32)
     set(DEPS_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
 
     if (NOT VCPKG_TARGET_TRIPLET MATCHES "-release")
+        if (SIMPLEGRAPHIC_HAVE_WEBGPU)
+            find_file(DXCOMPILER_DLL_DEBUG NAMES "dxcompiler.dll"
+                PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+            find_file(DXIL_DLL_DEBUG NAMES "dxil.dll"
+                PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
+        endif ()
         find_file(LuaJIT_DLL_DEBUG NAMES "lua51.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
         find_file(ZLIB_DLL_DEBUG NAMES "zlibd1.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
 
         install(FILES
+            ${DXCOMPILER_DLL_DEBUG}
+            ${DXIL_DLL_DEBUG}
             ${LuaJIT_DLL_DEBUG}
             ${ZLIB_DLL_DEBUG}
             DESTINATION "."
@@ -371,12 +384,20 @@ if (WIN32)
         )
     endif ()
 
+    if (SIMPLEGRAPHIC_HAVE_WEBGPU)
+        find_file(DXCOMPILER_DLL_RELEASE NAMES "dxcompiler.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+        find_file(DXIL_DLL_RELEASE NAMES "dxil.dll"
+            PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
+    endif ()
     find_file(LuaJIT_DLL_RELEASE NAMES "lua51.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
     find_file(ZLIB_DLL_RELEASE NAMES "zlib1.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
 
     install(FILES
+        ${DXCOMPILER_DLL_RELEASE}
+        ${DXIL_DLL_RELEASE}
         ${LuaJIT_DLL_RELEASE}
         ${ZLIB_DLL_RELEASE}
         DESTINATION "."

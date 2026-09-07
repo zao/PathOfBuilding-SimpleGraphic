@@ -582,6 +582,7 @@ struct Batch {
 	GLint texIdAttr;
 
 	std::vector<Vertex> vertices;
+	r_viewport_s scissor{};
 
 	void Execute(GLuint sharedVbo, size_t vertexBase);
 };
@@ -648,7 +649,7 @@ void Batch::Execute(GLuint sharedVbo, size_t vertexBase)
 
 struct AdjacentMergeStrategy : r_IRenderStrategy {
 	AdjacentMergeStrategy(const r_layer_c* layer, r_renderer_c* renderer, GLuint prog)
-		: layer_(layer), renderer_(renderer), prog_(prog), batch_(prog)
+		: layer_(layer), renderer_(renderer), prog_(prog), batch_(prog), cullGeometry(!!renderer_->r_drawCull->intVal)
 	{
 		for (size_t i = 0;; ++i) {
 			GLint loc = glGetUniformLocation(prog, fmt::format("s_tex[{}]", i).c_str());
@@ -697,7 +698,7 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 
 			const auto inQ = c->quad;
 			// Cull the quad first before it influences any boundary cuts.
-			if (!!renderer_->r_drawCull->intVal) {
+			if (cullGeometry) {
 				const auto [minX, maxX] = std::ranges::minmax(inQ.x);
 				if (maxX <= 0.0f || minX >= nextViewport_.extent.x)
 					break;
@@ -710,6 +711,12 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 			if (!nextTex_) {
 				usedIncompleteTextures = true;
 				break;
+			}
+
+			if (batch_.batch.scissor != nextViewport_) {
+				if (batch_.batch.vertices.size())
+					Dispatch();
+				batch_.batch.scissor = nextViewport_;
 			}
 
 			// Check current (and only) batch if the texture set has the latched texture.
@@ -770,6 +777,16 @@ private:
 		glUseProgram(prog_);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+		GLboolean oldScissorTest{};
+		glGetBooleanv(GL_SCISSOR_TEST, &oldScissorTest);
+		if (!oldScissorTest) {
+			glEnable(GL_SCISSOR_TEST);
+		}
+
+		const glm::ivec4 newScissor(batch.scissor.lo, batch.scissor.extent);
+		glm::ivec4 oldScissorBox{};
+		glGetIntegerv(GL_SCISSOR_BOX, glm::value_ptr(oldScissorBox));
+
 		if (showStats_) {
 			ImGui::Text("Batch %d", batchIndex);
 			ImGui::Text("%d verts", batch.vertices.size());
@@ -784,7 +801,12 @@ private:
 			glViewport(0, 0, virtualW, virtualH);
 			glm::vec2 uScreenSize(virtualW, virtualH);
 			glUniform2fv(uScreenSizeLoc_, 1, glm::value_ptr(uScreenSize));
+
+			if (oldScissorBox != newScissor) {
+				glScissor(newScissor.x, virtualH - newScissor[3] - newScissor.y, newScissor[2], newScissor[3]);
+			}
 		}
+
 		{
 			for (size_t i = 0, numTex = texLocs_.size(); i < numTex; ++i) {
 				glUniform1i(texLocs_[i], (GLint)i);
@@ -811,6 +833,13 @@ private:
 
 		batch_.batch.vertices.clear();
 		batch_.textures.clear();
+
+		if (oldScissorBox != newScissor) {
+			glScissor(oldScissorBox.x, oldScissorBox.y, oldScissorBox[2], oldScissorBox[3]);
+		}
+		if (!oldScissorTest) {
+			glDisable(GL_SCISSOR_TEST);
+		}
 
 		glUseProgram(0);
 
@@ -844,6 +873,7 @@ private:
 	size_t totalVertexCount_ = 0;
 	size_t batchIndex = 0;
 
+	bool cullGeometry{};
 	bool usedIncompleteTextures = false;
 };
 
