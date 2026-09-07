@@ -1615,7 +1615,7 @@ static int l_Deflate(lua_State* L)
 	z.zalloc = NULL;
 	z.zfree = NULL;
 	// Adding 16 enables Gzip headers instead of ZLib headers
-	deflateInit2(&z, 9, Z_DEFLATED, MAX_WBITS + (isGzip ? 16 : 0), 8, Z_DEFAULT_STRATEGY);
+	deflateInit2(&z, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS + (isGzip ? 16 : 0), 8, Z_DEFAULT_STRATEGY);
 	size_t inLen;
 	byte* in = (byte*)lua_tolstring(L, 1, &inLen);
 	// Prevent deflation of input data larger than 128 MiB.
