@@ -700,7 +700,6 @@ void r_tex_c::LoadFile()
 			img->tex = TranscodeTexture(img->tex, dstFormat, false);
 		}
 		break;
-	default:
 	}
 
 	stackLayers = img->tex.layers();

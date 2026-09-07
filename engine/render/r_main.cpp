@@ -1032,5 +1032,3 @@ size_t r_renderer_c::GetPresentRenderTarget()
 {
 	return presentRtt;
 }
-
-#endif

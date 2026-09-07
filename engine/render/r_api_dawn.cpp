@@ -658,11 +658,11 @@ void r_stateWG_s::BeginFrame()
 		wgpu::SurfaceConfiguration surfConfig{};
 		surfConfig.width = fbSize.x;
 		surfConfig.height = fbSize.y;
-		assert(surfCaps.formatCount > 0);
+		assert(windowSurface.surfCaps.formatCount > 0);
 		surfConfig.format = windowSurface.surfCaps.formats[0];
 		surfConfig.usage = wgpu::TextureUsage::RenderAttachment;
 		surfConfig.device = device;
-		assert(surfCaps.presentModeCount > 0);
+		assert(windowSurface.surfCaps.presentModeCount > 0);
 		surfConfig.presentMode = windowSurface.surfCaps.presentModes[0];
 
 		windowSurface.surface.Configure(&surfConfig);

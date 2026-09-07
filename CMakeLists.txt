@@ -371,7 +371,7 @@ if (WIN32)
         endif ()
         find_file(LuaJIT_DLL_DEBUG NAMES "lua51.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
-        find_file(ZLIB_DLL_DEBUG NAMES "zlibd1.dll"
+        find_file(ZLIB_DLL_DEBUG NAMES "zd.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
 
         install(FILES
@@ -392,7 +392,7 @@ if (WIN32)
     endif ()
     find_file(LuaJIT_DLL_RELEASE NAMES "lua51.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
-    find_file(ZLIB_DLL_RELEASE NAMES "zlib1.dll"
+    find_file(ZLIB_DLL_RELEASE NAMES "z.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
 
     install(FILES
