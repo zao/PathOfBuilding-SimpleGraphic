@@ -84,7 +84,9 @@
 ** Copy("<string>")
 ** string = Paste()
 ** compressed = Deflate(uncompressed)
+** compressedGzip = Deflate(uncompressed, true)
 ** uncompressed = Inflate(compressed)
+** uncompressedGzip = Inflate(compressedGzip)
 ** msec = GetTime()
 ** path[, pathACP[, err]] = GetScriptPath()
 ** path[, pathACP[, err]] = GetRuntimePath()
@@ -1607,7 +1609,7 @@ static int l_Deflate(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
 	int n = lua_gettop(L);
-	ui->LAssert(L, n >= 1, "Usage: Deflate(string)");
+	ui->LAssert(L, n >= 1, "Usage: Deflate(string, [isGzip])");
 	ui->LAssert(L, lua_isstring(L, 1), "Deflate() argument 1: expected string, got %s", luaL_typename(L, 1));
 	ui->LAssert(L, lua_isboolean(L, 2) || lua_isnil(L, 2) || lua_isnone(L, 2), "Deflate() argument 2: expected boolean or nil, got %s", luaL_typename(L, 2));
 	bool isGzip = lua_toboolean(L, 2);
