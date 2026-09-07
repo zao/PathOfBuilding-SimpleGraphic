@@ -10,6 +10,7 @@
 #include "core_config.h"
 
 #include <fmt/core.h>
+#include <fmt/format.h>
 
 // =======================
 // core_IConfig Interface
