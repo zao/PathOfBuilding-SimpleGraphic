@@ -143,7 +143,6 @@ static size_t CommandSize(r_layerCmd_s::Command cmd, size_t extraSize = 0) {
 	using Tag = r_layerCmd_s::Command;
 	switch (cmd) {
 	case Tag::VIEWPORT: return sizeof(r_layerCmdViewport_s);
-	case Tag::BLEND: return sizeof(r_layerCmdBlend_s);
 	case Tag::BIND: return sizeof(r_layerCmdBind_s);
 	case Tag::COLOR: return sizeof(r_layerCmdColor_s);
 	case Tag::QUAD: return sizeof(r_layerCmdQuad_s);
@@ -196,14 +195,6 @@ void r_layer_c::SetViewport(r_viewport_s* viewport)
 	}
 }
 
-void r_layer_c::SetBlendMode(int mode)
-{
-	if (auto* cmd = (r_layerCmdBlend_s*)NewCommand(CommandSize(r_layerCmd_s::BLEND))) {
-		cmd->cmd = r_layerCmd_s::BLEND;
-		cmd->blendMode = mode;
-	}
-}
-
 void r_layer_c::Bind(const std::shared_ptr<r_tex_c>& tex)
 {
 	if (auto* cmd = (r_layerCmdBind_s*)NewCommand(CommandSize(r_layerCmd_s::BIND))) {
@@ -222,7 +213,7 @@ void r_layer_c::Color(col4_t col)
 	}
 }
 
-void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer, int maskLayer)
+void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer)
 {
 	if (auto* cmd = (r_layerCmdQuad_s*)NewCommand(CommandSize(r_layerCmd_s::QUAD))) {
 		cmd->cmd = r_layerCmd_s::QUAD;
@@ -231,7 +222,6 @@ void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1,
 		cmd->quad.x[0] = x0; cmd->quad.x[1] = x1; cmd->quad.x[2] = x2; cmd->quad.x[3] = x3;
 		cmd->quad.y[0] = y0; cmd->quad.y[1] = y1; cmd->quad.y[2] = y2; cmd->quad.y[3] = y3;
 		cmd->quad.stackLayer = stackLayer;
-		cmd->quad.maskLayer = maskLayer;
 	}
 }
 
@@ -381,8 +371,12 @@ void r_renderer_c::Shutdown()
 	// Shutdown texture manager
 	texMan.reset();
 
-	api->Shutdown();
-	ImGui::DestroyContext(imguiCtx);
+	if (api) {
+		api->Shutdown();
+	}
+	if (imguiCtx) {
+		ImGui::DestroyContext(imguiCtx);
+	}
 	api.reset();
 	stateGL.reset();
 	stateDX.reset();
@@ -409,7 +403,6 @@ void r_renderer_c::BeginFrame()
 	curLayer = layerList.begin()->second;
 
 	SetViewport();
-	SetBlendMode(RB_ALPHA);
 	DrawColor();
 
 	beginFrameToc = std::chrono::steady_clock::now();
@@ -519,15 +512,13 @@ void r_renderer_c::EndFrame()
 			ImGui::EndDisabled();
 			CVarCheckbox("Draw command culling", r_drawCull);
 
-			size_t totalHistoricalFootprint{}, totalDenseFootprint{};
+			size_t totalDenseFootprint{};
 			for (auto& layer : layerSort) {
 				size_t byteAcc{};
 				size_t const numCmd = layer->numCmd;
-				totalHistoricalFootprint += numCmd * sizeof(r_layerCmdQuad_s); // legacy footprint with uniform union commands
 				totalDenseFootprint += layer->cmdCursor;
 			}
 
-			ImGui::Text("Total historical footprint: %sB", BinaryUnitPrefix(totalHistoricalFootprint).c_str());
 			ImGui::Text("Total dense footprint: %sB", BinaryUnitPrefix(totalDenseFootprint).c_str());
 
 			if (ImGui::BeginTable("Layer stats", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
@@ -779,7 +770,6 @@ void r_renderer_c::SetDrawLayer(int layer, int subLayer)
 	}
 	curLayer = it->second;
 	curLayer->SetViewport(&curViewport);
-	curLayer->SetBlendMode(curBlendMode);
 }
 
 void r_renderer_c::SetDrawSubLayer(int subLayer)
@@ -802,12 +792,6 @@ void r_renderer_c::SetViewport(int x, int y, int width, int height)
 	curViewport.lo = {x, y};
 	curViewport.extent = {width, height};
 	curLayer->SetViewport(&curViewport);
-}
-
-void r_renderer_c::SetBlendMode(int mode)
-{
-	curBlendMode = mode;
-	curLayer->SetBlendMode(mode);
 }
 
 void r_renderer_c::DrawColor(const col4_t col)
@@ -833,7 +817,7 @@ void r_renderer_c::GetDrawColor(col4_t color)
 	color[3] = drawColor[3];
 }
 
-void r_renderer_c::DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1, glm::vec2 uv2, int stackLayer, std::optional<int> maskLayer)
+void r_renderer_c::DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1, glm::vec2 uv2, int stackLayer)
 {
 	DrawImageQuad(hnd,
 		pos,
@@ -844,10 +828,10 @@ void r_renderer_c::DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent
 		{ uv2.s, uv1.t },
 		uv2,
 		{ uv1.s, uv2.t },
-		stackLayer, maskLayer);
+		stackLayer);
 }
 
-void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0, glm::vec2 uv1, glm::vec2 uv2, glm::vec2 uv3, int stackLayer, std::optional<int> maskLayer)
+void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0, glm::vec2 uv1, glm::vec2 uv2, glm::vec2 uv3, int stackLayer)
 {
 	if (hnd) {
 		curLayer->Bind(hnd->sh->tex);
@@ -863,7 +847,7 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1,
 		uv1.s, uv1.t, p1.x, p1.y,
 		uv2.s, uv2.t, p2.x, p2.y,
 		uv3.s, uv3.t, p3.x, p3.y,
-		stackLayer, maskLayer.value_or(-1));
+		stackLayer);
 }
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, std::string_view str)

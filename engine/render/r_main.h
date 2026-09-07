@@ -26,6 +26,8 @@
 struct r_viewport_s {
 	glm::ivec2 lo;
 	glm::ivec2 extent;
+
+	auto operator<=>(const r_viewport_s&) const = default;
 };
 
 struct r_aabb_s {
@@ -88,10 +90,9 @@ public:
 	~r_layer_c();
 
 	void	SetViewport(r_viewport_s* viewport);
-	void	SetBlendMode(int mode);
 	void	Bind(const std::shared_ptr<r_tex_c>& tex);
 	void	Color(col4_t col);
-	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer = 0, int maskLayer = -1);
+	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer = 0);
 	bool	Render();
 	void    Discard();
 
@@ -132,12 +133,11 @@ public:
 	void	SetDrawSubLayer(int subLayer);
 	int		GetDrawLayer();
 	void	SetViewport(int x = 0, int y = 0, int width = 0, int height = 0);
-	void	SetBlendMode(int mode);
 	void	DrawColor(const col4_t col = NULL);
 	void	DrawColor(dword col);
 	void	GetDrawColor(col4_t color);
-	void	DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1 = { 0, 0 }, glm::vec2 uv2 = { 1, 1 }, int stackLayer = 0, std::optional<int> maskLayer = {});
-	void	DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0 = { 0, 0 }, glm::vec2 uv1 = { 1, 0 }, glm::vec2 uv2 = { 1, 1 }, glm::vec2 uv3 = { 0, 1 }, int stackLayer = 0, std::optional<int> maskLayer = {});
+	void	DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1 = { 0, 0 }, glm::vec2 uv2 = { 1, 1 }, int stackLayer = 0 );
+	void	DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0 = { 0, 0 }, glm::vec2 uv1 = { 1, 0 }, glm::vec2 uv2 = { 1, 1 }, glm::vec2 uv3 = { 0, 1 }, int stackLayer = 0);
 	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, std::string_view str);
 	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...);
 	int		DrawStringWidth(int height, int font, const char* str);
@@ -184,7 +184,6 @@ public:
 	glm::vec4 drawColor = {};	// Current draw color
 
 	r_viewport_s curViewport;	// Current viewport
-	int curBlendMode = 0;		// Current blend mode
 
 	std::vector<std::weak_ptr<class r_shader_c>> shaderList;
 

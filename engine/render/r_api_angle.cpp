@@ -211,8 +211,6 @@ void r_stateGL_s::Init()
 				}
 				fmt::format_to(fmt::appender(buf), R"( {{
 	color = texture(s_tex[{}], vec3(v_texcoord, v_texId.y));
-	if (v_texId.z > -0.5)
-		color *= texture(s_tex[{}], vec3(v_texcoord, v_texId.z));
 }}
 )", i, i);
 			}
@@ -563,11 +561,10 @@ std::shared_ptr<void> r_stateGL_s::UploadTextureData(r_tex_c* src)
 // =================
 
 struct Vertex {
-	float x, y;
-	float u, v;
-	float r, g, b, a;
-	float viewX, viewY, viewW, viewH;
-	float texId, stackIdx, maskIdx;
+	glm::vec2 pos;
+	glm::vec2 uv;
+	glm::vec4 color;
+	glm::vec2 texId; // texId, stackIdx
 };
 
 struct Batch {
@@ -582,7 +579,6 @@ struct Batch {
 	GLint xyAttr;
 	GLint uvAttr;
 	GLint tintAttr;
-	GLint viewportAttr;
 	GLint texIdAttr;
 
 	std::vector<Vertex> vertices;
@@ -596,7 +592,6 @@ Batch::Batch(GLuint prog)
 	xyAttr = glGetAttribLocation(prog, "a_vertex");
 	uvAttr = glGetAttribLocation(prog, "a_texcoord");
 	tintAttr = glGetAttribLocation(prog, "a_tint");
-	viewportAttr = glGetAttribLocation(prog, "a_viewport");
 	texIdAttr = glGetAttribLocation(prog, "a_texId");
 }
 
@@ -605,7 +600,6 @@ Batch::Batch(Batch&& rhs)
 	, xyAttr(rhs.xyAttr)
 	, uvAttr(rhs.uvAttr)
 	, tintAttr(rhs.tintAttr)
-	, viewportAttr(rhs.viewportAttr)
 	, texIdAttr(rhs.texIdAttr)
 	, vertices(std::move(rhs.vertices))
 {
@@ -616,7 +610,6 @@ Batch& Batch::operator = (Batch&& rhs) {
 	xyAttr = rhs.xyAttr;
 	uvAttr = rhs.uvAttr;
 	tintAttr = rhs.tintAttr;
-	viewportAttr = rhs.viewportAttr;
 	texIdAttr = rhs.texIdAttr;
 	vertices = std::move(rhs.vertices);
 
@@ -636,21 +629,18 @@ void Batch::Execute(GLuint sharedVbo, size_t vertexBase)
 	auto dataOff = vertexBase * sizeof(Vertex);
 	auto dataSize = vertices.size() * sizeof(Vertex);
 	glBufferSubData(GL_ARRAY_BUFFER, dataOff, dataSize, dataPtr);
-	glVertexAttribPointer(xyAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, x));
-	glVertexAttribPointer(uvAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, u));
-	glVertexAttribPointer(tintAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, r));
-	glVertexAttribPointer(viewportAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, viewX));
-	glVertexAttribPointer(texIdAttr, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, texId));
+	glVertexAttribPointer(xyAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, pos));
+	glVertexAttribPointer(uvAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, uv));
+	glVertexAttribPointer(tintAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, color));
+	glVertexAttribPointer(texIdAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, texId));
 	glEnableVertexAttribArray(xyAttr);
 	glEnableVertexAttribArray(uvAttr);
 	glEnableVertexAttribArray(tintAttr);
-	glEnableVertexAttribArray(viewportAttr);
 	glEnableVertexAttribArray(texIdAttr);
 	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size());
 	glDisableVertexAttribArray(xyAttr);
 	glDisableVertexAttribArray(uvAttr);
 	glDisableVertexAttribArray(tintAttr);
-	glDisableVertexAttribArray(viewportAttr);
 	glDisableVertexAttribArray(texIdAttr);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	vertices.clear();
@@ -667,7 +657,7 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 			}
 			texLocs_.push_back(loc);
 		}
-		mvpMatrixLoc_ = glGetUniformLocation(prog_, "mvp_matrix");
+		uScreenSizeLoc_ = glGetUniformLocation(prog_, "u_screenSize");
 		batchTextureCap_ = texLocs_.size();
 		glGenBuffers(1, &vbo_);
 	}
@@ -676,22 +666,6 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 		glDeleteBuffers(1, &vbo_);
 	}
 
-	struct BatchKey {
-		int blendMode = -1;
-
-		bool operator < (BatchKey const& rhs) const {
-			return blendMode < rhs.blendMode;
-		}
-
-		bool operator == (BatchKey const& rhs) const {
-			return !(*this < rhs) && !(rhs < *this);
-		}
-
-		bool operator != (BatchKey const& rhs) const {
-			return !(*this == rhs);
-		}
-	};
-
 	void ProcessCommand(r_layerCmd_s* cmd) override {
 		switch (cmd->cmd) {
 		case r_layerCmd_s::VIEWPORT: {
@@ -699,14 +673,6 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 			nextViewport_ = c->viewport;
 			if (showStats_) {
 				// ImGui::Text("VIEWPORT: %dx%d @ %d,%d", c->viewport.width, c->viewport.height, c->viewport.x, c->viewport.y);
-			}
-		} break;
-		case r_layerCmd_s::BLEND: {
-			auto* c = (r_layerCmdBlend_s*)cmd;
-			latchKey_.blendMode = c->blendMode;
-			if (showStats_) {
-				// const auto blendModeName = magic_enum::enum_name((r_blendMode_e)c->blendMode);
-				// ImGui::Text("BLEND: %.*s", (int)blendModeName.size(), blendModeName.data());
 			}
 		} break;
 		case r_layerCmd_s::BIND: {
@@ -721,7 +687,7 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 		} break;
 		case r_layerCmd_s::COLOR: {
 			auto* c = (r_layerCmdColor_s*)cmd;
-			std::copy_n(c->col, 4, tint_.data());
+			tint_ = glm::make_vec4(c->col);
 		} break;
 		case r_layerCmd_s::QUAD: {
 			auto* c = (r_layerCmdQuad_s*)cmd;
@@ -729,22 +695,16 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 				// ImGui::Text("QUAD");
 			}
 
+			const auto inQ = c->quad;
 			// Cull the quad first before it influences any boundary cuts.
 			if (!!renderer_->r_drawCull->intVal) {
-				auto a = AabbOffset(AabbFromCmdQuad(c->quad), nextViewport_.lo);
-				auto b = AabbFromViewport(nextViewport_);
-				bool intersects = AabbAabbIntersects(a, b);
-				if (!intersects) {
+				const auto [minX, maxX] = std::ranges::minmax(inQ.x);
+				if (maxX <= 0.0f || minX >= nextViewport_.extent.x)
 					break;
-				}
+				const auto [minY, maxY] = std::ranges::minmax(inQ.y);
+				if (maxY <= 0.0f || minY >= nextViewport_.extent.y)
+					break;
 			}
-
-			// If the current batch is incompatible key-wise, dispatch it to get a fresh
-			// batch to grow in.
-			if (!batch_.batch.vertices.empty() && batch_.key != latchKey_) {
-				Dispatch();
-			}
-			batch_.key = latchKey_;
 
 			// Refuse to draw geometry if texture isn't loaded as this may lead to UB in the shader.
 			if (!nextTex_) {
@@ -772,21 +732,10 @@ struct AdjacentMergeStrategy : r_IRenderStrategy {
 			for (int v = 0; v < 4; v++) {
 				auto& q = quad[v];
 				auto& vp = nextViewport_;
-				q.u = c->quad.s[v];
-				q.v = c->quad.t[v];
-				q.x = c->quad.x[v];
-				q.y = c->quad.y[v];
-				q.r = tint_[0];
-				q.g = tint_[1];
-				q.b = tint_[2];
-				q.a = tint_[3];
-				q.viewX = (float)vp.lo.x;
-				q.viewY = (float)vp.lo.y;
-				q.viewW = (float)vp.extent.x;
-				q.viewH = (float)vp.extent.y;
-				q.texId = (float)texSlot;
-				q.stackIdx = (float)c->quad.stackLayer;
-				q.maskIdx = (float)c->quad.maskLayer;
+				q.uv = {inQ.s[v], inQ.t[v]};
+				q.pos = glm::vec2{inQ.x[v], inQ.y[v]} + glm::vec2(vp.lo);
+				q.color = tint_;
+				q.texId = {(float)texSlot, (float)inQ.stackLayer};
 			}
 			// 3-2
 			// |/|
@@ -819,9 +768,7 @@ private:
 		size_t vertexCount = batch.vertices.size();
 		glBufferData(GL_ARRAY_BUFFER, vertexCount * sizeof(Vertex), nullptr, GL_STREAM_DRAW);
 		glUseProgram(prog_);
-
-		auto& key = batch_.key;
-		auto& lastKey = lastDispatchKey_;
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		if (showStats_) {
 			ImGui::Text("Batch %d", batchIndex);
@@ -835,25 +782,8 @@ private:
 			int virtualW = renderer_->VirtualScreenWidth();
 			int virtualH = renderer_->VirtualScreenHeight();
 			glViewport(0, 0, virtualW, virtualH);
-			r_mat4_s mvpMatrix = OrthoMatrix(0, virtualW, virtualH, 0, -9999, 9999);
-			glUniformMatrix4fv(mvpMatrixLoc_, 1, GL_FALSE, mvpMatrix.data());
-		}
-		if (!lastKey || lastKey->blendMode != key.blendMode) {
-			if (showStats_) {
-				const auto blendModeName = magic_enum::enum_name((r_blendMode_e)key.blendMode);
-				ImGui::Text("New blend mode %.*s", (int)blendModeName.size(), blendModeName.data());
-			}
-			switch (key.blendMode) {
-			case RB_ALPHA:
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				break;
-			case RB_PRE_ALPHA:
-				glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-				break;
-			case RB_ADDITIVE:
-				glBlendFunc(GL_ONE, GL_ONE);
-				break;
-			}
+			glm::vec2 uScreenSize(virtualW, virtualH);
+			glUniform2fv(uScreenSizeLoc_, 1, glm::value_ptr(uScreenSize));
 		}
 		{
 			for (size_t i = 0, numTex = texLocs_.size(); i < numTex; ++i) {
@@ -879,7 +809,6 @@ private:
 
 		batch.Execute(vbo_, 0);
 
-		lastDispatchKey_ = key;
 		batch_.batch.vertices.clear();
 		batch_.textures.clear();
 
@@ -892,7 +821,7 @@ private:
 	r_renderer_c* renderer_{};
 	GLuint prog_{};
 	std::vector<GLint> texLocs_;
-	GLint mvpMatrixLoc_{};
+	GLint uScreenSizeLoc_{};
 
 	size_t batchTextureCap_{};
 	GLuint vbo_{};
@@ -902,18 +831,15 @@ private:
 			textures.reserve(128);
 		}
 
-		BatchKey key{};
 		Batch batch;
 		std::vector<r_tex_c*> textures;
 	};
 
-	BatchKey latchKey_{};
 	r_viewport_s nextViewport_{};
 	r_tex_c* nextTex_{};
-	std::optional<BatchKey> lastDispatchKey_;
 	TexturedBatch batch_;
 
-	std::array<float, 4> tint_{1.0f, 1.0f, 1.0f, 1.0f};
+	glm::vec4 tint_{1.0f};
 
 	size_t totalVertexCount_ = 0;
 	size_t batchIndex = 0;

@@ -14,11 +14,6 @@ struct r_layerCmdViewport_s {
 	r_viewport_s viewport;
 };
 
-struct r_layerCmdBlend_s {
-	r_layerCmd_s::Command cmd;
-	int blendMode;
-};
-
 struct r_layerCmdBind_s {
 	r_layerCmd_s::Command cmd;
 	r_tex_c* tex;
@@ -36,7 +31,7 @@ struct r_layerCmdQuad_s {
 		float t[4];
 		float x[4];
 		float y[4];
-		int stackLayer, maskLayer;
+		int stackLayer;
 	} quad;
 };
 #pragma pack(pop, r_layerCmd)

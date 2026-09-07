@@ -60,8 +60,8 @@
 ** GetDrawLayer()
 ** SetViewport([x, y, width, height])
 ** SetDrawColor(red, green, blue[, alpha]) / SetDrawColor("<escapeStr>")
-** DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom][, stackIdx[, maskIdx]])  maskIdx: use a stack layer as multiplicative mask
-** DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4][, stackIdx[, maskIdx]])
+** DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom][, stackIdx])
+** DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4][, stackIdx])
 ** DrawString(left, top, align{"LEFT"|"CENTER"|"RIGHT"|"CENTER_X"|"RIGHT_X"}, height, font{"FIXED"|"VAR"|"VAR BOLD"|"FONTIN SC"|"FONTIN SC ITALIC"|"FONTIN"|"FONTIN ITALIC"}, "<text>")
 ** width = DrawStringWidth(height, font{"FIXED"|"VAR"|"VAR BOLD"|"FONTIN SC"|"FONTIN SC ITALIC"|"FONTIN"|"FONTIN ITALIC"}, "<text>")
 ** index = DrawStringCursorIndex(height, font{"FIXED"|"VAR"|"VAR BOLD"|"FONTIN SC"|"FONTIN SC ITALIC"|"FONTIN"|"FONTIN ITALIC"}, "<text>", cursorX, cursorY)
@@ -812,18 +812,6 @@ static int l_SetViewport(lua_State* L)
 	return 0;
 }
 
-static int l_SetBlendMode(lua_State* L)
-{
-	ui_main_c* ui = GetUIPtr(L);
-	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
-	ui->LAssert(L, ui->renderEnable, "SetViewport() called outside of OnFrame");
-	int n = lua_gettop(L);
-	ui->LAssert(L, n >= 1, "Usage: SetBlendMode(mode)");
-	static const char* modeMap[6] = { "ALPHA", "PREALPHA", "ADDITIVE", NULL };
-	ui->renderer->SetBlendMode(luaL_checkoption(L, 1, "ALPHA", modeMap));
-	return 0;
-}
-
 static int l_SetDrawColor(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
@@ -893,7 +881,7 @@ static int l_DrawImage(lua_State* L)
 	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
 	ui->LAssert(L, ui->renderEnable, "DrawImage() called outside of OnFrame");
 	int n = lua_gettop(L);
-	const char* usage = "Usage: DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom][, stackIdx[, mask]])";
+	const char* usage = "Usage: DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom][, stackIdx])";
 	ui->LAssert(L, n >= 5, usage);
 
 	if (!lua_isnil(L, 1) && !ui->IsUserData(L, 1, "uiimghandlemeta")) {
@@ -903,23 +891,18 @@ static int l_DrawImage(lua_State* L)
 	r_shaderHnd_c* hnd = NULL;
 	glm::vec2 xys[2]{}, uvs[2]{};
 	int stackLayer = 0;
-	std::optional<int> maskLayer{};
 
-	// | n  |img| corners | uvs | stack | mask |
-	// | 5  | X | X       |	    |       |      |
-	// | 6  | X | X       |     | X     |      |
-	// | 7  | X | X       |     | X     | X    |
-	// | 9  | X | X       | X   |       |      |
-	// | 10 | X | X       | X   | X     |      |
-	// | 11 | X | X       | X   | X     | X    |
+	// | n  |img| corners | uvs | stack |
+	// | 5  | X | X       |	    |       |
+	// | 6  | X | X       |     | X     |
+	// | 9  | X | X       | X   |       |
+	// | 10 | X | X       | X   | X     |
 
-	enum ArgFlag : uint8_t { AF_IMG = 0x1, AF_XY = 0x2, AF_UV = 0x4, AF_STACK = 0x8, AF_MASK = 0x10 };
+	enum ArgFlag : uint8_t { AF_IMG = 0x1, AF_XY = 0x2, AF_UV = 0x4, AF_STACK = 0x8 };
 	ArgFlag af{};
 	switch (n) {
-	case 11: af = (ArgFlag)(af | AF_MASK);
 	case 10: af = (ArgFlag)(af | AF_STACK);
 	case 9: af = (ArgFlag)(af | AF_IMG | AF_XY | AF_UV); break;
-	case 7: af = (ArgFlag)(af | AF_MASK);
 	case 6: af = (ArgFlag)(af | AF_STACK);
 	case 5: af = (ArgFlag)(af | AF_IMG | AF_XY); break;
 	default: ui->LAssert(L, false, usage);
@@ -986,23 +969,7 @@ static int l_DrawImage(lua_State* L)
 		k += 1;
 	}
 
-	if (af & AF_MASK) {
-		if (!lua_isnil(L, k)) {
-			int isInt;
-			int val = (int)lua_tointegerx(L, k, &isInt);
-
-			if (!isInt) {
-				ui->LAssert(L, false, "DrawImage() argument %d: expected integer or nil, got %s", k, luaL_typename(L, k));
-			}
-			ui->LAssert(L, val > 0, "DrawImage() argument %d: expected positive integer, got %d", k, val);
-			if (maxStackValue.has_value())
-				ui->LAssert(L, val <= *maxStackValue, "DrawImage() argument %d: expected valid stack index <= %d, got %d", k, *maxStackValue, val);
-			maskLayer = val - 1;
-		}
-		k += 1;
-	}
-
-	ui->renderer->DrawImage(hnd, xys[0], xys[1], uvs[0], uvs[1], stackLayer, maskLayer);
+	ui->renderer->DrawImage(hnd, xys[0], xys[1], uvs[0], uvs[1], stackLayer);
 
 	return 0;
 }
@@ -1013,7 +980,7 @@ static int l_DrawImageQuad(lua_State* L)
 	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
 	ui->LAssert(L, ui->renderEnable, "DrawImageQuad() called outside of OnFrame");
 	int n = lua_gettop(L);
-	const char* usage = "Usage: DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4][, stackIdx[, mask]])";
+	const char* usage = "Usage: DrawImageQuad({imgHandle|nil}, x1, y1, x2, y2, x3, y3, x4, y4[, s1, t1, s2, t2, s3, t3, s4, t4][, stackIdx])";
 	ui->LAssert(L, n >= 9, usage);
 	if (!lua_isnil(L, 1) && ! ui->IsUserData(L, 1, "uiimghandlemeta")) {
 		ui->LAssert(L, false, "DrawImageQuad() argument 1: expected image handle or nil, got %s", luaL_typename(L, 1));
@@ -1022,23 +989,18 @@ static int l_DrawImageQuad(lua_State* L)
 	r_shaderHnd_c* hnd = NULL;
 	glm::vec2 xys[4]{}, uvs[4]{};
 	int stackLayer = 0;
-	std::optional<int> maskLayer{};
 	
-	// | n  |img| corners | uvs | stack | mask |
-	// | 9  | X | X       |	    |       |      |
-	// | 10 | X | X       |     | X     |      |
-	// | 11 | X | X       |     | X     | X    |
-	// | 17 | X | X       | X   |       |      |
-	// | 18 | X | X       | X   | X     |      |
-	// | 19 | X | X       | X   | X     | X    |
+	// | n  |img| corners | uvs | stack |
+	// | 9  | X | X       |	    |       |
+	// | 10 | X | X       |     | X     |
+	// | 17 | X | X       | X   |       |
+	// | 18 | X | X       | X   | X     |
 
-	enum ArgFlag : uint8_t { AF_IMG = 0x1, AF_XY = 0x2, AF_UV = 0x4, AF_STACK = 0x8, AF_MASK = 0x10 };
+	enum ArgFlag : uint8_t { AF_IMG = 0x1, AF_XY = 0x2, AF_UV = 0x4, AF_STACK = 0x8 };
 	ArgFlag af{};
 	switch (n) {
-	case 19: af = (ArgFlag)(af | AF_MASK);
 	case 18: af = (ArgFlag)(af | AF_STACK);
 	case 17: af = (ArgFlag)(af | AF_IMG | AF_XY | AF_UV); break;
-	case 11: af = (ArgFlag)(af | AF_MASK);
 	case 10: af = (ArgFlag)(af | AF_STACK);
 	case 9: af = (ArgFlag)(af | AF_IMG | AF_XY); break;
 	default: ui->LAssert(L, false, usage);
@@ -1107,25 +1069,7 @@ static int l_DrawImageQuad(lua_State* L)
 		k += 1;
 	}
 
-	if (af & AF_MASK) {
-		if (!lua_isnil(L, k)) {
-			int isInt;
-			const int val = (int)lua_tointegerx(L, k, &isInt);
-
-			if (!isInt) {
-				ui->LAssert(L, false, "DrawImageQuad() argument %d: expected integer or nil, got %s", k, luaL_typename(L, k));
-			}
-			ui->LAssert(L, val > 0, "DrawImageQuad() argument %d: expected positive integer, got %d", k, val);
-			if (maxStackValue.has_value())
-				ui->LAssert(L, val <= *maxStackValue, "DrawImageQuad() argument %d: expected valid stack index <= %d, got %d", k, *maxStackValue, val);
-
-			maskLayer = val - 1;
-		}
-		k += 1;
-	}
-
-
-	ui->renderer->DrawImageQuad(hnd, xys[0], xys[1], xys[2], xys[3], uvs[0], uvs[1], uvs[2], uvs[3], stackLayer, maskLayer);
+	ui->renderer->DrawImageQuad(hnd, xys[0], xys[1], xys[2], xys[3], uvs[0], uvs[1], uvs[2], uvs[3], stackLayer);
 
 	return 0;
 }
@@ -2250,7 +2194,6 @@ int ui_main_c::InitAPI(lua_State* L)
 	ADDFUNC(SetDrawLayer);
 	ADDFUNC(GetDrawLayer);
 	ADDFUNC(SetViewport);
-	ADDFUNC(SetBlendMode);
 	ADDFUNC(SetDrawColor);
 	ADDFUNC(GetDrawColor);
 	ADDFUNC(SetDPIScaleOverridePercent);
