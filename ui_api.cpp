@@ -1609,10 +1609,13 @@ static int l_Deflate(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: Deflate(string)");
 	ui->LAssert(L, lua_isstring(L, 1), "Deflate() argument 1: expected string, got %s", luaL_typename(L, 1));
+	ui->LAssert(L, lua_isboolean(L, 2) || lua_isnil(L, 2) || lua_isnone(L, 2), "Deflate() argument 2: expected boolean or nil, got %s", luaL_typename(L, 2));
+	bool isGzip = lua_toboolean(L, 2);
 	z_stream_s z;
 	z.zalloc = NULL;
 	z.zfree = NULL;
-	deflateInit(&z, 9);
+	// Adding 16 enables Gzip headers instead of ZLib headers
+	deflateInit2(&z, 9, Z_DEFLATED, MAX_WBITS + (isGzip ? 16 : 0), 8, Z_DEFAULT_STRATEGY);
 	size_t inLen;
 	byte* in = (byte*)lua_tolstring(L, 1, &inLen);
 	// Prevent deflation of input data larger than 128 MiB.
@@ -1666,7 +1669,8 @@ static int l_Inflate(lua_State* L)
 	z.zfree = NULL;
 	z.next_out = out.data();
 	z.avail_out = outSz;
-	inflateInit(&z);
+	// Adding 32 enables automatic detection of headers
+	inflateInit2(&z, MAX_WBITS + 32);
 	int err;
 	while ((err = inflate(&z, Z_NO_FLUSH)) == Z_OK) {
 		// Output buffer filled, try to embiggen it.
