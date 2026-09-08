@@ -48,11 +48,10 @@ jobs:
             vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-
             vcpkg-${{ runner.os }}-
 
-      - name: run-vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgJsonGlob: "./vcpkg.json"
-          binaryCachePath: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+      - name: Bootstrap vcpkg
+        shell: powershell
+        run: |
+          .\vcpkg\bootstrap-vcpkg.bat
 
       - name: Obtain and run CMake
         uses: threeal/cmake-action@v2.1.0
