@@ -24,7 +24,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: "recursive"
 
@@ -34,6 +34,10 @@ jobs:
           $file = 'config.h'
           $short=$(git rev-parse --short HEAD)
           (Get-Content $file -Raw) -replace '(#define\s+CFG_VERSION_NUM\s+"[^"]*)(")', "`$1-$short`$2" | Set-Content $file
+
+      - name: Prepare cache directory
+        shell: powershell
+        run: "mkdir -Force ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}"
 
       - name: Cache vcpkg dependencies
         uses: actions/cache@v6
@@ -48,17 +52,16 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgJsonGlob: "./vcpkg.json"
-
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+          binaryCachePath: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
 
       - name: Obtain and run CMake
-        uses: threeal/cmake-action@v1.3.0
+        uses: threeal/cmake-action@v2.1.0
         with:
           source-dir: "."
           build-dir: "build"
           generator: "Visual Studio 18 2026"
-          options: CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake CMAKE_INSTALL_PREFIX="${{ env.INST_DIR }}" VCPKG_INSTALLED_DIR="${{ env.VCPKG_INSTALLED_DIR }}" VCPKG_TARGET_TRIPLET="${{ env.VCPKG_TARGET_TRIPLET }}"
+          options: CMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake CMAKE_INSTALL_PREFIX=${{ env.INST_DIR }} VCPKG_INSTALLED_DIR=${{ env.VCPKG_INSTALLED_DIR }} VCPKG_TARGET_TRIPLET=${{ env.VCPKG_TARGET_TRIPLET }}
+          run-build: false
 
       - name: Build DLL
         run: "cmake --build build --config Release -t INSTALL"
@@ -72,19 +75,19 @@ jobs:
           } else { Write-Host "DLL not found" }
 
       - name: Archive DLL
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SimpleGraphic-${{ matrix.triplet }}.dll
           path: "${{ env.INST_DIR }}/SimpleGraphic.dll"
 
       - name: Archive DLL symbols
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SimpleGraphic-${{ matrix.triplet }}.pdb
           path: "${{ github.workspace }}/build/Release/SimpleGraphic.pdb"
 
       - name: Archive dependency DLLs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SimpleGraphic-${{ matrix.triplet }}-deps.dll
           path: |
@@ -92,7 +95,7 @@ jobs:
             !${{ env.INST_DIR }}/SimpleGraphic.dll
 
       - name: Archive dependency DLL symbols
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: SimpleGraphic-${{ matrix.triplet }}-deps.pdb
           path: |
@@ -109,7 +112,7 @@ jobs:
 
       - name: Notify PathOfBuilding repo
         if: ${{ github.event_name == 'release' }}
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.WIRES77_PAT }}
           repository: ${{ github.repository_owner }}/PathOfBuilding
@@ -118,7 +121,7 @@ jobs:
 
       - name: Notify PathOfBuilding-PoE2 repo
         if: ${{ github.event_name == 'release' }}
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         with:
           token: ${{ secrets.WIRES77_PAT }}
           repository: ${{ github.repository_owner }}/PathOfBuilding-PoE2
