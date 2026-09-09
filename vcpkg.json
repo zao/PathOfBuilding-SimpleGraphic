@@ -3,6 +3,7 @@
   "version": "2.5",
   "dependencies": [
     "angle",
+    "cmakerc",
     "curl",
     "fmt",
     "glfw3",

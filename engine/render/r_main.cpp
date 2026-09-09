@@ -21,9 +21,12 @@
 #include <sstream>
 #include <vector>
 
+#include <cmrc/cmrc.hpp>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_stdlib.h>
+
+CMRC_DECLARE(SimpleGraphic);
 
 // =======
 // Classes
@@ -791,102 +794,25 @@ static std::string GetProgramInfoLog(GLuint id)
 	return std::string(msg.data(), msg.data() + len);
 }
 
-static char const* s_tintedTextureVertexSource = R"(#version 300 es
-
-uniform mat4 mvp_matrix;
-
-in vec2 a_vertex;
-in vec2 a_texcoord;
-in vec4 a_tint;
-in vec4 a_viewport;
-in vec3 a_texId;
-
-out vec2 v_screenPos;
-out vec2 v_texcoord;
-out vec4 v_tint;
-out vec4 v_viewport;
-out vec3 v_texId;
-
-void main(void)
-{
-	v_texcoord = a_texcoord;
-	v_tint = a_tint;
-	v_texId = a_texId;
-	vec2 vp0 = a_viewport.xy + vec2(0.0, a_viewport.w);
-	vec2 vp1 = a_viewport.xy + vec2(a_viewport.z, 0.0);
-	v_viewport = vec4(
-		(mvp_matrix * vec4(vp0, 0.0, 1.0)).xy,
-		(mvp_matrix * vec4(vp1, 0.0, 1.0)).xy);
-	vec4 pos = mvp_matrix * vec4(a_vertex + a_viewport.xy, 0.0, 1.0);
-	v_screenPos = pos.xy;
-	gl_Position = pos;
-}
-)";
-
-static char const* s_tintedTextureFragmentTemplate = R"(#version 300 es
-precision mediump float;
-
-uniform highp sampler2DArray s_tex[{SG_TEXTURE_COUNT}];
-uniform vec4 i_tint;
-
-in vec2 v_screenPos;
-in vec2 v_texcoord;
-in vec4 v_tint;
-in vec4 v_viewport; // x0, y0, x1, y1
-in vec3 v_texId;
-
-out vec4 f_fragColor;
-
-void main(void)
-{{
-	float x = v_screenPos[0], y = v_screenPos[1];
-	if (x < v_viewport[0] ||
-	    y < v_viewport[1] ||
-	    x >= v_viewport[2] ||
-	    y >= v_viewport[3]) {{
-		discard;
-	}}
-	vec4 color;
-	{SG_TEXTURE_SWITCH}
-	f_fragColor = color * v_tint;
-}}
-)";
-
-std::string const s_scaleVsSource = R"(#version 300 es
-in vec4 a_position;
-in vec2 a_texcoord;
-
-out vec2 v_texcoord;
-
-void main(void) {
-	gl_Position = a_position;
-	v_texcoord = a_texcoord;
-}
-)";
-
-std::string const s_scaleFsSource = R"(#version 300 es
-precision mediump float;
-
-uniform highp sampler2D s_tex;
-
-in vec2 v_texcoord;
-
-out vec4 f_fragColor;
-
-void main(void) {
-	vec3 color = texture(s_tex, v_texcoord).rgb;
-	f_fragColor = vec4(color, 1.0);
-}
-)";
-
 // =============
 // Init/Shutdown
 // =============
+
+static std::tuple<const GLchar*, GLint> ResourceViewOpenGL(cmrc::file file)
+{
+	return {(const GLchar*)file.begin(), (GLint)file.size()};
+}
+
+static std::string_view ResourceStringView(cmrc::file file)
+{
+	return std::string_view(file.begin(), file.size());
+}
 
 void r_renderer_c::Init(r_featureFlag_e features)
 {
 	sys->con->PrintFunc("Render Init");
 
+	const auto resources = cmrc::SimpleGraphic::get_filesystem();
 	frameHashState.reset(XXH3_createState(), XXH3_freeState);
 
 	apiDpiAware = !!(features & F_DPI_AWARE);
@@ -971,7 +897,8 @@ void r_renderer_c::Init(r_featureFlag_e features)
 		GLint success = GL_FALSE;
 		GLuint prog = glCreateProgram();
 		GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vs, 1, &s_tintedTextureVertexSource, nullptr);
+		auto [tintVertexSourceText, tintVertexSourceLen] = ResourceViewOpenGL(resources.open("assets/gles/tinted_texture.vert"));
+		glShaderSource(vs, 1, &tintVertexSourceText, &tintVertexSourceLen);
 		glCompileShader(vs);
 		if (!GetShaderCompileSuccess(vs)) {
 			std::string log = GetShaderInfoLog(vs);
@@ -1000,11 +927,17 @@ void r_renderer_c::Init(r_featureFlag_e features)
 			}
 			textureSwitch = to_string(buf);
 		}
-		std::string fragSource = fmt::format(s_tintedTextureFragmentTemplate,
-			fmt::arg("SG_TEXTURE_COUNT", maxTextureImageUnits),
-			fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
-		char const* fragSourcePtr = fragSource.c_str();
-		glShaderSource(fs, 1, &fragSourcePtr, nullptr);
+		const auto tintFragmentTemplate = ResourceStringView(resources.open("assets/gles/tinted_texture.frag"));
+		try {
+			std::string fragSource = fmt::format(fmt::runtime(tintFragmentTemplate),
+				fmt::arg("SG_TEXTURE_COUNT", maxTextureImageUnits),
+				fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
+			char const* fragSourcePtr = fragSource.c_str();
+			glShaderSource(fs, 1, &fragSourcePtr, nullptr);
+		}
+		catch (std::exception& e) {
+			sys->Error(u8"Failed to format fragment shader:\n%s", e.what());
+		}
 		glCompileShader(fs);
 		if (!GetShaderCompileSuccess(fs)) {
 			std::string log = GetShaderInfoLog(fs);
@@ -1054,12 +987,12 @@ void r_renderer_c::Init(r_featureFlag_e features)
 				return id;
 				};
 
-			auto vsId = compileShader(s_scaleVsSource, GL_VERTEX_SHADER);
+			auto vsId = compileShader(ResourceStringView(resources.open("assets/gles/display_render_target.vert")), GL_VERTEX_SHADER);
 			if (!GetShaderCompileSuccess(vsId)) {
 				auto log = GetShaderInfoLog(vsId);
 				sys->con->Printf("Scaling VS compile failure: %s\n", log.c_str());
 			}
-			auto fsId = compileShader(s_scaleFsSource, GL_FRAGMENT_SHADER);
+			auto fsId = compileShader(ResourceStringView(resources.open("assets/gles/display_render_target.frag")), GL_FRAGMENT_SHADER);
 			if (!GetShaderCompileSuccess(fsId)) {
 				auto log = GetShaderInfoLog(fsId);
 				sys->con->Printf("Scaling FS compile failure: %s\n", log.c_str());
@@ -1115,9 +1048,11 @@ void r_renderer_c::Shutdown()
 
 	sys->con->Printf("Unloading resources...\n");
 
-	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplGlfw_Shutdown();
-	ImGui::DestroyContext(imguiCtx);
+	if (imguiCtx) {
+		ImGui_ImplOpenGL3_Shutdown();
+		ImGui_ImplGlfw_Shutdown();
+		ImGui::DestroyContext(imguiCtx);
+	}
 
 	delete whiteImage;
 

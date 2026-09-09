@@ -19,6 +19,23 @@ include(${PROJECT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake)
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
 include(InstallRequiredSystemLibraries)
 
+find_package(unofficial-angle CONFIG REQUIRED)
+find_package(CMakeRC CONFIG REQUIRED)
+find_package(CURL CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(gli CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(LuaJIT REQUIRED)
+find_package(Microsoft.GSL CONFIG REQUIRED)
+find_package(PkgConfig REQUIRED)
+find_package(re2 CONFIG REQUIRED)
+find_package(sol2 CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+find_package(zstd REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(WebP)
+
 set(SIMPLEGRAPHIC_SOURCES
     "config.h"
     "dep/stb/stb_image.h"
@@ -75,28 +92,36 @@ set(SIMPLEGRAPHIC_SOURCES
     "ui_subscript.h"
 )
 
-set (SIMPLEGRAPHIC_PLATFORM_SOURCES)
+add_library(SimpleGraphic SHARED
+    ${SIMPLEGRAPHIC_SOURCES}
+)
+
+cmrc_add_resource_library(SimpleGraphic-Assets ALIAS SimpleGraphic::Assets NAMESPACE SimpleGraphic)
+
+cmrc_add_resources(SimpleGraphic-Assets
+    "assets/gles/display_render_target.frag"
+    "assets/gles/display_render_target.vert"
+    "assets/gles/tinted_texture.frag"
+    "assets/gles/tinted_texture.vert"
+)
+
 if (APPLE)
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    target_sources(SimpleGraphic PRIVATE
         "engine/system/win/sys_macos.mm"
     )
 endif()
 
 if (WIN32)
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    target_sources(SimpleGraphic PRIVATE
         "engine/system/win/sys_console.cpp"
         "SimpleGraphic.rc"
     )
 else()
-    set (SIMPLEGRAPHIC_PLATFORM_SOURCES
+    target_sources(SimpleGraphic PRIVATE
         "engine/system/win/sys_console_unix.cpp"
     )
 endif()
 
-add_library(SimpleGraphic SHARED
-    ${SIMPLEGRAPHIC_SOURCES}
-    ${SIMPLEGRAPHIC_PLATFORM_SOURCES}
-)
 target_compile_definitions(SimpleGraphic
     PRIVATE
     "_CRT_SECURE_NO_DEPRECATE"
@@ -111,27 +136,13 @@ target_compile_definitions(SimpleGraphic
     "UNICODE"
 )
 
+target_compile_options(SimpleGraphic PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/MP>")
+
 target_include_directories(SimpleGraphic
     PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine"
 )
-
-find_package(unofficial-angle CONFIG REQUIRED)
-find_package(CURL CONFIG REQUIRED)
-find_package(fmt CONFIG REQUIRED)
-find_package(glfw3 CONFIG REQUIRED)
-find_package(gli CONFIG REQUIRED)
-find_package(glm CONFIG REQUIRED)
-find_package(LuaJIT REQUIRED)
-find_package(Microsoft.GSL CONFIG REQUIRED)
-find_package(PkgConfig REQUIRED)
-find_package(re2 CONFIG REQUIRED)
-find_package(sol2 CONFIG REQUIRED)
-find_package(Threads REQUIRED)
-find_package(zstd REQUIRED)
-find_package(ZLIB REQUIRED)
-find_package(WebP)
 
 add_library(cmp_core STATIC
     dep/compressonator/cmp_core/source/cmp_core.cpp
@@ -239,6 +250,7 @@ target_link_libraries(SimpleGraphic
     LuaJIT::LuaJIT
     Microsoft.GSL::GSL
     re2::re2
+    SimpleGraphic::Assets
     Threads::Threads
     WebP::webpdecoder
     ZLIB::ZLIB
