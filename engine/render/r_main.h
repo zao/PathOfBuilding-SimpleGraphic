@@ -15,6 +15,7 @@
 #include <deque>
 #include <imgui.h>
 #include <vector>
+#include <xxh3.h>
 
 // =======
 // Classes
@@ -22,10 +23,21 @@
 
 // Render viewport
 struct r_viewport_s {
-	int	x;
-	int	y;
-	int	width;
-	int height;
+	glm::ivec2 lo;
+	glm::ivec2 extent;
+
+	bool operator < (r_viewport_s const& rhs) const {
+		return std::tie(lo.x, lo.y, extent.x, extent.y)
+			< std::tie(rhs.lo.x, rhs.lo.y, rhs.extent.x, rhs.extent.y);
+	}
+
+	bool operator == (r_viewport_s const& rhs) const {
+		return !(*this < rhs) && !(rhs < *this);
+	}
+
+	bool operator != (r_viewport_s const& rhs) const {
+		return !(*this == rhs);
+	}
 };
 
 // Render layer
@@ -42,11 +54,10 @@ public:
 	~r_layer_c();
 
 	void	SetViewport(r_viewport_s* viewport);
-	void	SetBlendMode(int mode);
 	void	Bind(r_tex_c* tex);
 	void	Color(col4_t col);
-	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer = 0, int maskLayer = -1);
-	void	Render();
+	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer = 0);
+	bool	Render();
 	void    Discard();
 
 	struct CmdHandle {
@@ -86,12 +97,11 @@ public:
 	void	SetDrawSubLayer(int subLayer);
 	int		GetDrawLayer();
 	void	SetViewport(int x = 0, int y = 0, int width = 0, int height = 0);
-	void	SetBlendMode(int mode);
 	void	DrawColor(const col4_t col = NULL);
 	void	DrawColor(dword col);
 	void	GetDrawColor(col4_t color);
-	void	DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1 = { 0, 0 }, glm::vec2 uv2 = { 1, 1 }, int stackLayer = 0, std::optional<int> maskLayer = {});
-	void	DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0 = { 0, 0 }, glm::vec2 uv1 = { 1, 0 }, glm::vec2 uv2 = { 1, 1 }, glm::vec2 uv3 = { 0, 1 }, int stackLayer = 0, std::optional<int> maskLayer = {});
+	void	DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1 = { 0, 0 }, glm::vec2 uv2 = { 1, 1 }, int stackLayer = 0 );
+	void	DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0 = { 0, 0 }, glm::vec2 uv1 = { 1, 0 }, glm::vec2 uv2 = { 1, 1 }, glm::vec2 uv3 = { 0, 1 }, int stackLayer = 0);
 	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str);
 	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...);
 	int		DrawStringWidth(int height, int font, const char* str);
@@ -147,8 +157,7 @@ public:
 
 	col4_t	drawColor = {};		// Current draw color
 
-	r_viewport_s curViewport; // Current viewport
-	int		curBlendMode = 0;	// Current blend mode
+	r_viewport_s curViewport;	// Current viewport
 
 	int		numShader = 0;
 	class r_shader_c *shaderList[R_MAXSHADERS] = {};
@@ -180,7 +189,8 @@ public:
 	RenderTarget rttMain[2];
 	int	presentRtt = 0;
 
-	std::vector<uint8_t> lastFrameHash{};
+	std::shared_ptr<XXH3_state_t> frameHashState;
+	uint64_t lastFrameHash{};
 
 	uint64_t totalFrames{};
 	uint64_t drawnFrames{};
