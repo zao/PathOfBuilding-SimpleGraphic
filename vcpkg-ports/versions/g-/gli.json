@@ -1,6 +1,11 @@
 {
     "versions": [
       {
+        "version-date": "2026-09-09",
+        "port-version": 0,
+        "path": "$/ports/gli/2026-09-09"
+      },
+      {
         "version-date": "2021-07-06",
         "port-version": 3,
         "path": "$/ports/gli/2021-07-06_3"

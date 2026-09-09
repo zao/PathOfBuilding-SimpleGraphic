@@ -7,6 +7,7 @@
     "fmt",
     "glfw3",
     "gli",
+    "glm",
     "libwebp",
     "luajit",
     "ms-gsl",

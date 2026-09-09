@@ -18,7 +18,6 @@ include(${PROJECT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake)
 
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ".")
 include(InstallRequiredSystemLibraries)
-add_subdirectory(dep/glm)
 
 set(SIMPLEGRAPHIC_SOURCES
     "config.h"
@@ -100,14 +99,16 @@ add_library(SimpleGraphic SHARED
 )
 target_compile_definitions(SimpleGraphic
     PRIVATE
-    "UNICODE"
     "_CRT_SECURE_NO_DEPRECATE"
     "_CRT_SECURE_NO_WARNINGS"
     "_SCL_SECURE_NO_DEPRECATE"
     "_SCL_SECURE_NO_WARNINGS"
-    "GLFW_INCLUDE_NONE"
     "GL_SILENCE_DEPRECATION"
+    "GLFW_INCLUDE_NONE"
+    "GLM_ENABLE_EXPERIMENTAL"
+    "NOMINMAX"
     "SIMPLEGRAPHIC_EXPORTS"
+    "UNICODE"
 )
 
 target_include_directories(SimpleGraphic
@@ -121,6 +122,7 @@ find_package(CURL CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(gli CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
 find_package(LuaJIT REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -252,7 +254,7 @@ if (WIN32)
     if (NOT VCPKG_TARGET_TRIPLET MATCHES "-release")
         find_file(LuaJIT_DLL_DEBUG NAMES "lua51.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
-        find_file(ZLIB_DLL_DEBUG NAMES "zlibd1.dll"
+        find_file(ZLIB_DLL_DEBUG NAMES "zd.dll"
             PATHS "${DEPS_DIR}" PATH_SUFFIXES "debug/bin" REQUIRED NO_DEFAULT_PATH)
 
         install(FILES
@@ -265,7 +267,7 @@ if (WIN32)
 
     find_file(LuaJIT_DLL_RELEASE NAMES "lua51.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
-    find_file(ZLIB_DLL_RELEASE NAMES "zlib1.dll"
+    find_file(ZLIB_DLL_RELEASE NAMES "z.dll"
         PATHS "${DEPS_DIR}" PATH_SUFFIXES "bin" REQUIRED NO_DEFAULT_PATH)
 
     install(FILES
