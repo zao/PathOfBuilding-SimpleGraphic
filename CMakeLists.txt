@@ -21,6 +21,7 @@ include(InstallRequiredSystemLibraries)
 
 find_package(unofficial-angle CONFIG REQUIRED)
 find_package(CMakeRC CONFIG REQUIRED)
+find_package(concurrentqueue CONFIG REQUIRED)
 find_package(CURL CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -30,6 +31,7 @@ find_package(LuaJIT REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(re2 CONFIG REQUIRED)
+find_package(readerwriterqueue CONFIG REQUIRED)
 find_package(sol2 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(zstd REQUIRED)
@@ -242,6 +244,7 @@ target_link_libraries(SimpleGraphic
     unofficial::angle::libEGL
     unofficial::angle::libGLESv2
     cmp_core
+    concurrentqueue::concurrentqueue
     fmt::fmt
     glfw
     gli
@@ -250,6 +253,7 @@ target_link_libraries(SimpleGraphic
     LuaJIT::LuaJIT
     Microsoft.GSL::GSL
     re2::re2
+    readerwriterqueue::readerwriterqueue
     SimpleGraphic::Assets
     Threads::Threads
     WebP::webpdecoder

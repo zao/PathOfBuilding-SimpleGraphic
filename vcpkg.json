@@ -4,6 +4,7 @@
   "dependencies": [
     "angle",
     "cmakerc",
+    "concurrentqueue",
     "curl",
     "fmt",
     "glfw3",
@@ -14,6 +15,7 @@
     "ms-gsl",
     "pkgconf",
     "re2",
+    "readerwriterqueue",
     "sol2",
     "xxhash",
     "zstd",
