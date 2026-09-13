@@ -27,6 +27,7 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(gli CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(LuaJIT REQUIRED)
+find_package(magic_enum CONFIG REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(re2 CONFIG REQUIRED)
@@ -248,6 +249,7 @@ target_link_libraries(SimpleGraphic
     glm::glm
     imgui
     LuaJIT::LuaJIT
+    magic_enum::magic_enum
     Microsoft.GSL::GSL
     re2::re2
     SimpleGraphic::Assets

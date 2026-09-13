@@ -6,10 +6,11 @@
 
 #include "ui_local.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <magic_enum/magic_enum.hpp>
 #include <zlib.h>
-#include <cmath>
 
 #include "core/core_tex_manipulation.h"
 
@@ -362,16 +363,42 @@ static int l_artHandleSize(lua_State* L)
 // =============
 
 struct imgHandle_s {
-	r_shaderHnd_c* hnd;
+	void Clear();
+
+	std::unique_ptr<r_shaderHnd_c> hnd;
+
+	struct Region
+	{
+		glm::ivec2 lo, hi;
+	};
+	std::optional<Region> region;
+	std::optional<int> stackIdx;
 };
+
+void imgHandle_s::Clear()
+{
+	hnd.reset();
+	region.reset();
+	stackIdx.reset();
+}
 
 static int l_NewImageHandle(lua_State* L)
 {
-	imgHandle_s* imgHandle = (imgHandle_s*)lua_newuserdata(L, sizeof(imgHandle_s));
-	imgHandle->hnd = NULL;
+	imgHandle_s* imgHandle = std::construct_at((imgHandle_s*)lua_newuserdata(L, sizeof(imgHandle_s)));
 	lua_pushvalue(L, lua_upvalueindex(1));
 	lua_setmetatable(L, -2);
 	return 1;
+}
+
+static imgHandle_s* GetImgHandleExpect(lua_State* L, ui_main_c* ui, const char* method, bool loaded)
+{
+	ui->LExpect(L, ui->IsUserData(L, 1, "uiimghandlemeta"), "imgHandle:%s() must be used on an image handle", method);
+	imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, 1);
+	lua_remove(L, 1);
+	if (loaded) {
+		ui->LExpect(L, imgHandle->hnd != NULL, "imgHandle:%s(): image handle has no image loaded", method);
+	}
+	return imgHandle;
 }
 
 static imgHandle_s* GetImgHandle(lua_State* L, ui_main_c* ui, const char* method, bool loaded)
@@ -388,8 +415,7 @@ static imgHandle_s* GetImgHandle(lua_State* L, ui_main_c* ui, const char* method
 static int l_imgHandleGC(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	imgHandle_s* imgHandle = GetImgHandle(L, ui, "__gc", false);
-	delete imgHandle->hnd;
+	std::destroy_at(GetImgHandle(L, ui, "__gc", false));
 	return 0;
 }
 
@@ -405,7 +431,8 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoad)
 	if (!fileName.is_absolute() && !ui->scriptWorkDir.empty()) {
 		fileName = ui->scriptWorkDir / fileName;
 	}
-	delete imgHandle->hnd;
+	imgHandle->Clear();
+
 	int flags = TF_NOMIPMAP;
 	for (int f = 2; f <= n; f++) {
 		if (!lua_isstring(L, f)) {
@@ -430,8 +457,44 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoad)
 	}
 	// TODO(LV): should we use u8path throughout here, to support any callers that use paths outside of working directory?
 	auto shaderName = fileName.generic_u8string();
-	imgHandle->hnd = ui->renderer->RegisterShader(std::string_view((const char*)shaderName.data(), shaderName.size()), flags);
+	imgHandle->hnd.reset(ui->renderer->RegisterShader(std::string_view((const char*)shaderName.data(), shaderName.size()), flags));
 	return 0;
+}
+SG_LUA_CPP_FUN_END()
+
+SG_LUA_CPP_FUN_BEGIN(imgHandleWithRegion)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LExpect(L, ui->renderer != NULL, "Renderer is not initialised");
+	imgHandle_s* imgHandle = GetImgHandleExpect(L, ui, "WithRegion", true);
+
+	int n = lua_gettop(L);
+	const bool expectStackLayer = n >= 5;
+	ui->LExpect(L, n >= 4, "Usage: imgHandle:WithRegion(x1, y1, x2, y2[, stackIdx])");
+	ui_luaReader_c reader(ui, L, "imgHandle:WithRegion");
+	reader.ArgCheckNumber(1);
+	reader.ArgCheckNumber(2);
+	reader.ArgCheckNumber(3);
+	reader.ArgCheckNumber(4);
+	if (expectStackLayer)
+		reader.ArgCheckNumber(5);
+
+	imgHandle_s::Region region{
+		.lo{(int)lua_tointeger(L, 1), (int)lua_tointeger(L, 2)},
+		.hi{(int)lua_tointeger(L, 3), (int)lua_tointeger(L, 4)},
+	};
+
+	int stackIdx = (int)lua_tointeger(L, 5); // expected values are 1-based
+
+	lua_getglobal(L, "NewImageHandle");
+	lua_call(L, 0, 1);
+	imgHandle_s* ret = (imgHandle_s*)lua_touserdata(L, -1);
+	ret->hnd.reset(ui->renderer->DuplicateShader(imgHandle->hnd.get()));
+	ret->region = region;
+	if (stackIdx > 0)
+		ret->stackIdx = stackIdx;
+
+	return 1;
 }
 SG_LUA_CPP_FUN_END()
 
@@ -439,8 +502,7 @@ static int l_imgHandleUnload(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
 	imgHandle_s* imgHandle = GetImgHandle(L, ui, "Unload", false);
-	delete imgHandle->hnd;
-	imgHandle->hnd = NULL;
+	imgHandle->Clear();
 	return 0;
 }
 
@@ -457,7 +519,7 @@ static int l_imgHandleIsLoading(lua_State* L)
 	ui_main_c* ui = GetUIPtr(L);
 	imgHandle_s* imgHandle = GetImgHandle(L, ui, "IsLoading", true);
 	int width, height;
-	ui->renderer->GetShaderImageSize(imgHandle->hnd, width, height);
+	ui->renderer->GetShaderImageSize(imgHandle->hnd.get(), width, height);
 	lua_pushboolean(L, width == 0);
 	return 1;
 }
@@ -469,7 +531,7 @@ static int l_imgHandleSetLoadingPriority(lua_State* L)
 	int n = lua_gettop(L);
 	ui->LAssert(L, n >= 1, "Usage: imgHandle:SetLoadingPriority(pri)");
 	ui->LAssert(L, lua_isnumber(L, 1), "imgHandle:SetLoadingPriority() argument 1: expected number, got %s", luaL_typename(L, 1));
-	ui->renderer->SetShaderLoadingPriority(imgHandle->hnd, (int)lua_tointeger(L, 1));
+	ui->renderer->SetShaderLoadingPriority(imgHandle->hnd.get(), (int)lua_tointeger(L, 1));
 	return 0;
 }
 
@@ -477,10 +539,15 @@ static int l_imgHandleImageSize(lua_State* L)
 {
 	ui_main_c* ui = GetUIPtr(L);
 	imgHandle_s* imgHandle = GetImgHandle(L, ui, "ImageSize", true);
-	int width, height;
-	ui->renderer->GetShaderImageSize(imgHandle->hnd, width, height);
-	lua_pushinteger(L, width);
-	lua_pushinteger(L, height);
+	glm::ivec2 size{};
+	if (auto& region = imgHandle->region) {
+		size = region->hi - region->lo;
+	}
+	else {
+		ui->renderer->GetShaderImageSize(imgHandle->hnd.get(), size.x, size.y);
+	}
+	lua_pushinteger(L, size.x);
+	lua_pushinteger(L, size.y);
 	return 2;
 }
 
@@ -571,8 +638,8 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoadArtRectangle)
 	}
 
 	const int flags = ParseArtFlags(ui, L, 5, n);
-	delete imgHandle->hnd;
-	imgHandle->hnd = RegisterShaderFromImage(*ui->renderer, std::move(dstImg), flags);
+	imgHandle->Clear();
+	imgHandle->hnd.reset(RegisterShaderFromImage(*ui->renderer, std::move(dstImg), flags));
 
 	return 0;
 }
@@ -691,8 +758,8 @@ SG_LUA_CPP_FUN_BEGIN(imgHandleLoadArtArcBand)
 	}
 
 	const int flags = ParseArtFlags(ui, L, 5, n);
-	delete imgHandle->hnd;
-	imgHandle->hnd = RegisterShaderFromImage(*ui->renderer, std::move(dstImg), flags);
+	imgHandle->Clear();
+	imgHandle->hnd.reset(RegisterShaderFromImage(*ui->renderer, std::move(dstImg), flags));
 
 	return 0;
 }
@@ -877,46 +944,65 @@ static int l_GetDrawColor(lua_State* L)
 	return 4; // returning r,g,b,a
 }
 
-static int l_DrawImage(lua_State* L)
+SG_LUA_CPP_FUN_BEGIN(DrawImage)
 {
 	ui_main_c* ui = GetUIPtr(L);
-	ui->LAssert(L, ui->renderer != NULL, "Renderer is not initialised");
-	ui->LAssert(L, ui->renderEnable, "DrawImage() called outside of OnFrame");
+	ui->LExpect(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LExpect(L, ui->renderEnable, "DrawImage() called outside of OnFrame");
 	int n = lua_gettop(L);
 	const char* usage = "Usage: DrawImage({imgHandle|nil}, left, top, width, height[, tcLeft, tcTop, tcRight, tcBottom][, stackIdx])";
-	ui->LAssert(L, n >= 5, usage);
+	ui->LExpect(L, n >= 5, usage);
 
 	if (!lua_isnil(L, 1) && !ui->IsUserData(L, 1, "uiimghandlemeta")) {
-		ui->LAssert(L, false, "DrawImage() argument 1: expected image handle or nil, got %s", luaL_typename(L, 1));
+		ui->LExpect(L, false, "DrawImage() argument 1: expected image handle or nil, got %s", luaL_typename(L, 1));
 	}
 
-	r_shaderHnd_c* hnd = NULL;
-	glm::vec2 xys[2]{}, uvs[2]{};
-	int stackLayer = 0;
+	imgHandle_s* imgHandle{};
+	r_shaderHnd_c* hnd{};
+	glm::vec2 xys[2]{};
+	glm::vec2 uvs[2]{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f)};
+	int stackLayer = 1;
 
-	// | n  |img| corners | uvs | stack |
-	// | 5  | X | X       |	    |       |
-	// | 6  | X | X       |     | X     |
-	// | 9  | X | X       | X   |       |
-	// | 10 | X | X       | X   | X     |
+	// | n  |img| corners |
+	// | 5  | X | X       |
 
-	enum ArgFlag : uint8_t { AF_IMG = 0x1, AF_XY = 0x2, AF_UV = 0x4, AF_STACK = 0x8 };
+	enum ArgFlag : uint8_t { AF_IMG = 0x1, AF_XY = 0x2 };
 	ArgFlag af{};
 	switch (n) {
-	case 10: af = (ArgFlag)(af | AF_STACK);
-	case 9: af = (ArgFlag)(af | AF_IMG | AF_XY | AF_UV); break;
-	case 6: af = (ArgFlag)(af | AF_STACK);
 	case 5: af = (ArgFlag)(af | AF_IMG | AF_XY); break;
-	default: ui->LAssert(L, false, usage);
+	default: ui->LExpect(L, false, usage);
 	}
 
 	int k = 1;
 	if (af & AF_IMG) {
 		if (!lua_isnil(L, k)) {
-			imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, k);
-			ui->LAssert(L, imgHandle->hnd != NULL, "DrawImage(): image handle has no image loaded");
-			hnd = imgHandle->hnd;
+			imgHandle = (imgHandle_s*)lua_touserdata(L, k);
+			ui->LExpect(L, imgHandle->hnd != NULL, "DrawImage(): image handle has no image loaded");
+			hnd = imgHandle->hnd.get();
+			
+			if (imgHandle->stackIdx) {
+				stackLayer = *imgHandle->stackIdx;
+			}
+
+			if (const auto& reg = imgHandle->region) {
+				glm::ivec2 imgSize{};
+				ui->renderer->GetShaderImageSize(imgHandle->hnd.get(), imgSize.x, imgSize.y);
+				if (imgSize.x > 0 && imgSize.y > 0) {
+					uvs[0] = reg->lo / imgSize;
+					uvs[1] = reg->hi / imgSize;
+				}
+			}
 		}
+
+		std::optional<int> maxStackValue;
+		if (hnd) {
+			maxStackValue = hnd->StackCount();
+		}
+
+		if (maxStackValue.has_value()) {
+			ui->LExpect(L, stackLayer <= *maxStackValue, "DrawImage() argument %d: expected image with stack index <= %d, got %d", k, *maxStackValue, stackLayer);
+		}
+
 		k += 1;
 	}
 
@@ -927,7 +1013,7 @@ static int l_DrawImage(lua_State* L)
 			lua_Number val = lua_tonumberx(L, i, &isNum);
 
 			if (!isNum) {
-				ui->LAssert(L, false, "DrawImage() argument %d: expected number, got %s", i, luaL_typename(L, i));
+				ui->LExpect(L, false, "DrawImage() argument %d: expected number, got %s", i, luaL_typename(L, i));
 			}
 			const int idx = i - k;
 			xys[idx/2][idx%2] = (float)val * dpiScale;
@@ -935,46 +1021,11 @@ static int l_DrawImage(lua_State* L)
 		k += 4;
 	}
 
-	if (af & AF_UV) {
-		for (int i = k; i < k + 4; i++) {
-			int isNum;
-			lua_Number val = lua_tonumberx(L, i, &isNum);
-
-			if (!isNum) {
-				ui->LAssert(L, false, "DrawImage() argument %d: expected number, got %s", i, luaL_typename(L, i));
-			}
-			int idx = i - k;
-			uvs[idx/2][idx%2] = (float)val;
-		}
-		k += 4;
-	}
-	else {
-		uvs[0] = { 0, 0 };
-		uvs[1] = { 1, 1 };
-	}
-
-	std::optional<int> maxStackValue;
-	if (hnd)
-		maxStackValue = hnd->StackCount();
-
-	if (af & AF_STACK) {
-		int isInt;
-		int val = (int)lua_tointegerx(L, k, &isInt);
-
-		if (!isInt) {
-			ui->LAssert(L, false, "DrawImage() argument %d: expected integer, got %s", k, luaL_typename(L, k));
-		}
-		ui->LAssert(L, val > 0, "DrawImage() argument %d: expected positive integer, got %d", k, val);
-		if (maxStackValue.has_value())
-			ui->LAssert(L, val <= *maxStackValue, "DrawImage() argument %d: expected valid stack index <= %d, got %d", k, *maxStackValue, val);
-		stackLayer = val - 1;
-		k += 1;
-	}
-
-	ui->renderer->DrawImage(hnd, xys[0], xys[1], uvs[0], uvs[1], stackLayer);
+	ui->renderer->DrawImage(hnd, xys[0], xys[1], uvs[0], uvs[1], stackLayer - 1);
 
 	return 0;
 }
+SG_LUA_CPP_FUN_END()
 
 static int l_DrawImageQuad(lua_State* L)
 {
@@ -1013,7 +1064,7 @@ static int l_DrawImageQuad(lua_State* L)
 		if (!lua_isnil(L, k)) {
 			imgHandle_s* imgHandle = (imgHandle_s*)lua_touserdata(L, k);
 			ui->LAssert(L, imgHandle->hnd != NULL, "DrawImageQuad(): image handle has no image loaded");
-			hnd = imgHandle->hnd;
+			hnd = imgHandle->hnd.get();
 		}
 		k += 1;
 	}
@@ -2170,6 +2221,8 @@ int ui_main_c::InitAPI(lua_State* L)
 	lua_setfield(L, -2, "LoadArtRectangle");
 	lua_pushcfunction(L, l_imgHandleLoadArtArcBand);
 	lua_setfield(L, -2, "LoadArtArcBand");
+	lua_pushcfunction(L, l_imgHandleWithRegion);
+	lua_setfield(L, -2, "WithRegion");
 	lua_setfield(L, LUA_REGISTRYINDEX, "uiimghandlemeta");
 
 	// Art handles
@@ -2297,5 +2350,3 @@ int ui_main_c::InitAPI(lua_State* L)
 
 	return 0;
 }
-
-

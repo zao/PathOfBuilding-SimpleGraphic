@@ -4,6 +4,11 @@
 // Module: Render Main
 //
 
+//#define NOOPTIMISE
+#ifdef NOOPTIMISE
+#pragma optimize("", off)
+#endif
+
 #define GLAD_GLES2_IMPLEMENTATION
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "r_local.h"
@@ -18,6 +23,7 @@
 #include <map>
 #include <numeric>
 #include <random>
+#include <ranges>
 #include <sstream>
 #include <vector>
 
@@ -1363,6 +1369,13 @@ void r_renderer_c::PurgeShaders()
 	}
 }
 
+r_shaderHnd_c* r_renderer_c::DuplicateShader(r_shaderHnd_c* hnd)
+{
+	if (!hnd || !hnd->sh)
+		return nullptr;
+	return new r_shaderHnd_c(hnd->sh);
+}
+
 r_shaderHnd_c* r_renderer_c::RegisterShader(std::string_view shname, int flags)
 {
 	if (shname.empty()) {
@@ -1783,3 +1796,8 @@ r_renderer_c::RenderTarget& r_renderer_c::GetPresentRenderTarget()
 {
 	return rttMain[presentRtt];
 }
+
+#ifdef NOOPTIMISE
+#pragma optimize("", on)
+#undef NOOPTIMISE
+#endif

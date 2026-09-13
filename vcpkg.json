@@ -11,6 +11,7 @@
     "glm",
     "libwebp",
     "luajit",
+    "magic-enum",
     "ms-gsl",
     "pkgconf",
     "re2",
