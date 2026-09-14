@@ -55,9 +55,9 @@ public:
 	~r_layer_c();
 
 	void	SetViewport(r_viewport_s* viewport);
-	void	Bind(r_tex_c* tex);
+	void	Bind(r_tex_c* tex, int stackLayer = 0);
 	void	Color(col4_t col);
-	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer = 0);
+	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3);
 	bool	Render();
 	void    Discard();
 

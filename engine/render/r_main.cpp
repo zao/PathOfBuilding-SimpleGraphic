@@ -31,6 +31,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_stdlib.h>
+#include <magic_enum/magic_enum.hpp>
 
 CMRC_DECLARE(SimpleGraphic);
 
@@ -128,6 +129,7 @@ struct r_layerCmdViewport_s {
 struct r_layerCmdBind_s {
 	r_layerCmd_s::Command cmd;
 	r_tex_c* tex;
+	uint16_t stackLayer;
 };
 
 struct r_layerCmdColor_s {
@@ -142,7 +144,6 @@ struct r_layerCmdQuad_s {
 		float t[4];
 		float x[4];
 		float y[4];
-		int stackLayer;
 	} quad;
 };
 #pragma pack(pop, r_layerCmd)
@@ -215,11 +216,12 @@ void r_layer_c::SetViewport(r_viewport_s* viewport)
 	}
 }
 
-void r_layer_c::Bind(r_tex_c* tex)
+void r_layer_c::Bind(r_tex_c* tex, int stackLayer)
 {
 	if (auto* cmd = (r_layerCmdBind_s*)NewCommand(CommandSize(r_layerCmd_s::BIND))) {
 		cmd->cmd = r_layerCmd_s::BIND;
 		cmd->tex = tex;
+		cmd->stackLayer = stackLayer;
 	}
 }
 
@@ -231,7 +233,7 @@ void r_layer_c::Color(col4_t col)
 	}
 }
 
-void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3, int stackLayer)
+void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3)
 {
 	if (auto* cmd = (r_layerCmdQuad_s*)NewCommand(CommandSize(r_layerCmd_s::QUAD))) {
 		cmd->cmd = r_layerCmd_s::QUAD;
@@ -239,7 +241,6 @@ void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1,
 		cmd->quad.t[0] = t0; cmd->quad.t[1] = t1; cmd->quad.t[2] = t2; cmd->quad.t[3] = t3;
 		cmd->quad.x[0] = x0; cmd->quad.x[1] = x1; cmd->quad.x[2] = x2; cmd->quad.x[3] = x3;
 		cmd->quad.y[0] = y0; cmd->quad.y[1] = y1; cmd->quad.y[2] = y2; cmd->quad.y[3] = y3;
-		cmd->quad.stackLayer = stackLayer;
 	}
 }
 
@@ -391,6 +392,7 @@ struct AdjacentMergeStrategy : RenderStrategy {
 		case r_layerCmd_s::BIND: {
 			auto* c = (r_layerCmdBind_s*)cmd;
 			nextTex_ = c->tex;
+			nextStackLayer_ = c->stackLayer;
 			if (showStats_) {
 				// ImGui::Text("TEX: %s", c->tex->fileName.c_str());
 			}
@@ -453,7 +455,7 @@ struct AdjacentMergeStrategy : RenderStrategy {
 				q.b = tint_[2];
 				q.a = tint_[3];
 				q.texId = (float)texSlot;
-				q.stackIdx = (float)c->quad.stackLayer;
+				q.stackIdx = (float)nextStackLayer_;
 			}
 			// 3-2
 			// |/|
@@ -518,7 +520,7 @@ private:
 					auto tex = textures[i];
 					tex->Bind();
 					if (showStats_) {
-						ImGui::Text("New tex %d (%s) %d", tex->texId, tex->fileName.c_str(), tex->status.load());
+						ImGui::Text("New tex %d (%s) %s", tex->texId, tex->fileName.c_str(), magic_enum::enum_name(tex->status.load()).data());
 					}
 					if (!usedIncompleteTextures && tex->status != r_tex_c::Status::DONE) {
 						usedIncompleteTextures = true;
@@ -563,6 +565,7 @@ private:
 
 	BatchKey latchKey_{};
 	r_tex_c* nextTex_{};
+	uint16_t nextStackLayer_{};
 	std::optional<BatchKey> lastDispatchKey_;
 	TexturedBatch batch_;
 
@@ -1559,20 +1562,18 @@ void r_renderer_c::DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent
 void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0, glm::vec2 uv1, glm::vec2 uv2, glm::vec2 uv3, int stackLayer)
 {
 	if (hnd) {
-		curLayer->Bind(hnd->sh->tex);
 		stackLayer = clamp(stackLayer, 0, (int)hnd->sh->tex->stackLayers - 1);
+		curLayer->Bind(hnd->sh->tex, stackLayer);
 	}
 	else {
 		curLayer->Bind(whiteImage->sh->tex);
-		stackLayer = 0;
 	}
 	curLayer->Color(drawColor);
 	curLayer->Quad(
 		uv0.s, uv0.t, p0.x, p0.y,
 		uv1.s, uv1.t, p1.x, p1.y,
 		uv2.s, uv2.t, p2.x, p2.y,
-		uv3.s, uv3.t, p3.x, p3.y,
-		stackLayer);
+		uv3.s, uv3.t, p3.x, p3.y);
 }
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)
