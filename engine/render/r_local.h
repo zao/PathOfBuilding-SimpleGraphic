@@ -14,6 +14,7 @@
 
 #include "core/core_image.h"
 
+#include "r_opengl.h"
 #include "r_texture.h"
 #include "r_font.h"
 #include "r_main.h"

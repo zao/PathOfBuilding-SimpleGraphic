@@ -13,6 +13,8 @@
 #include <array>
 #include <chrono>
 #include <deque>
+#include <flat_map>
+#include <generator>
 #include <imgui.h>
 #include <span>
 #include <vector>
@@ -41,6 +43,15 @@ struct r_viewport_s {
 	}
 };
 
+namespace r_effects {
+	enum class tag_e : uint8_t {
+		None,
+		CircleMask,
+		ArcBandMask,
+		Tiled,
+	};
+}
+
 // Render layer
 class r_layer_c {
 public:
@@ -66,8 +77,10 @@ public:
 		struct r_layerCmd_s* cmd;
 	};
 
-	CmdHandle GetFirstCommand();
-	bool GetNextCommand(CmdHandle& handle);
+	CmdHandle GetFirstCommand() const;
+	bool GetNextCommand(CmdHandle& handle) const;
+
+	std::generator<CmdHandle> GetCommands() const;
 
 private:
 	r_renderer_c* renderer;
@@ -136,6 +149,7 @@ public:
 	bool	texNonPOT = false;			// Non power-of-2 textures supported?
 	dword	texMaxDim = 0;				// Maximum texture dimension
 	bool	texBC7 = true;				// BC7 textures supported?
+	dword	maxTextureImageUnits = 0;
 
 	PFNGLCOMPRESSEDTEXIMAGE2DPROC	glCompressedTexImage2D = nullptr;
 	PFNGLINSERTEVENTMARKEREXTPROC	glInsertEventMarkerEXT = nullptr;
@@ -164,7 +178,8 @@ public:
 	int		numShader = 0;
 	class r_shader_c *shaderList[R_MAXSHADERS] = {};
 
-	int		tintedTextureProgram = 0;
+	std::flat_map<r_effects::tag_e, std::shared_ptr<struct IRenderEffect>> effects;
+	std::flat_map<std::shared_ptr<struct IRenderEffect>, std::shared_ptr<void>> effectFrameData;
 
 	int		numLayer = 0;
 	int		layerListSize = 0;
@@ -180,7 +195,7 @@ public:
 		GLuint	framebuffer = 0;
 		GLuint	colorTexture = 0;
 
-		GLuint	blitProg = 0;
+		std::shared_ptr<struct OpenGLProgram> blitProg;
 		GLuint	blitAttribLocPos = 0;
 		GLuint	blitAttribLocTC = 0;
 		GLuint  blitSampleLocColour = 0;
@@ -228,4 +243,6 @@ public:
 
 	RenderTarget& GetDrawRenderTarget();
 	RenderTarget& GetPresentRenderTarget();
+
+	std::shared_ptr<void> GetEffectFrameData(std::shared_ptr<IRenderEffect> effect);
 };

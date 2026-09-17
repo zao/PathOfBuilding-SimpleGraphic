@@ -67,8 +67,11 @@ set(SIMPLEGRAPHIC_SOURCES
     "engine/core/core_video.h"
     "engine/render/r_font.cpp"
     "engine/render/r_font.h"
+    "engine/render/r_local.h"
     "engine/render/r_main.cpp"
     "engine/render/r_main.h"
+    "engine/render/r_opengl.cpp"
+    "engine/render/r_opengl.h"
     "engine/render/r_texture.cpp"
     "engine/render/r_texture.h"
     "engine/system/win/sys_local.h"
@@ -104,6 +107,8 @@ cmrc_add_resources(SimpleGraphic-Assets
     "assets/gles/display_render_target.vert"
     "assets/gles/tinted_texture.frag"
     "assets/gles/tinted_texture.vert"
+    "assets/gles/tinted_texture_circle.frag"
+    "assets/gles/tinted_texture_circle.vert"
 )
 
 if (APPLE)

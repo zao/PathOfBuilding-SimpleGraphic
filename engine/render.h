@@ -56,6 +56,7 @@ public:
 private:
 	r_shaderHnd_c(class r_shader_c* sh);
 	r_shader_c* sh;
+	std::optional<glm::ivec2> knownSize;
 };
 
 // ==========
