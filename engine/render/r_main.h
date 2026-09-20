@@ -43,15 +43,6 @@ struct r_viewport_s {
 	}
 };
 
-namespace r_effects {
-	enum class tag_e : uint8_t {
-		None,
-		CircleMask,
-		ArcBandMask,
-		Tiled,
-	};
-}
-
 // Render layer
 class r_layer_c {
 public:
@@ -68,7 +59,8 @@ public:
 	void	SetViewport(r_viewport_s* viewport);
 	void	Bind(r_tex_c* tex, int stackLayer = 0);
 	void	Color(col4_t col);
-	void	Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3);
+	void	Quad(glm::vec2 st0, glm::vec2 xy0, glm::vec2 st1, glm::vec2 xy1, glm::vec2 st2, glm::vec2 xy2, glm::vec2 st3, glm::vec2 xy3);
+	void	Sprite(glm::vec2 pos, glm::vec2 size, glm::ivec2 pixelLo, glm::ivec2 pixelHi, r_effects::tag_e effectTag, std::shared_ptr<void> effectData);
 	bool	Render();
 	void    Discard();
 
@@ -115,12 +107,13 @@ public:
 	void	DrawColor(const col4_t col = NULL);
 	void	DrawColor(dword col);
 	void	GetDrawColor(col4_t color);
-	void	DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1 = { 0, 0 }, glm::vec2 uv2 = { 1, 1 }, int stackLayer = 0 );
-	void	DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0 = { 0, 0 }, glm::vec2 uv1 = { 1, 0 }, glm::vec2 uv2 = { 1, 1 }, glm::vec2 uv3 = { 0, 1 }, int stackLayer = 0);
-	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str);
-	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...);
-	int		DrawStringWidth(int height, int font, const char* str);
-	int		DrawStringCursorIndex(int height, int font, const char* str, int curX, int curY);
+	void	DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent, glm::vec2 uv1 = { 0, 0 }, glm::vec2 uv2 = { 1, 1 }, int stackLayer = 0 ) override;
+	void	DrawSprite(const r_sprite_s& sprite, glm::vec2 pos, glm::vec2 extent, r_effects::tag_e effectTag, std::shared_ptr<void> effectData) override;
+	void	DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0 = { 0, 0 }, glm::vec2 uv1 = { 1, 0 }, glm::vec2 uv2 = { 1, 1 }, glm::vec2 uv3 = { 0, 1 }, int stackLayer = 0) override;
+	void	DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str) override;
+	void	DrawStringFormat(float x, float y, int align, int height, const col4_t col, int font, const char* fmt, ...) override;
+	int		DrawStringWidth(int height, int font, const char* str) override;
+	int		DrawStringCursorIndex(int height, int font, const char* str, int curX, int curY) override;
 
 	int		VirtualScreenWidth();
 	int		VirtualScreenHeight();
@@ -178,8 +171,7 @@ public:
 	int		numShader = 0;
 	class r_shader_c *shaderList[R_MAXSHADERS] = {};
 
-	std::flat_map<r_effects::tag_e, std::shared_ptr<struct IRenderEffect>> effects;
-	std::flat_map<std::shared_ptr<struct IRenderEffect>, std::shared_ptr<void>> effectFrameData;
+	std::shared_ptr<struct Effects> effects;
 
 	int		numLayer = 0;
 	int		layerListSize = 0;
@@ -244,5 +236,5 @@ public:
 	RenderTarget& GetDrawRenderTarget();
 	RenderTarget& GetPresentRenderTarget();
 
-	std::shared_ptr<void> GetEffectFrameData(std::shared_ptr<IRenderEffect> effect);
+	void InitEffects();
 };

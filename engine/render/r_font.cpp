@@ -382,10 +382,10 @@ void r_font_c::DrawTextLine(scp_t pos, int align, int height, col4_t col, std::u
 			float w = glyph.width * scale;
 			if (x + w >= 0 && x < renderer->VirtualScreenWidth()) {
 				renderer->curLayer->Quad(
-					glyph.tcLeft, glyph.tcTop, x, cpY,
-					glyph.tcRight, glyph.tcTop, x + w, cpY,
-					glyph.tcRight, glyph.tcBottom, x + w, cpY + height,
-					glyph.tcLeft, glyph.tcBottom, x, cpY + height
+					{glyph.tcLeft, glyph.tcTop}, {x, cpY},
+					{glyph.tcRight, glyph.tcTop}, {x + w, cpY},
+					{glyph.tcRight, glyph.tcBottom}, {x + w, cpY + height},
+					{glyph.tcLeft, glyph.tcBottom}, {x, cpY + height}
 				);
 			}
 			x += w;

@@ -959,7 +959,7 @@ SG_LUA_CPP_FUN_BEGIN(DrawImage)
 
 	imgHandle_s* imgHandle{};
 	r_shaderHnd_c* hnd{};
-	glm::vec2 xys[2]{};
+	glm::vec2 pos_extent[2]{};
 	glm::vec2 uvs[2]{glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f)};
 	int stackLayer = 1;
 
@@ -1016,12 +1016,12 @@ SG_LUA_CPP_FUN_BEGIN(DrawImage)
 				ui->LExpect(L, false, "DrawImage() argument %d: expected number, got %s", i, luaL_typename(L, i));
 			}
 			const int idx = i - k;
-			xys[idx/2][idx%2] = (float)val * dpiScale;
+			pos_extent[idx/2][idx%2] = (float)val * dpiScale;
 		}
 		k += 4;
 	}
 
-	ui->renderer->DrawImage(hnd, xys[0], xys[1], uvs[0], uvs[1], stackLayer - 1);
+	ui->renderer->DrawImage(hnd, pos_extent[0], pos_extent[1], uvs[0], uvs[1], stackLayer - 1);
 
 	return 0;
 }
@@ -1126,6 +1126,93 @@ static int l_DrawImageQuad(lua_State* L)
 
 	return 0;
 }
+
+SG_LUA_CPP_FUN_BEGIN(DrawSprite)
+{
+	ui_main_c* ui = GetUIPtr(L);
+	ui->LExpect(L, ui->renderer != NULL, "Renderer is not initialised");
+	ui->LExpect(L, ui->renderEnable, "DrawSprite() called outside of OnFrame");
+	int n = lua_gettop(L);
+	const char* usage = "Usage: DrawSprite(imgHandle, left, top, width, height[, effect[, effectArgs...]])";
+	ui->LExpect(L, n >= 5, usage);
+
+	if (!ui->IsUserData(L, 1, "uiimghandlemeta")) {
+		ui->LExpect(L, false, "DrawSprite() argument 1: expected image handle, got %s", luaL_typename(L, 1));
+	}
+
+	imgHandle_s* imgHandle{};
+	//r_shaderHnd_c* hnd{};
+	int stackLayer = 1;
+	glm::vec2 pos{};
+	glm::vec2 extent{};
+	r_sprite_s sprite{
+		.stackLayer = 0,
+	};
+
+	int k = 1;
+	{
+		imgHandle = (imgHandle_s*)lua_touserdata(L, k);
+		ui->LExpect(L, imgHandle->hnd != NULL, "DrawSprite(): image handle has no image loaded");
+		sprite.hnd = imgHandle->hnd.get();
+
+		if (imgHandle->stackIdx) {
+			sprite.stackLayer = *imgHandle->stackIdx - 1;
+		}
+
+		if (const auto& reg = imgHandle->region) {
+			sprite.texelRectLo = reg->lo;
+			sprite.texelRectHi = reg->hi;
+		}
+
+		std::optional<int> maxStackValue;
+		if (sprite.hnd) {
+			maxStackValue = sprite.hnd->StackCount();
+		}
+
+		if (maxStackValue.has_value()) {
+			ui->LExpect(L, stackLayer <= *maxStackValue, "DrawSprite() argument %d: expected image with stack index <= %d, got %d", k, *maxStackValue, stackLayer + 1);
+		}
+
+		k += 1;
+	}
+
+	{
+		glm::vec4 xywh{};
+		const float dpiScale = ui->renderer->VirtualScreenScaleFactor();
+		for (int i = k; i < k + 4; i++) {
+			int isNum;
+			lua_Number val = lua_tonumberx(L, i, &isNum);
+
+			if (!isNum) {
+				ui->LExpect(L, false, "DrawSprite() argument %d: expected number, got %s", i, luaL_typename(L, i));
+			}
+			const int idx = i - k;
+			xywh[idx] = (float)val * dpiScale;
+		}
+		k += 4;
+		pos = {xywh[0], xywh[1]};
+		extent = {xywh[2], xywh[3]};
+	}
+
+	r_effects::tag_e effectTag = r_effects::tag_e::None;
+	if (k <= n)
+	{
+		ui->LExpect(L, lua_isstring(L, k), "DrawSprite() argument %d: expected string, got %s", k, luaL_typename(L, k));
+		std::string_view name = lua_tostring(L, k);
+		if (auto tag = magic_enum::enum_cast<r_effects::tag_e>(name, magic_enum::case_insensitive)) {
+			effectTag = *tag;
+		}
+		else {
+			ui->LExpect(L, false, "DrawSprite() argument %d: expected valid effect tag, got \"%s\"", k, lua_tostring(L, k));
+		}
+		k += 1;
+	}
+
+	ui->renderer->DrawSprite(sprite, pos, extent, effectTag, nullptr);
+
+	return 0;
+}
+SG_LUA_CPP_FUN_END()
 
 static int l_DrawString(lua_State* L)
 {
@@ -2278,6 +2365,7 @@ int ui_main_c::InitAPI(lua_State* L)
 	ADDFUNC(GetDPIScaleOverridePercent);
 	ADDFUNC(DrawImage);
 	ADDFUNC(DrawImageQuad);
+	ADDFUNC(DrawSprite);
 	ADDFUNC(DrawString);
 	ADDFUNC(DrawStringWidth);
 	ADDFUNC(DrawStringCursorIndex);

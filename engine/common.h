@@ -473,7 +473,7 @@ T bitr(T i, T start, T len)
 }
 
 template <class T>
-T clamp(T &v, T l, T u)
+T clamp(T v, T l, T u)
 {
 	if (v < l) v = l;
 	else if (v > u) v = u;

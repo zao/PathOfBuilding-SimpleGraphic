@@ -7,6 +7,7 @@ in vec2 v_screenPos;
 in vec2 v_texcoord;
 in vec4 v_tint;
 in vec2 v_texId;
+
 in vec2 v_uvLocal;
 
 out vec4 f_fragColor;

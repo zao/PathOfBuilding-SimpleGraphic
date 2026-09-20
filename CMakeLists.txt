@@ -107,8 +107,12 @@ cmrc_add_resources(SimpleGraphic-Assets
     "assets/gles/display_render_target.vert"
     "assets/gles/tinted_texture.frag"
     "assets/gles/tinted_texture.vert"
+    "assets/gles/tinted_texture_arc_band.frag"
+    "assets/gles/tinted_texture_arc_band.vert"
     "assets/gles/tinted_texture_circle.frag"
     "assets/gles/tinted_texture_circle.vert"
+    "assets/gles/tinted_texture_tiled.frag"
+    "assets/gles/tinted_texture_tiled.vert"
 )
 
 if (APPLE)

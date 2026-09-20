@@ -120,6 +120,7 @@ struct r_layerCmd_s {
 		BIND,
 		COLOR,
 		QUAD,
+		SPRITE,
 	} cmd;
 };
 
@@ -132,6 +133,8 @@ struct r_layerCmdBind_s {
 	r_layerCmd_s::Command cmd;
 	r_tex_c* tex;
 	uint16_t stackLayer;
+	glm::vec2 subLo;
+	glm::vec2 subHi;
 };
 
 struct r_layerCmdColor_s {
@@ -145,6 +148,14 @@ struct r_layerCmdQuad_s {
 		std::array<glm::vec2, 4> uv;
 		std::array<glm::vec2, 4> xy;
 	} quad;
+};
+
+struct r_layerCmdSprite_s {
+	r_layerCmd_s::Command cmd;
+	glm::vec2 pos;
+	glm::vec2 size;
+	glm::ivec2 coordLo;
+	glm::ivec2 coordHi;
 	r_effects::tag_e effectTag;
 	uint16_t effectSize;
 };
@@ -158,16 +169,14 @@ namespace r_effects {
 		uint16_t stopDegrees;
 	};
 
-	struct TiledData_s {
+	struct TiledData_s {};
 
-	};
-
-	std::span<const std::byte> GetEffectStorage(const r_layerCmdQuad_s& quad) {
-		return std::span((const std::byte*)(&quad + 1), quad.effectSize);
+	std::span<const std::byte> GetEffectStorage(const r_layerCmdSprite_s& sprite) {
+		return std::span((const std::byte*)(&sprite + 1), sprite.effectSize);
 	}
 
-	std::span<std::byte> GetWritableEffectStorage(r_layerCmdQuad_s& quad) {
-		return std::span((std::byte*)(&quad + 1), quad.effectSize);
+	std::span<std::byte> GetWritableEffectStorage(r_layerCmdSprite_s& sprite) {
+		return std::span((std::byte*)(&sprite + 1), sprite.effectSize);
 	}
 }
 
@@ -191,7 +200,8 @@ static size_t CommandSize(r_layerCmd_s::Command cmd, size_t extraSize = 0) {
 	case Tag::VIEWPORT: return sizeof(r_layerCmdViewport_s);
 	case Tag::BIND: return sizeof(r_layerCmdBind_s);
 	case Tag::COLOR: return sizeof(r_layerCmdColor_s);
-	case Tag::QUAD: return sizeof(r_layerCmdQuad_s) + extraSize;
+	case Tag::QUAD: return sizeof(r_layerCmdQuad_s);
+	case Tag::SPRITE: return sizeof(r_layerCmdSprite_s) + extraSize;
 	default:
 		abort();
 	}
@@ -202,8 +212,9 @@ static size_t CommandExtraSize(const r_layerCmd_s* cmd) {
 	switch (cmd->cmd) {
 	case Tag::VIEWPORT: [[fallthrough]];
 	case Tag::BIND: [[fallthrough]];
-	case Tag::COLOR: return 0;
-	case Tag::QUAD: return ((const r_layerCmdQuad_s*)cmd)->effectSize;
+	case Tag::COLOR: [[fallthrough]];
+	case Tag::QUAD: return 0;
+	case Tag::SPRITE: return ((const r_layerCmdSprite_s*)cmd)->effectSize;
 	default:
 		abort();
 	}
@@ -267,6 +278,8 @@ void r_layer_c::Bind(r_tex_c* tex, int stackLayer)
 		cmd->cmd = r_layerCmd_s::BIND;
 		cmd->tex = tex;
 		cmd->stackLayer = stackLayer;
+		cmd->subLo = {};
+		cmd->subHi = {};
 	}
 }
 
@@ -278,14 +291,25 @@ void r_layer_c::Color(col4_t col)
 	}
 }
 
-void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1, float x1, float y1, float s2, float t2, float x2, float y2, float s3, float t3, float x3, float y3)
+void r_layer_c::Quad(glm::vec2 st0, glm::vec2 xy0, glm::vec2 st1, glm::vec2 xy1, glm::vec2 st2, glm::vec2 xy2, glm::vec2 st3, glm::vec2 xy3)
+{
+	if (auto* cmd = (r_layerCmdQuad_s*)NewCommand(CommandSize(r_layerCmd_s::QUAD))) {
+		cmd->cmd = r_layerCmd_s::QUAD;
+		cmd->quad.uv[0] = st0; cmd->quad.uv[1] = st1; cmd->quad.uv[2] = st2; cmd->quad.uv[3] = st3;
+		cmd->quad.xy[0] = xy0; cmd->quad.xy[1] = xy1; cmd->quad.xy[2] = xy2; cmd->quad.xy[3] = xy3;
+	}
+}
+
+void r_layer_c::Sprite(glm::vec2 pos, glm::vec2 size, glm::ivec2 pixelLo, glm::ivec2 pixelHi, r_effects::tag_e effectTag, std::shared_ptr<void> effectData)
 {
 	const auto effectSize = 0;
-	if (auto* cmd = (r_layerCmdQuad_s*)NewCommand(CommandSize(r_layerCmd_s::QUAD, effectSize))) {
-		cmd->cmd = r_layerCmd_s::QUAD;
-		cmd->quad.uv[0] = {s0, t0}; cmd->quad.uv[1] = {s1, t1}; cmd->quad.uv[2] = {s2, t2}; cmd->quad.uv[3] = {s3, t3};
-		cmd->quad.xy[0] = {x0, y0}; cmd->quad.xy[1] = {x1, y1}; cmd->quad.xy[2] = {x2, y2}; cmd->quad.xy[3] = {x3, y3};
-		cmd->effectTag = r_effects::tag_e::None;
+	if (auto* cmd = (r_layerCmdSprite_s*)NewCommand(CommandSize(r_layerCmd_s::SPRITE, effectSize))) {
+		cmd->cmd = r_layerCmd_s::SPRITE;
+		cmd->pos = pos;
+		cmd->size = size;
+		cmd->coordLo = pixelLo;
+		cmd->coordHi = pixelHi;
+		cmd->effectTag = effectTag;
 		cmd->effectSize = effectSize;
 		if (effectSize) {
 			auto storage = r_effects::GetWritableEffectStorage(*cmd);
@@ -294,91 +318,15 @@ void r_layer_c::Quad(float s0, float t0, float x0, float y0, float s1, float t1,
 	}
 }
 
-struct Vertex {
-	float x, y;
-	float u, v;
-	float r, g, b, a;
-	float texId, stackIdx;
+struct EffectInfo
+{
+	r_effects::tag_e tag;
+	std::shared_ptr<OpenGLProgram> program;
+	std::vector<OpenGLVertexAttribute> vertexAttrs;
+	std::vector<GLint> texLocs;
+	std::optional<GLint> uScreenSizeLoc;
+	uint16_t vertexStride{};
 };
-
-struct Batch {
-	explicit Batch(std::shared_ptr<OpenGLProgram> prog);
-	Batch(Batch&& rhs);
-	Batch& operator = (Batch&& rhs);
-	Batch(Batch const&) = delete;
-	Batch& operator = (Batch const&) = delete;
-	~Batch();
-
-	std::shared_ptr<OpenGLProgram> prog;
-	GLint xyAttr;
-	GLint uvAttr;
-	GLint tintAttr;
-	GLint texIdAttr;
-
-	std::vector<Vertex> vertices;
-
-	void Execute(GLuint sharedVbo, size_t vertexBase);
-};
-
-Batch::Batch(std::shared_ptr<OpenGLProgram> prog)
-	: prog(prog)
-{
-	xyAttr = glGetAttribLocation(prog->GetId(), "a_vertex");
-	uvAttr = glGetAttribLocation(prog->GetId(), "a_texcoord");
-	tintAttr = glGetAttribLocation(prog->GetId(), "a_tint");
-	texIdAttr = glGetAttribLocation(prog->GetId(), "a_texId");
-}
-
-Batch::Batch(Batch&& rhs)
-	: prog(rhs.prog)
-	, xyAttr(rhs.xyAttr)
-	, uvAttr(rhs.uvAttr)
-	, tintAttr(rhs.tintAttr)
-	, texIdAttr(rhs.texIdAttr)
-	, vertices(std::move(rhs.vertices))
-{
-}
-
-Batch& Batch::operator = (Batch&& rhs) {
-	prog = rhs.prog;
-	xyAttr = rhs.xyAttr;
-	uvAttr = rhs.uvAttr;
-	tintAttr = rhs.tintAttr;
-	texIdAttr = rhs.texIdAttr;
-	vertices = std::move(rhs.vertices);
-
-	return *this;
-}
-
-Batch::~Batch() {}
-
-void Batch::Execute(GLuint sharedVbo, size_t vertexBase)
-{
-	if (vertices.empty()) {
-		return;
-	}
-
-	glBindBuffer(GL_ARRAY_BUFFER, sharedVbo);
-	auto dataPtr = (uint8_t const*)vertices.data();
-	auto dataOff = vertexBase * sizeof(Vertex);
-	auto dataSize = vertices.size() * sizeof(Vertex);
-	glBufferSubData(GL_ARRAY_BUFFER, dataOff, dataSize, dataPtr);
-	glVertexAttribPointer(xyAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, x));
-	glVertexAttribPointer(uvAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, u));
-	glVertexAttribPointer(tintAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, r));
-	glVertexAttribPointer(texIdAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void const*)offsetof(Vertex, texId));
-	glEnableVertexAttribArray(xyAttr);
-	glEnableVertexAttribArray(uvAttr);
-	glEnableVertexAttribArray(tintAttr);
-	glEnableVertexAttribArray(texIdAttr);
-	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices.size());
-	glDisableVertexAttribArray(xyAttr);
-	glDisableVertexAttribArray(uvAttr);
-	glDisableVertexAttribArray(tintAttr);
-	glDisableVertexAttribArray(texIdAttr);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	vertices.clear();
-}
 
 struct LatchingLayerState
 {
@@ -387,34 +335,49 @@ struct LatchingLayerState
 	glm::vec4 color{};
 	r_viewport_s viewport{};
 	std::optional<r_effects::tag_e> effectTag;
-	std::shared_ptr<IRenderEffect> effect;
+	const EffectInfo* effect{};
 	bool showStats{};
 };
 
-struct IRenderEffect
+struct BaseVertex
 {
-	virtual ~IRenderEffect() = default;
+	glm::vec2 xy;
+	glm::vec2 uv;
+	glm::vec4 tint;
+	float texId, stackLayer; // vec2
+};
 
-	struct FrameData {};
-	struct LayerData {};
-	struct GroupData {};
-	struct BatchData {};
-	using FrameHandle = std::shared_ptr<FrameData>;
-	using LayerHandle = std::shared_ptr<LayerData>;
-	using GroupHandle = std::shared_ptr<GroupData>;
+struct NoneVertex
+{
+	BaseVertex common;
+};
 
-	virtual FrameHandle MakeFrameData() { return {}; }
-	virtual LayerHandle MakeLayerData(const FrameHandle& frame) { return {}; }
-	virtual GroupHandle MakeGroupData(const LayerHandle& layer) { return {}; }
+struct CircleVertex
+{
+	BaseVertex common;
+	glm::vec2 localPos;
+};
 
-	virtual void ProcessQuad(const r_layerCmdQuad_s& cmd, const GroupHandle& group, const LatchingLayerState& latched) = 0;
+struct ArcBandVertex
+{
+	BaseVertex common;
+	glm::vec2 localPos;
+	glm::vec2 startDir; glm::vec2 stopDir;
+	float innerRadius, angleSpan;
+};
 
-	struct DispatchStatus
-	{
-		bool usedIncompleteTextures{};
-	};
+struct TiledVertex
+{
+	BaseVertex common;
+	glm::vec2 localTexcoord;
+};
 
-	virtual void DispatchGroup(const GroupHandle& group, DispatchStatus& dispatchStatus) = 0;
+struct Effects
+{
+	EffectInfo noneEffect;
+	EffectInfo circleEffect;
+	EffectInfo arcBandEffect;
+	EffectInfo tiledEffect;
 };
 
 struct LayerProcessor
@@ -422,12 +385,8 @@ struct LayerProcessor
 	LayerProcessor(r_renderer_c* renderer, int layerId, int subLayerId, bool showStats)
 		: renderer(renderer)
 		, effects(renderer->effects)
+		, screenSize(renderer->VirtualScreenWidth(), renderer->VirtualScreenHeight())
 	{
-		nextBatch = Batch{
-			.viewport = {},
-			.effect = {},
-			.effectData = {},
-		};
 		batchGroups.reserve(1u << 16);
 		latched.showStats = showStats;
 	}
@@ -435,44 +394,61 @@ struct LayerProcessor
 	struct Batch
 	{
 		r_viewport_s viewport;
-		std::shared_ptr<IRenderEffect> effect;
+		uint32_t indexByteStart{};
+		uint32_t indexCount{};
+		uint32_t vertexByteStart{};
+		uint16_t vertexCount{};
+
 		std::shared_ptr<void> effectData;
+		std::vector<r_tex_c*> texSlots;
+		std::flat_map<r_tex_c*, uint8_t> texSeen;
 	};
 
-	struct EffectState
-	{
-		IRenderEffect::LayerHandle layerData;
-	};
-
-	std::flat_map<r_effects::tag_e, std::shared_ptr<IRenderEffect>> effects;
-	std::flat_map<std::shared_ptr<IRenderEffect>, std::shared_ptr<EffectState>> effectStates;
+	std::shared_ptr<const Effects> effects;
 
 	r_renderer_c* renderer{};
 	LatchingLayerState latched;
+	glm::vec2 screenSize{};
 	bool usedIncompleteTextures = false;
+
+	struct GeometryStorage
+	{
+		std::vector<std::byte> cpuVertices;
+		std::vector<uint16_t> cpuIndices;
+		OpenGLBuffer gpuVertices{GL_ARRAY_BUFFER};
+		OpenGLBuffer gpuIndices{GL_ELEMENT_ARRAY_BUFFER};
+	};
+	GeometryStorage geometry;
 
 	// A batch group represents a consecutive sequence of applications of some particular effect.
 	struct BatchGroup
 	{
-		std::shared_ptr<IRenderEffect> effect;
-		IRenderEffect::GroupHandle effectData;
+		const EffectInfo* effect{};
+		std::shared_ptr<void> effectData;
+		size_t batchCount{};
 	};
 
 	std::vector<BatchGroup> batchGroups;
+	std::vector<Batch> batches;
 
 	void EndLayer()
 	{
-		IRenderEffect::DispatchStatus status{
-			.usedIncompleteTextures = false,
-		};
-		for (auto& group : batchGroups) {
-			group.effect->DispatchGroup(group.effectData, status);
+		if (latched.showStats) {
+			ImGui::Text("%d batches across %d groups", batches.size(), batchGroups.size());
 		}
-		usedIncompleteTextures = status.usedIncompleteTextures;
-	}
 
-	Batch nextBatch;
-	std::vector<Batch> batches;
+		// HACK(zao): buffer binds intentionally scoped beyond group dispatch
+		auto indexBind = geometry.gpuIndices.ScopedBind();
+		auto vertexBind = geometry.gpuVertices.ScopedBind();
+		geometry.gpuIndices.BufferData(std::span(geometry.cpuIndices), GL_STREAM_DRAW);
+		geometry.gpuVertices.BufferData(std::span(geometry.cpuVertices), GL_STREAM_DRAW);
+
+		std::span<Batch> batchTail(batches);
+		for (auto& group : batchGroups) {
+			DispatchGroup(group, batchTail.subspan(0, group.batchCount));
+			batchTail = batchTail.subspan(group.batchCount);
+		}
+	}
 
 	template <typename Range>
 	void ProcessCommands(Range&& cmds) {
@@ -487,6 +463,7 @@ struct LayerProcessor
 		case r_layerCmd_s::BIND: OnCommand(*(const r_layerCmdBind_s*)cmd); break;
 		case r_layerCmd_s::COLOR: OnCommand(*(const r_layerCmdColor_s*)cmd); break;
 		case r_layerCmd_s::QUAD: OnCommand(*(const r_layerCmdQuad_s*)cmd); break;
+		case r_layerCmd_s::SPRITE: OnCommand(*(const r_layerCmdSprite_s*)cmd); break;
 		case r_layerCmd_s::VIEWPORT: OnCommand(*(const r_layerCmdViewport_s*)cmd); break;
 		default:
 			abort();
@@ -504,236 +481,251 @@ struct LayerProcessor
 		latched.color = cmd.col;
 	}
 
-	void OnCommand(const r_layerCmdQuad_s& cmd)
+	const EffectInfo* SelectEffect(r_effects::tag_e tag) const noexcept
 	{
-		auto effectStorage = r_effects::GetEffectStorage(cmd);
-		if (latched.effectTag != cmd.effectTag) {
-			latched.effectTag = cmd.effectTag;
+		switch (tag) {
+		case r_effects::tag_e::None: return &effects->noneEffect;
+		case r_effects::tag_e::CircleMask: return &effects->circleEffect;
+		case r_effects::tag_e::ArcBandMask: return &effects->arcBandEffect;
+		case r_effects::tag_e::Tiled: return &effects->tiledEffect;
+		default:
+			abort();
+		}
+	}
 
-			// Effects may have different tags but be handled by the same render effect.
-			const auto newFx = effects[cmd.effectTag];
-			if (latched.effect != newFx) {
-				latched.effect = newFx;
-
-				auto stateI = effectStates.find(newFx);
-				if (stateI == effectStates.end()) {
-					// Ready the effect state if it's new to this layer.
-					auto state = std::make_shared<EffectState>();
-					const auto frameData = std::static_pointer_cast<IRenderEffect::FrameData>(renderer->GetEffectFrameData(newFx));
-					state->layerData = newFx->MakeLayerData(frameData);
-					stateI = effectStates.emplace(newFx, state).first;
-				}
-				batchGroups.emplace_back(newFx, newFx->MakeGroupData(stateI->second->layerData));
+	bool TryCutBatch()
+	{
+		auto& lastGroup = batchGroups.back();
+		if (lastGroup.batchCount > 0) {
+			auto& lastBatch = batches.back();
+			if (lastBatch.viewport == latched.viewport &&
+				lastBatch.vertexCount < (1u << 16) - 4 &&
+				(lastBatch.texSeen.size() < latched.effect->texLocs.size() || lastBatch.texSeen.contains(latched.tex)))
+			{
+				return false;
 			}
 		}
 
-		auto& curBatch = batchGroups.back();
-		curBatch.effect->ProcessQuad(cmd, curBatch.effectData, latched);
+		batches.emplace_back(Batch{
+			.viewport = latched.viewport,
+			.indexByteStart = (uint32_t)std::span(geometry.cpuIndices).size_bytes(),
+			.vertexByteStart = (uint32_t)std::span(geometry.cpuVertices).size_bytes(),
+			.texSlots{latched.effect->texLocs.size()},
+		});
+		++lastGroup.batchCount;
+		return true;
+	}
+
+	uint8_t RecordTexture(r_tex_c* tex) {
+		auto& batch = batches.back();
+		const auto [texSlot, freshTex] = batch.texSeen.try_emplace(tex, (uint8_t)batch.texSeen.size());
+		if (freshTex) {
+			batch.texSlots[texSlot->second] = tex;
+			if (!usedIncompleteTextures && tex->status.load(std::memory_order_relaxed) < r_tex_c::Status::DONE) {
+				usedIncompleteTextures = true;
+			}
+		}
+		return texSlot->second;
+	}
+
+	void OnCommand(const r_layerCmdQuad_s& cmd)
+	{
+		const auto noneTag = r_effects::tag_e::None;
+
+		// TODO(zao): cull against viewport here if desired
+
+		if (latched.effectTag != noneTag) {
+			latched.effectTag = noneTag;
+			latched.effect = SelectEffect(noneTag);
+			batchGroups.emplace_back(latched.effect, nullptr);
+		}
+		TryCutBatch();
+		auto texSlot = RecordTexture(latched.tex);
+		auto& batch = batches.back();
+
+		const auto vp = latched.viewport;
+		const auto tint = latched.color;
+		const auto stackLayer = latched.stackLayer;
+
+		{
+			static_assert(std::tuple_size_v<decltype(cmd.quad.xy)> == 4 && std::tuple_size_v<decltype(cmd.quad.uv)> == 4);
+			const auto& quad = cmd.quad;
+			std::array<NoneVertex, 4> vertices;
+			for (int i = 0; i < 4; ++i) {
+				vertices[i] = NoneVertex{
+					.common{
+						.xy = quad.xy[i] + glm::vec2(vp.lo),
+						.uv = quad.uv[i],
+						.tint = tint,
+						.texId = (float)texSlot,
+						.stackLayer = (float)stackLayer,
+					},
+				};
+			}
+			geometry.cpuVertices.append_range(std::as_bytes(std::span(vertices)));
+
+			const auto base = batch.vertexCount;
+			const std::array<uint16_t, 6> indices{base + 0u, base + 1u, base + 2u, base + 0u, base + 2u, base + 3u};
+			geometry.cpuIndices.append_range(indices);
+
+			batch.vertexCount += 4;
+			batch.indexCount += 6;
+		}
+	}
+
+	void OnCommand(const r_layerCmdSprite_s& cmd)
+	{
+		// TODO(zao): cull against viewport here if desired
+
+		auto effectStorage = r_effects::GetEffectStorage(cmd);
+		if (latched.effectTag != cmd.effectTag) {
+			latched.effectTag = cmd.effectTag;
+			latched.effect = SelectEffect(cmd.effectTag);
+			batchGroups.emplace_back(latched.effect, nullptr);
+		}
+		TryCutBatch();
+		auto texSlot = RecordTexture(latched.tex);
+		auto& batch = batches.back();
+
+		// TODO(zao): generate geometry and advance that tracking state
+		//curBatch.effect->ProcessSprite(cmd, curBatch.effectData, latched);
+
+		const auto vp = latched.viewport;
+		const auto tint = latched.color;
+		const auto stackLayer = latched.stackLayer;
+		const glm::vec2 texSize(
+			std::max(1u, latched.tex->fileWidth.load(std::memory_order_relaxed)),
+			std::max(1u, latched.tex->fileHeight.load(std::memory_order_relaxed)));
+
+		BaseVertex commonVertex{ .tint = tint, .texId = (float)texSlot, .stackLayer = (float)stackLayer, };
+		const glm::vec2 posLo = glm::vec2(vp.lo) + cmd.pos;
+		const glm::vec2 posHi = glm::vec2(vp.lo) + cmd.pos + cmd.size;
+		const glm::vec2 tcLo = glm::vec2(cmd.coordLo) / texSize;
+		const glm::vec2 tcHi = glm::vec2(cmd.coordHi) / texSize;
+		auto GenerateBasicVertices = [&](auto& vertices) {
+			vertices.fill({.common = commonVertex});
+
+			vertices[0].common.xy = posLo;
+			vertices[1].common.xy = {posHi.x, posLo.y};
+			vertices[2].common.xy = posHi;
+			vertices[3].common.xy = {posLo.x, posHi.y};
+
+			vertices[0].common.uv = tcLo;
+			vertices[1].common.uv = {tcHi.x, tcLo.y};
+			vertices[2].common.uv = tcHi;
+			vertices[3].common.uv = {tcLo.x, tcHi.y};
+		};
+
+		switch (cmd.effectTag) {
+		case r_effects::tag_e::None: {
+			std::array<NoneVertex, 4> vertices{};
+			GenerateBasicVertices(vertices);
+
+			geometry.cpuVertices.append_range(std::as_bytes(std::span(vertices)));
+		} break;
+		case r_effects::tag_e::CircleMask: {
+			std::array<CircleVertex, 4> vertices{};
+			GenerateBasicVertices(vertices);
+
+			vertices[0].localPos = {0, 0};
+			vertices[1].localPos = {1, 0};
+			vertices[2].localPos = {1, 1};
+			vertices[3].localPos = {0, 1};
+
+			geometry.cpuVertices.append_range(std::as_bytes(std::span(vertices)));
+		} break;
+		case r_effects::tag_e::ArcBandMask: {
+			std::array<CircleVertex, 4> vertices{};
+			GenerateBasicVertices(vertices);
+
+			vertices[0].localPos = {0, 0};
+			vertices[1].localPos = {1, 0};
+			vertices[2].localPos = {1, 1};
+			vertices[3].localPos = {0, 1};
+
+			geometry.cpuVertices.append_range(std::as_bytes(std::span(vertices)));
+		} break;
+		case r_effects::tag_e::Tiled: {
+		} break;
+		}
+
+		// Expect all effects to generate a triangle pair for now.
+		const auto base = batch.vertexCount;
+		const std::array<uint16_t, 6> indices{base + 0u, base + 1u, base + 2u, base + 0u, base + 2u, base + 3u};
+		geometry.cpuIndices.append_range(indices);
+
+		batch.vertexCount += 4;
+		batch.indexCount += 6;
 	}
 
 	void OnCommand(const r_layerCmdViewport_s& cmd)
 	{
 		latched.viewport = cmd.viewport;
 	}
-};
 
-struct NoneRenderEffect : IRenderEffect, std::enable_shared_from_this<NoneRenderEffect>
-{
-	explicit NoneRenderEffect(r_renderer_c* renderer);
-
-	r_renderer_c* renderer{};
-	std::shared_ptr<OpenGLProgram> prog;
-	std::optional<GLint> xyAttr;
-	std::optional<GLint> uvAttr;
-	std::optional<GLint> tintAttr;
-	std::optional<GLint> texIdAttr;
-	std::optional<GLint> uScreenSizeLoc;
-	int maxTexSlots{};
-	std::vector<GLint> texLocs;
-
-protected:
-	using Index = uint32_t;
-	struct Vertex
+	void DispatchGroup(BatchGroup& group, std::span<Batch> batches)
 	{
-		glm::vec2 xy;
-		glm::vec2 uv;
-		glm::vec4 tint;
-		float texId, stackLayer;
-	};
-
-	struct FrameData : IRenderEffect::FrameData
-	{
-		glm::ivec2 screenSize{};
-		bool usedIncompleteTextures{};
-	} frameData;
-
-	struct LayerData : IRenderEffect::LayerData
-	{
-		std::shared_ptr<FrameData> frameData{};
-
-		r_viewport_s viewport{};
-		r_tex_c* tex{};
-		int stackLayer{};
-		glm::vec4 tint{};
-		bool showStats{};
-	};
-
-	struct Batch
-	{
-		LatchingLayerState latch;
-
-		r_viewport_s viewport{};
-
-		std::vector<r_tex_c*> texSlots;
-		std::flat_set<r_tex_c*> texSeen;
-
-		size_t vertexStart{};
-		size_t vertexCount{};
-
-		size_t indexStart{};
-		size_t indexCount{};
-
-		bool Unused() const noexcept { return texSeen.empty(); }
-	};
-
-	struct GroupData : IRenderEffect::GroupData
-	{
-		std::shared_ptr<LayerData> layerData{};
-
-		std::vector<Vertex> cpuVertices;
-		std::vector<Index> cpuIndices;
-
-		OpenGLBuffer gpuVertices{GL_ARRAY_BUFFER};
-		OpenGLBuffer gpuIndices{GL_ELEMENT_ARRAY_BUFFER};
-
-		std::vector<Batch> batches;
-	};
-
-	FrameHandle MakeFrameData() override
-	{
-		int virtualW = renderer->VirtualScreenWidth();
-		int virtualH = renderer->VirtualScreenHeight();
-		frameData.screenSize = {virtualW, virtualH};
-		frameData.usedIncompleteTextures = false;
-		return std::shared_ptr<FrameData>(shared_from_this(), &frameData);
-	}
-
-	LayerHandle MakeLayerData(const FrameHandle& frame) override
-	{
-		auto layer = std::make_shared<LayerData>();
-		layer->frameData = std::static_pointer_cast<FrameData>(frame);
-		return layer;
-	}
-
-	GroupHandle MakeGroupData(const LayerHandle& layer) override
-	{
-		auto group = std::make_shared<GroupData>();
-		group->layerData = std::static_pointer_cast<LayerData>(layer);
-		group->cpuVertices.reserve(6u << 16);
-		group->cpuIndices.reserve(4u << 16);
-		return group;
-	}
-
-	void ProcessQuad(const r_layerCmdQuad_s& cmd, const GroupHandle& group, const LatchingLayerState& latched) override
-	{
-		const auto& groupData = static_cast<GroupData*>(group.get());
-		const auto& layerData = groupData->layerData;
-		const auto& frameData = layerData->frameData;
-		Batch* batch = groupData->batches.empty() ? nullptr : &groupData->batches.back();
-
-		layerData->viewport = latched.viewport;
-		layerData->tex = latched.tex;
-		layerData->stackLayer = latched.stackLayer;
-		layerData->tint = latched.color;
-		layerData->showStats = latched.showStats;
-
-		// Cut a new batch if any of:
-		// - a fresh group,
-		// - a new viewport,
-		// - out of texture slots.
-		if (!batch ||
-			batch->viewport != layerData->viewport ||
-			batch->texSeen.size() == maxTexSlots && !batch->texSeen.contains(layerData->tex))
-		{
-			batch = &groupData->batches.emplace_back();
-			batch->viewport = layerData->viewport;
-			batch->texSlots.reserve(maxTexSlots);
-			batch->indexStart = groupData->cpuIndices.size();
-			batch->vertexStart = groupData->cpuVertices.size();
+		auto fx = group.effect;
+		const auto* groupData = group.effectData.get(); // TODO(zao): remove, unused?
+		if (latched.showStats) {
+			std::string tagName{magic_enum::enum_name(fx->tag)};
+			ImGui::Text("Group of %d batches with %s effect", batches.size(), tagName.c_str());
 		}
-		
-		size_t texSlot = std::distance(batch->texSlots.begin(), std::ranges::find(batch->texSlots, latched.tex));
-		if (texSlot == batch->texSlots.size()) {
-			batch->texSlots.push_back(layerData->tex);
-			batch->texSeen.emplace(layerData->tex);
-		}
-
-		const auto vp = latched.viewport;
-		const auto tint = latched.color;
-		const auto stackLayer = latched.stackLayer;
-
-		static_assert(std::tuple_size_v<decltype(cmd.quad.xy)> == 4 && std::tuple_size_v<decltype(cmd.quad.uv)> == 4);
-		const auto& quad = cmd.quad;
-		for (int i = 0; i < 4; ++i) {
-			groupData->cpuVertices.emplace_back(Vertex{
-				.xy = quad.xy[i] + glm::vec2(vp.lo),
-				.uv = quad.uv[i],
-				.tint = tint,
-				.texId = (float)texSlot,
-				.stackLayer = (float)stackLayer,
-			});
-		}
-
-		const auto base = (Index)(batch->vertexStart + batch->vertexCount);
-		const std::array<Index, 6> indices{base + 0, base + 1, base + 2, base + 0, base + 2, base + 3};
-		groupData->cpuIndices.append_range(indices);
-
-		batch->vertexCount += 4;
-		batch->indexCount += 6;
-	}
-
-	void DispatchGroup(const GroupHandle& group, DispatchStatus& dispatchStatus) override {
-		const auto* groupData = static_cast<const GroupData*>(group.get());
 
 		glEnable(GL_SCISSOR_TEST);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		auto progUse = prog->ScopedUse();
-		auto screenSize = groupData->layerData->frameData->screenSize;
+		auto progUse = fx->program->ScopedUse();
 		{
 			glViewport(0, 0, screenSize.x, screenSize.y);
 			glm::vec2 uScreenSize(screenSize);
-			glUniform2fv(*uScreenSizeLoc, 1, glm::value_ptr(uScreenSize));
+			glUniform2fv(*fx->uScreenSizeLoc, 1, glm::value_ptr(uScreenSize));
 		}
 
-		auto indexBind = groupData->gpuIndices.ScopedBind();
-		auto vertexBind = groupData->gpuVertices.ScopedBind();
+		auto ConfigureVertexAttribute = [&](uintptr_t vertexByteStart, const OpenGLVertexAttribute& attr) -> bool {
+			const uintptr_t offset = vertexByteStart + attr.offset;
+			glVertexAttribPointer(attr.location, attr.components, attr.type, attr.normalize, attr.stride, (const void*)offset);
+			glEnableVertexAttribArray(attr.location);
+			return true;
+		};
 
-		groupData->gpuIndices.BufferData(std::span(groupData->cpuIndices), GL_STREAM_DRAW);
-		groupData->gpuVertices.BufferData(std::span(groupData->cpuVertices), GL_STREAM_DRAW);
+		auto DeconfigureVertexAttribute = [](const OpenGLVertexAttribute& attr) -> bool {
+			glDisableVertexAttribArray(attr.location);
+			return true;
+		};
 
-		glVertexAttribPointer(*xyAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void*)offsetof(Vertex, xy));
-		glVertexAttribPointer(*uvAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void*)offsetof(Vertex, uv));
-		glVertexAttribPointer(*tintAttr, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void*)offsetof(Vertex, tint));
-		glVertexAttribPointer(*texIdAttr, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (const void*)offsetof(Vertex, texId));
-		glEnableVertexAttribArray(*xyAttr);
-		glEnableVertexAttribArray(*uvAttr);
-		glEnableVertexAttribArray(*tintAttr);
-		glEnableVertexAttribArray(*texIdAttr);
-		for (auto& batch : groupData->batches) {
+		std::optional<r_viewport_s> lastViewport;
+		for (auto& batch : batches) {
+			if (latched.showStats) {
+				ImGui::Text("Batch of %d indices", batch.indexCount);
+			}
+
+			for (const auto& attr : fx->vertexAttrs) {
+				ConfigureVertexAttribute(batch.vertexByteStart, attr);
+			}
+
+			// Clip to viewport
+			if (!lastViewport || lastViewport != batch.viewport)
+			{
+				auto vp = batch.viewport;
+				if (latched.showStats) {
+					ImGui::Text("New viewport %d,%d+%dx%d", vp.lo.x, vp.lo.y, vp.extent.x, vp.extent.y);
+				}
+				lastViewport = vp;
+				const GLint scissorY = screenSize.y - vp.extent.y - vp.lo.y;
+				glScissor(vp.lo.x, scissorY, vp.extent.x, vp.extent.y);
+			}
+
 			// Set up textures
 			{
-				const size_t slotsUsed = batch.texSlots.size();
-				for (size_t i = 0, numTex = texLocs.size(); i < numTex; ++i) {
-					glUniform1i(texLocs[i], (GLint)i);
+				const size_t slotsUsed = batch.texSeen.size();
+				for (size_t i = 0, numTex = fx->texLocs.size(); i < numTex; ++i) {
+					glUniform1i(fx->texLocs[i], (GLint)i);
 					glActiveTexture((GLenum)(GL_TEXTURE0 + i));
 					if (i < slotsUsed) {
 						auto tex = batch.texSlots[i];
 						tex->Bind();
-						if (groupData->layerData->showStats) {
+						if (latched.showStats) {
 							ImGui::Text("New tex %d (%s) %s", tex->texId, tex->fileName.c_str(), magic_enum::enum_name(tex->status.load()).data());
-						}
-						if (!dispatchStatus.usedIncompleteTextures && tex->status != r_tex_c::Status::DONE) {
-							dispatchStatus.usedIncompleteTextures = true;
 						}
 					}
 					else {
@@ -743,269 +735,15 @@ protected:
 				glActiveTexture(GL_TEXTURE0);
 			}
 
-			// Clip to viewport
-			{
-				auto vp = batch.viewport;
-				const GLint scissorY = screenSize.y - vp.extent.y - vp.lo.y;
-				glScissor(vp.lo.x, scissorY, vp.extent.x, vp.extent.y);
-			}
-			glDrawElements(GL_TRIANGLES, batch.indexCount, GL_UNSIGNED_INT, (const void*)(batch.indexStart * sizeof(Index)));
+			glDrawElements(GL_TRIANGLES, batch.indexCount, GL_UNSIGNED_SHORT, (const void*)(uintptr_t)batch.indexByteStart);
 		}
-		glDisableVertexAttribArray(*xyAttr);
-		glDisableVertexAttribArray(*uvAttr);
-		glDisableVertexAttribArray(*tintAttr);
-		glDisableVertexAttribArray(*texIdAttr);
+
+		for (const auto& attr : fx->vertexAttrs) {
+			DeconfigureVertexAttribute(attr);
+		}
 
 		glDisable(GL_SCISSOR_TEST);
 	}
-};
-
-struct CircleMaskRenderEffect : IRenderEffect
-{
-	explicit CircleMaskRenderEffect(r_renderer_c* renderer);
-
-	std::shared_ptr<OpenGLProgram> prog;
-
-protected:
-	void ProcessQuad(const r_layerCmdQuad_s& cmd, const GroupHandle& group, const LatchingLayerState& latched) override {}
-	void DispatchGroup(const GroupHandle& group, DispatchStatus& dispatchStatus) override {}
-};
-
-
-
-struct RenderStrategy {
-	virtual ~RenderStrategy() = default;
-
-	virtual void ProcessCommand(r_layerCmd_s* cmd) = 0;
-	virtual void Flush() = 0;
-	virtual void SetShowStats(bool showStats) { showStats_ = showStats; }
-	virtual bool UsedIncompleteTextures() const { return false; }
-
-protected:
-	bool showStats_{};
-};
-
-struct AdjacentMergeStrategy : RenderStrategy {
-	AdjacentMergeStrategy(r_layer_c* layer, r_renderer_c* renderer, std::shared_ptr<OpenGLProgram> prog)
-		: layer_(layer), renderer_(renderer), prog_(prog), batch_(prog)
-	{
-		for (size_t i = 0;; ++i) {
-			GLint loc = glGetUniformLocation(prog->GetId(), fmt::format("s_tex[{}]", i).c_str());
-			if (loc == -1) {
-				break;
-			}
-			texLocs_.push_back(loc);
-		}
-		uScreenSizeLoc_ = glGetUniformLocation(prog_->GetId(), "u_screenSize");
-		batchTextureCap_ = texLocs_.size();
-
-		vbo_.emplace(GL_ARRAY_BUFFER);
-		glEnable(GL_SCISSOR_TEST);
-	}
-
-	~AdjacentMergeStrategy() {
-		glDisable(GL_SCISSOR_TEST);
-	}
-
-	struct BatchKey {
-		r_viewport_s viewport{};
-		r_effects::tag_e effectTag{};
-
-		auto operator <=> (const BatchKey& rhs) const = default;
-	};
-
-	void ProcessCommand(r_layerCmd_s* cmd) override {
-		switch (cmd->cmd) {
-		case r_layerCmd_s::VIEWPORT: {
-			auto* c = (r_layerCmdViewport_s*)cmd;
-			latchKey_.viewport = c->viewport;
-			if (showStats_) {
-				// ImGui::Text("VIEWPORT: %dx%d @ %d,%d", c->viewport.width, c->viewport.height, c->viewport.x, c->viewport.y);
-			}
-		} break;
-		case r_layerCmd_s::BIND: {
-			auto* c = (r_layerCmdBind_s*)cmd;
-			nextTex_ = c->tex;
-			nextStackLayer_ = c->stackLayer;
-			if (showStats_) {
-				// ImGui::Text("TEX: %s", c->tex->fileName.c_str());
-			}
-		} break;
-		case r_layerCmd_s::COLOR: {
-			auto* c = (r_layerCmdColor_s*)cmd;
-			tint_ = c->col;
-		} break;
-		case r_layerCmd_s::QUAD: {
-			auto* c = (r_layerCmdQuad_s*)cmd;
-			if (showStats_) {
-				// ImGui::Text("QUAD");
-			}
-
-			const auto vp = latchKey_.viewport;
-
-			// Cull the quad first before it influences any boundary cuts.
-			if (!!renderer_->r_drawCull->intVal) {
-				const auto [minX, maxX] = std::ranges::minmax(c->quad.xy | std::views::transform(&glm::vec2::x));
-				const auto [minY, maxY] = std::ranges::minmax(c->quad.xy | std::views::transform(&glm::vec2::y));
-				const bool intersects = minX < vp.extent.x && maxX > 0.0f && minY < vp.extent.y && maxY > 0.0f;
-				if (!intersects)
-					break;
-			}
-
-			// If the current batch is incompatible key-wise, dispatch it to get a fresh
-			// batch to grow in.
-			if (!batch_.batch.vertices.empty() && batch_.key != latchKey_) {
-				Dispatch();
-			}
-			batch_.key = latchKey_;
-
-			// Check current (and only) batch if the texture set has the latched texture.
-			// If it's there, use its index as vertex attribute.
-			// If it's not, insert it if room, otherwise dispatch batch and prepare a fresh one.
-			size_t texSlot{};
-			{
-				auto& textures = batch_.textures;
-				auto texI = std::find(textures.begin(), textures.end(), nextTex_);
-				if (texI == textures.end()) {
-					if (textures.size() == batchTextureCap_) {
-						Dispatch();
-					}
-					texI = textures.insert(textures.end(), nextTex_);
-				}
-				texSlot = std::distance(textures.begin(), texI);
-			}
-
-			Vertex quad[4]{};
-			for (int v = 0; v < 4; v++) {
-				auto& q = quad[v];
-				q.u = c->quad.uv[v].x;
-				q.v = c->quad.uv[v].y;
-				q.x = c->quad.xy[v].x + vp.lo.x;
-				q.y = c->quad.xy[v].y + vp.lo.y;
-				q.r = tint_[0];
-				q.g = tint_[1];
-				q.b = tint_[2];
-				q.a = tint_[3];
-				q.texId = (float)texSlot;
-				q.stackIdx = (float)nextStackLayer_;
-			}
-			// 3-2
-			// |/|
-			// 0-1
-			size_t indices[] = { 0, 1, 2, 0, 2, 3 };
-			for (auto idx : indices) {
-				batch_.batch.vertices.push_back(quad[idx]);
-			}
-			totalVertexCount_ += std::size(indices);
-		} break;
-		}
-	}
-
-	void Flush() {
-		if (!batch_.batch.vertices.empty()) {
-			Dispatch();
-		}
-		if (showStats_) {
-			ImGui::BulletText("Layer %d:%d - %d batches", layer_->layer, layer_->subLayer, batchIndex);
-		}
-	}
-
-	bool UsedIncompleteTextures() const override { return usedIncompleteTextures; };
-
-private:
-	void Dispatch() {
-		auto& batch = batch_.batch;
-		auto& textures = batch_.textures;
-		auto& key = batch_.key;
-		auto& lastKey = lastDispatchKey_;
-
-		auto vbBind = vbo_->ScopedBind();
-		size_t vertexCount = batch.vertices.size();
-		vbo_->BufferData<Vertex>(vertexCount, GL_STREAM_DRAW);
-		auto progUse = prog_->ScopedUse();
-
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		if (showStats_) {
-			ImGui::Text("Batch %d", batchIndex);
-			ImGui::Text("%d verts", batch.vertices.size());
-		}
-
-		int virtualW = renderer_->VirtualScreenWidth();
-		int virtualH = renderer_->VirtualScreenHeight();
-		{
-			glViewport(0, 0, virtualW, virtualH);
-			glm::vec2 uScreenSize(virtualW, virtualH);
-			glUniform2fv(uScreenSizeLoc_, 1, glm::value_ptr(uScreenSize));
-		}
-		if (!lastKey || lastKey->viewport != key.viewport) {
-			if (showStats_) {
-				ImGui::Text("New viewport at %d,%d with size %dx%d", key.viewport.lo.x, key.viewport.lo.y, key.viewport.extent.x, key.viewport.extent.y);
-			}
-			const GLint scissorY = virtualH - key.viewport.extent.y - key.viewport.lo.y;
-			glScissor(key.viewport.lo.x, scissorY, key.viewport.extent.x, key.viewport.extent.y);
-		}
-		{
-			for (size_t i = 0, numTex = texLocs_.size(); i < numTex; ++i) {
-				glUniform1i(texLocs_[i], (GLint)i);
-				glActiveTexture((GLenum)(GL_TEXTURE0 + i));
-				if (i < textures.size()) {
-					auto tex = textures[i];
-					tex->Bind();
-					if (showStats_) {
-						ImGui::Text("New tex %d (%s) %s", tex->texId, tex->fileName.c_str(), magic_enum::enum_name(tex->status.load()).data());
-					}
-					if (!usedIncompleteTextures && tex->status != r_tex_c::Status::DONE) {
-						usedIncompleteTextures = true;
-					}
-				}
-				else {
-					glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-				}
-			}
-			glActiveTexture(GL_TEXTURE0);
-		}
-
-		batch.Execute(vbo_->GetId(), 0);
-
-		lastDispatchKey_ = key;
-		batch_.batch.vertices.clear();
-		batch_.textures.clear();
-
-		batchIndex += 1;
-	}
-
-	r_layer_c* layer_{};
-	r_renderer_c* renderer_{};
-	std::shared_ptr<OpenGLProgram> prog_;
-	std::vector<GLint> texLocs_;
-	GLint uScreenSizeLoc_{};
-
-	size_t batchTextureCap_{};
-	std::optional<OpenGLBuffer> vbo_;
-
-	struct TexturedBatch {
-		explicit TexturedBatch(std::shared_ptr<OpenGLProgram> prog) : batch(prog) {
-			textures.reserve(128);
-		}
-
-		BatchKey key{};
-		Batch batch;
-		std::vector<r_tex_c*> textures;
-	};
-
-	BatchKey latchKey_{};
-	r_tex_c* nextTex_{};
-	uint16_t nextStackLayer_{};
-	std::optional<BatchKey> lastDispatchKey_;
-	TexturedBatch batch_;
-
-	glm::vec4 tint_{1.0f};
-
-	size_t totalVertexCount_ = 0;
-	size_t batchIndex = 0;
-
-	bool usedIncompleteTextures = false;
 };
 
 bool r_layer_c::Render()
@@ -1036,23 +774,6 @@ bool r_layer_c::Render()
 	layerProc.EndLayer();
 	if (!usedIncompleteTextures) {
 		usedIncompleteTextures = layerProc.usedIncompleteTextures;
-	}
-
-	auto noneEffect = std::static_pointer_cast<NoneRenderEffect>(renderer->effects[r_effects::tag_e::None]);
-	std::unique_ptr<RenderStrategy> strat;
-	//strat = std::make_unique<AdjacentMergeStrategy>(this, renderer, noneEffect->prog);
-
-	if (strat) {
-		strat->SetShowStats(showStats);
-
-		for (auto cmdH : GetCommands()) {
-			strat->ProcessCommand(cmdH.cmd);
-		}
-
-		strat->Flush();
-		if (!usedIncompleteTextures) {
-			usedIncompleteTextures = strat->UsedIncompleteTextures();
-		}
 	}
 
 	if (renderer->debugLayers) {
@@ -1190,11 +911,12 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	maxTextureImageUnits = (dword)texUnitCount;
 
 	// Initialise vertex programs
-	effects[r_effects::tag_e::None] = std::make_shared<NoneRenderEffect>(this);
-	effects[r_effects::tag_e::CircleMask] = std::make_shared<CircleMaskRenderEffect>(this);
-	auto noneEffect = effects[r_effects::tag_e::None];
-	effects[r_effects::tag_e::ArcBandMask] = noneEffect;
-	effects[r_effects::tag_e::Tiled] = noneEffect;
+	InitEffects();
+	//effects[r_effects::tag_e::None] = std::make_shared<NoneRenderEffect>(this);
+	//effects[r_effects::tag_e::CircleMask] = std::make_shared<CircleMaskRenderEffect>(this);
+	//auto noneEffect = effects[r_effects::tag_e::None];
+	//effects[r_effects::tag_e::ArcBandMask] = noneEffect;
+	//effects[r_effects::tag_e::Tiled] = noneEffect;
 
 	//effects[r_effects::tag_e::ArcBandMask] = std::make_shared<NoneRenderEffect>(this);
 	//effects[r_effects::tag_e::Tiled] = std::make_shared<NoneRenderEffect>(this);
@@ -1443,12 +1165,12 @@ void r_renderer_c::EndFrame()
 	inhibitElision = false;
 	PumpShaders();
 
-	effectFrameData.clear();
-	for (const auto& [tag, effect] : effects) {
-		if (!effectFrameData.contains(effect)) {
-			effectFrameData[effect] = effect->MakeFrameData();
-		}
-	}
+	//effectFrameData.clear();
+	//for (const auto& [tag, effect] : effects) {
+	//	if (!effectFrameData.contains(effect)) {
+	//		effectFrameData[effect] = effect->MakeFrameData();
+	//	}
+	//}
 
 	std::chrono::time_point endFrameTic = std::chrono::steady_clock::now();
 	frameStats.AppendDuration(&FrameStats::midFrameStepDurations, endFrameTic - beginFrameToc);
@@ -1921,6 +1643,19 @@ void r_renderer_c::DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent
 		stackLayer);
 }
 
+void r_renderer_c::DrawSprite(const r_sprite_s& sprite, glm::vec2 pos, glm::vec2 extent, r_effects::tag_e effectTag, std::shared_ptr<void> effectData)
+{
+	if (const auto* hnd = sprite.hnd) {
+		const auto stackLayer = clamp(sprite.stackLayer, 0, (int)hnd->sh->tex->stackLayers - 1);
+		curLayer->Bind(hnd->sh->tex, sprite.stackLayer);
+	}
+	else {
+		curLayer->Bind(hnd->sh->tex, 0);
+	}
+	curLayer->Color(drawColor);
+	curLayer->Sprite(pos, extent, sprite.texelRectLo, sprite.texelRectHi, effectTag, nullptr);
+}
+
 void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0, glm::vec2 uv1, glm::vec2 uv2, glm::vec2 uv3, int stackLayer)
 {
 	if (hnd) {
@@ -1932,10 +1667,10 @@ void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1,
 	}
 	curLayer->Color(drawColor);
 	curLayer->Quad(
-		uv0.s, uv0.t, p0.x, p0.y,
-		uv1.s, uv1.t, p1.x, p1.y,
-		uv2.s, uv2.t, p2.x, p2.y,
-		uv3.s, uv3.t, p3.x, p3.y);
+		{uv0.s, uv0.t}, {p0.x, p0.y},
+		{uv1.s, uv1.t}, {p1.x, p1.y},
+		{uv2.s, uv2.t}, {p2.x, p2.y},
+		{uv3.s, uv3.t}, {p3.x, p3.y});
 }
 
 void r_renderer_c::DrawString(float x, float y, int align, int height, const col4_t col, int font, const char* str)
@@ -2160,11 +1895,6 @@ r_renderer_c::RenderTarget& r_renderer_c::GetPresentRenderTarget()
 	return rttMain[presentRtt];
 }
 
-std::shared_ptr<void> r_renderer_c::GetEffectFrameData(std::shared_ptr<IRenderEffect> effect)
-{
-	return effectFrameData[effect];
-}
-
 template <typename... T>
 std::shared_ptr<OpenGLProgram> CompileTemplatedShaders(r_renderer_c* renderer, std::string_view pathBase, T&&... formatArgs)
 {
@@ -2177,7 +1907,7 @@ std::shared_ptr<OpenGLProgram> CompileTemplatedShaders(r_renderer_c* renderer, s
 	vs.CompileShader();
 	if (!vs.GetCompileSuccess()) {
 		std::string log = vs.GetInfoLog();
-		renderer->sys->Error("Failed to compile vertex shader:\n%s", log.c_str());
+		renderer->sys->Error("Failed to compile vertex shader for %s:\n%s", std::string(pathBase).c_str(), log.c_str());
 	}
 	auto fs = OpenGLShader(GL_FRAGMENT_SHADER);
 	const auto tintFragmentTemplate = ResourceStringView(resources.open(fmt::format("{}.frag", pathBase)));
@@ -2186,12 +1916,12 @@ std::shared_ptr<OpenGLProgram> CompileTemplatedShaders(r_renderer_c* renderer, s
 		fs.ShaderSource(fragSource);
 	}
 	catch (std::exception& e) {
-		renderer->sys->Error("Failed to format fragment shader:\n%s", e.what());
+		renderer->sys->Error("Failed to format fragment shader for %s:\n%s", std::string(pathBase).c_str(), e.what());
 	}
 	fs.CompileShader();
 	if (!fs.GetCompileSuccess()) {
 		std::string log = fs.GetInfoLog();
-		renderer->sys->Error("Failed to compile fragment shader:\n%s", log.c_str());
+		renderer->sys->Error("Failed to compile fragment shader for %s:\n%s", std::string(pathBase).c_str(), log.c_str());
 	}
 
 	prog->AttachShader(vs);
@@ -2199,16 +1929,17 @@ std::shared_ptr<OpenGLProgram> CompileTemplatedShaders(r_renderer_c* renderer, s
 	prog->LinkProgram();
 	if (!prog->GetLinkSuccess()) {
 		std::string log = prog->GetInfoLog();
-		renderer->sys->Error("Failed to link program:\n%s", log.c_str());
+		renderer->sys->Error("Failed to link program for %s:\n%s", std::string(pathBase).c_str(), log.c_str());
 	}
 
 	return prog;
 }
 
-NoneRenderEffect::NoneRenderEffect(r_renderer_c* renderer)
-	: renderer(renderer)
+void r_renderer_c::InitEffects()
 {
-	maxTexSlots = renderer->maxTextureImageUnits;
+	effects = std::make_shared<Effects>();
+
+	auto maxTexSlots = maxTextureImageUnits;
 	std::string textureSwitch;
 	{
 		fmt::memory_buffer buf;
@@ -2229,51 +1960,88 @@ NoneRenderEffect::NoneRenderEffect(r_renderer_c* renderer)
 		}
 		textureSwitch = to_string(buf);
 	}
-	prog = CompileTemplatedShaders(renderer, "assets/gles/tinted_texture",
-		fmt::arg("SG_TEXTURE_COUNT", maxTexSlots),
-		fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
 
-	xyAttr = prog->GetAttribLocation("a_vertex");
-	uvAttr = prog->GetAttribLocation("a_texcoord");
-	tintAttr = prog->GetAttribLocation("a_tint");
-	texIdAttr = prog->GetAttribLocation("a_texId");
-	uScreenSizeLoc = prog->GetUniformLocation("u_screenSize");
-
-	texLocs.reserve(maxTexSlots);
-	for (size_t i = 0;; ++i) {
-		auto loc = prog->GetUniformLocation(fmt::format("s_tex[{}]", i));
-		if (!loc) {
-			break;
-		}
-		texLocs.push_back(*loc);
-	}
-}
-
-CircleMaskRenderEffect::CircleMaskRenderEffect(r_renderer_c* renderer)
-{
-	std::string textureSwitch;
+	std::string textureSwitchTiled;
 	{
 		fmt::memory_buffer buf;
-		for (size_t i = 0; i < renderer->maxTextureImageUnits; ++i) {
+		for (size_t i = 0; i < maxTexSlots; ++i) {
 			if (i == 0) {
 				fmt::format_to(fmt::appender(buf), "if (v_texId.x < {}.5) ", i);
 			}
-			else if (i == renderer->maxTextureImageUnits - 1) {
+			else if (i == maxTexSlots - 1) {
 				fmt::format_to(fmt::appender(buf), "else ");
 			}
 			else {
 				fmt::format_to(fmt::appender(buf), "else if (v_texId.x < {}.5)", i);
 			}
 			fmt::format_to(fmt::appender(buf), R"( {{
-	color = texture(s_tex[{}], vec3(v_texcoord, v_texId.y));
+	color = vec3(1., 1., 1.); //texture(s_tex[{}], vec3(v_texcoord, v_texId.y));
 }}
 )", i, i);
 		}
-		textureSwitch = to_string(buf);
 	}
-	prog = CompileTemplatedShaders(renderer, "assets/gles/tinted_texture_circle",
-		fmt::arg("SG_TEXTURE_COUNT", renderer->maxTextureImageUnits),
+
+	effects->noneEffect.tag = r_effects::tag_e::None;
+	effects->noneEffect.program = CompileTemplatedShaders(this, "assets/gles/tinted_texture",
+		fmt::arg("SG_TEXTURE_COUNT", maxTexSlots),
 		fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
+	effects->noneEffect.vertexStride = sizeof(NoneVertex);
+
+	effects->circleEffect.tag = r_effects::tag_e::CircleMask;
+	effects->circleEffect.program = CompileTemplatedShaders(this, "assets/gles/tinted_texture_circle",
+		fmt::arg("SG_TEXTURE_COUNT", maxTexSlots),
+		fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
+	effects->circleEffect.vertexStride = sizeof(CircleVertex);
+
+	effects->arcBandEffect.tag = r_effects::tag_e::ArcBandMask;
+	effects->arcBandEffect.program = CompileTemplatedShaders(this, "assets/gles/tinted_texture_arc_band",
+		fmt::arg("SG_TEXTURE_COUNT", maxTexSlots),
+		fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
+	effects->arcBandEffect.vertexStride = sizeof(ArcBandVertex);
+
+	effects->tiledEffect.tag = r_effects::tag_e::Tiled;
+	effects->tiledEffect.program = CompileTemplatedShaders(this, "assets/gles/tinted_texture_tiled",
+		fmt::arg("SG_TEXTURE_COUNT", maxTexSlots),
+		fmt::arg("SG_TEXTURE_SWITCH", textureSwitchTiled));
+	effects->tiledEffect.vertexStride = sizeof(TiledVertex);
+
+	auto TryDefineVertexAttribute = [](EffectInfo& fx, std::string name, OpenGLVertexAttribute params) {
+		if (auto loc = fx.program->GetAttribLocation(name)) {
+			params.location = (GLuint)*loc;
+			params.stride = fx.vertexStride;
+			fx.vertexAttrs.emplace_back(params);
+		}
+	};
+
+	for (EffectInfo* fx : {&effects->noneEffect, &effects->circleEffect, &effects->arcBandEffect, &effects->tiledEffect}) {
+		// Vertex attributes
+		TryDefineVertexAttribute(*fx, "a_vertex"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, xy), 2));
+		TryDefineVertexAttribute(*fx, "a_texcoord"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, uv), 2));
+		TryDefineVertexAttribute(*fx, "a_tint"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, tint), 4));
+		TryDefineVertexAttribute(*fx, "a_texId"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, texId), 2));
+		
+		// Uniforms
+		fx->uScreenSizeLoc = fx->program->GetUniformLocation("u_screenSize");
+
+		// Textures
+		fx->texLocs.reserve(maxTexSlots);
+		for (size_t i = 0;; ++i) {
+			auto loc = fx->program->GetUniformLocation(fmt::format("s_tex[{}]", i));
+			if (!loc) {
+				break;
+			}
+			fx->texLocs.push_back(*loc);
+		}
+	}
+
+	TryDefineVertexAttribute(effects->circleEffect, "a_uvLocal"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(CircleVertex, localPos), 2));
+
+	TryDefineVertexAttribute(effects->arcBandEffect, "a_localCoord"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, localPos), 2));
+	TryDefineVertexAttribute(effects->arcBandEffect, "a_startDir_stopDir"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, startDir), 4));
+	TryDefineVertexAttribute(effects->arcBandEffect, "a_innerRadius_angleSpan"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, innerRadius), 2));
+
+	TryDefineVertexAttribute(effects->tiledEffect, "a_uvLocal"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(TiledVertex, localTexcoord), 2));
+	// TODO(zao): more attributes as the shader evolves
 }
 
 #ifdef NOOPTIMISE

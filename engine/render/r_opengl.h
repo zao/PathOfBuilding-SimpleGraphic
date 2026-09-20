@@ -46,9 +46,6 @@ struct OpenGLProgram : OpenGLObjectBase
 	OpenGLProgram();
 	~OpenGLProgram();
 
-	OpenGLProgram& operator = (const OpenGLProgram& rhs) = delete;
-	OpenGLProgram(const OpenGLProgram& rhs) = delete;
-
 	struct UseScope {
 		UseScope();
 		~UseScope();
@@ -119,4 +116,27 @@ struct OpenGLBuffer : OpenGLObjectBase
 
 private:
 	GLuint CreateObject();
+};
+
+struct OpenGLVertexAttribute
+{
+	GLuint location = (GLuint)-1;
+	GLenum type = GL_FLOAT;
+	uint16_t stride = 0;
+	uint16_t offset = 0;
+	uint8_t components = 4;
+	uint8_t stream = 0;
+	bool normalize = false;
+
+	OpenGLVertexAttribute() noexcept = default;
+	OpenGLVertexAttribute(GLuint location, GLenum type, uint16_t stride, uint16_t offset, uint8_t components, uint8_t stream = 0, bool normalize = false)
+		: location(location)
+		, type(type)
+		, stride(stride)
+		, offset(offset)
+		, components(components)
+		, stream(stream)
+		, normalize(normalize)
+	{
+	}
 };

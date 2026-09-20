@@ -2,6 +2,7 @@
 
 uniform vec2 u_screenSize;
 
+// Common
 in vec2 a_vertex;
 in vec2 a_texcoord;
 in vec4 a_tint;
