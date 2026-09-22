@@ -29,18 +29,7 @@ struct r_viewport_s {
 	glm::ivec2 lo;
 	glm::ivec2 extent;
 
-	bool operator < (r_viewport_s const& rhs) const {
-		return std::tie(lo.x, lo.y, extent.x, extent.y)
-			< std::tie(rhs.lo.x, rhs.lo.y, rhs.extent.x, rhs.extent.y);
-	}
-
-	bool operator == (r_viewport_s const& rhs) const {
-		return !(*this < rhs) && !(rhs < *this);
-	}
-
-	bool operator != (r_viewport_s const& rhs) const {
-		return !(*this == rhs);
-	}
+	auto operator <=> (const r_viewport_s& rhs) const noexcept = default;
 };
 
 // Render layer
@@ -204,6 +193,8 @@ public:
 	uint64_t totalFrames{};
 	uint64_t drawnFrames{};
 
+	std::shared_ptr<struct SpatialConfig> spatialConfig;
+
 	struct FrameStats {
 		std::deque<float> midFrameStepDurations;
 		std::deque<float> endFrameStepDurations;
@@ -227,6 +218,7 @@ public:
 	bool	inhibitElision = false;
 	bool	debugImGui = false;
 	bool	debugLayers = false;
+	bool	debugSpatialInfo = false;
 
 	int		takeScreenshot = 0;
 	void	DoScreenshot(image_c* i, int type, const char* ext);
