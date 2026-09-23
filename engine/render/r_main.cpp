@@ -1285,7 +1285,6 @@ void r_renderer_c::Init(r_featureFlag_e features)
 	sys->con->PrintFunc("Render Init");
 
 	const auto resources = cmrc::SimpleGraphic::get_filesystem();
-	frameHashState.reset(XXH3_createState(), XXH3_freeState);
 
 	apiDpiAware = !!(features & F_DPI_AWARE);
 
@@ -1719,7 +1718,13 @@ void r_renderer_c::EndFrame()
 		DrawStringFormat(0, VirtualScreenHeight() - 16.0f, F_RIGHT, 16, colorWhite, F_FIXED, str);
 	}
 
-	std::optional<std::pair<int, int>> layerBreak;
+	std::vector<uint64_t> layerHashes(numLayer);
+	for (auto lIdx = 0; lIdx < numLayer; ++lIdx) {
+		auto layer = layerSort[lIdx];
+		layerHashes[lIdx] = XXH3_64bits(layer->cmdStorage.data(), (int)layer->cmdCursor);
+	}
+
+	std::optional<glm::ivec2> layerBreak;
 	if (debugLayers) {
 		if (ImGui::Begin("Layers", &debugLayers)) {
 			ImGui::Text("Layers: %d", numLayer);
@@ -1742,16 +1747,23 @@ void r_renderer_c::EndFrame()
 			ImGui::Text("Total dense footprint: %sB", BinaryUnitPrefix(totalDenseFootprint).c_str());
 
 			size_t totalCmd{};
-			if (ImGui::BeginTable("Layer stats", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
+			if (ImGui::BeginTable("Layer stats", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit)) {
 				ImGui::TableSetupColumn("Index");
 				ImGui::TableSetupColumn("Layer");
 				ImGui::TableSetupColumn("Sublayer");
 				ImGui::TableSetupColumn("Command count");
 				ImGui::TableSetupColumn("Dense");
+				ImGui::TableSetupColumn("Mute");
+				ImGui::TableSetupColumn("Solo");
 				ImGui::TableSetupColumn("Debug");
+				ImGui::TableSetupColumn("Hash");
 				ImGui::TableHeadersRow();
 				for (int l = 0; l < numLayer; ++l) {
 					auto layer = layerSort[l];
+					const auto layerKey = glm::ivec2{layer->layer, layer->subLayer};
+					bool visible = debugMutedLayers.contains(layerKey);
+					bool solo = debugSoloLayer == layerKey;
+
 					ImGui::PushID(layer->layer);
 					ImGui::PushID(layer->subLayer);
 					totalCmd += layer->numCmd;
@@ -1767,14 +1779,55 @@ void r_renderer_c::EndFrame()
 					ImGui::TableNextColumn();
 					ImGui::Text("%sB", BinaryUnitPrefix(layer->cmdCursor).c_str());
 					ImGui::TableNextColumn();
-					if (ImGui::Button("Debug")) {
-						layerBreak = { layer->layer, layer->subLayer };
+					ImGui::BeginDisabled(debugSoloLayer.has_value());
+					if (ImGui::Checkbox("##mute", &visible)) {
+						if (visible) {
+							debugMutedLayers.insert(layerKey);
+						}
+						else {
+							debugMutedLayers.erase(layerKey);
+						}
 					}
+					ImGui::EndDisabled();
+					ImGui::TableNextColumn();
+					if (ImGui::Checkbox("##solo", &solo)) {
+						debugSoloLayer = solo ? std::optional(layerKey) : std::nullopt;
+					}
+					ImGui::TableNextColumn();
+					if (ImGui::Button("Debug")) {
+						layerBreak = layerKey;
+					}
+					ImGui::TableNextColumn();
+					ImGui::Text("0x%08X", layerHashes[l]);
 					ImGui::PopID();
 					ImGui::PopID();
 				}
 				ImGui::EndTable();
 			}
+			if (ImGui::Button("Invert mutes")) {
+				for (int l = 0; l < numLayer; ++l) {
+					auto layer = layerSort[l];
+					const auto layerKey = glm::ivec2{layer->layer, layer->subLayer};
+					if (debugMutedLayers.contains(layerKey)) {
+						debugMutedLayers.erase(layerKey);
+					}
+					else {
+						debugMutedLayers.insert(layerKey);
+					}
+				}
+			}
+			ImGui::SameLine();
+			ImGui::BeginDisabled(debugMutedLayers.empty());
+			if (ImGui::Button("Clear mutes")) {
+				debugMutedLayers.clear();
+			}
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::BeginDisabled(!debugSoloLayer);
+			if (ImGui::Button("Clear solo")) {
+				debugSoloLayer.reset();
+			}
+			ImGui::EndDisabled();
 		}
 		ImGui::End();
 	}
@@ -1788,16 +1841,8 @@ void r_renderer_c::EndFrame()
 
 	uint64_t commandDigest = 0;
 	if (elideFrames) {
-		auto* frameHasher = frameHashState.get();
-		XXH3_64bits_reset(frameHasher);
-
-		for (auto lIdx = 0; lIdx < numLayer; ++lIdx) {
-			auto layer = layerSort[lIdx];
-			uint64_t subHash = XXH3_64bits(layer->cmdStorage.data(), (int)layer->cmdCursor);
-			XXH3_64bits_update(frameHasher, &subHash, sizeof(subHash));
-		}
-
-		commandDigest = XXH3_64bits_digest(frameHasher);
+		const auto subHashSpan = std::span(layerHashes);
+		commandDigest = XXH3_64bits(subHashSpan.data(), subHashSpan.size_bytes());
 	}
 
 	++totalFrames;
@@ -1808,10 +1853,17 @@ void r_renderer_c::EndFrame()
 		glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 		for (int l = 0; l < numLayer; l++) {
 			auto& layer = layerSort[l];
-			if (layerBreak && layerBreak->first == layer->layer && layerBreak->second == layer->subLayer) {
+			const auto layerKey = glm::ivec2(layer->layer, layer->subLayer);
+			if (layerBreak == layerKey) {
 #ifdef _WIN32
 				DebugBreak();
 #endif
+			}
+
+			const bool soloThis = debugSoloLayer && *debugSoloLayer == layerKey;
+			const bool muteThis = debugSoloLayer || debugMutedLayers.contains(layerKey);
+			if (!soloThis && muteThis) {
+				continue;
 			}
 			inhibitElision = layer->Render() || inhibitElision;
 		}

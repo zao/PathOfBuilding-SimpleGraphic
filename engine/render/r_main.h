@@ -16,7 +16,9 @@
 #include <flat_map>
 #include <generator>
 #include <imgui.h>
+#include <set>
 #include <span>
+#include <unordered_set>
 #include <vector>
 #include <xxh3.h>
 
@@ -187,7 +189,6 @@ public:
 	RenderTarget rttMain[2];
 	int	presentRtt = 0;
 
-	std::shared_ptr<XXH3_state_t> frameHashState;
 	uint64_t lastFrameHash{};
 
 	uint64_t totalFrames{};
@@ -214,11 +215,26 @@ public:
 	std::chrono::time_point<std::chrono::steady_clock> beginFrameToc;
 	FrameStats frameStats;
 
+	struct GlmHasher
+	{
+		template <glm::length_t L, typename T, glm::qualifier Q>
+		uint64_t operator () (const glm::vec<L, T, Q>& v) const noexcept { return XXH3_64bits(glm::value_ptr(v), sizeof(v)); }
+
+		template <glm::length_t C, glm::length_t R, typename T, glm::qualifier Q>
+		uint64_t operator () (const glm::mat<C, R, T, Q>& v) const noexcept { return XXH3_64bits(glm::value_ptr(v), sizeof(v)); }
+
+		template <typename T, glm::qualifier Q>
+		uint64_t operator () (const glm::qua<T, Q>& v) const noexcept { return XXH3_64bits(glm::value_ptr(v), sizeof(v)); }
+	};
+
 	bool	elideFrames = false;
 	bool	inhibitElision = false;
 	bool	debugImGui = false;
 	bool	debugLayers = false;
 	bool	debugSpatialInfo = false;
+
+	std::optional<glm::ivec2> debugSoloLayer;
+	std::unordered_set<glm::ivec2, GlmHasher> debugMutedLayers;
 
 	int		takeScreenshot = 0;
 	void	DoScreenshot(image_c* i, int type, const char* ext);
