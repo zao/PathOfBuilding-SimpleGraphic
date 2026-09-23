@@ -7,11 +7,14 @@ in vec2 a_vertex;
 in vec2 a_texcoord;
 in vec4 a_tint;
 in vec2 a_texId;
+in vec4 a_clipMin_clipMax;
 
 out vec2 v_screenPos;
 out vec2 v_texcoord;
 out vec4 v_tint;
 out vec2 v_texId;
+out vec2 v_clipMin;
+out vec2 v_clipMax;
 
 vec2 SceneToNdc(vec2 scenePos) {
 	vec2 unitPos = scenePos / u_screenSize;
@@ -23,7 +26,9 @@ void main(void)
 	v_texcoord = a_texcoord;
 	v_tint = a_tint;
 	v_texId = a_texId;
+	v_clipMin = a_clipMin_clipMax.xy;
+	v_clipMax = a_clipMin_clipMax.zw;
 	vec2 pos = SceneToNdc(a_vertex);
-	v_screenPos = pos;
+	v_screenPos = a_vertex;
 	gl_Position = vec4(pos, 0, 1);
 }

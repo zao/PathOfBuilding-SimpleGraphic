@@ -333,6 +333,42 @@ bool AabbOverlaps(r_aabb_s a, r_aabb_s b)
 		a.lo.y <= b.hi.y && a.hi.y >= b.lo.y;
 }
 
+bool AabbEmpty(r_aabb_s a)
+{
+	return glm::any(glm::lessThanEqual(a.hi, a.lo));
+}
+
+r_aabb_s AabbIntersection(r_aabb_s a, r_aabb_s b)
+{
+	const auto newLo = glm::max(a.lo, b.lo);
+	const auto newHi = glm::min(a.hi, b.hi);
+	if (glm::any(glm::lessThan(newHi, newLo))) {
+		return {{0, 0}, {0, 0}};
+	}
+	return {newLo, newHi};
+}
+
+r_aabb_s AabbUnion(r_aabb_s a, r_aabb_s b)
+{
+	return {
+		glm::min(a.lo, b.lo),
+		glm::max(a.hi, b.hi),
+	};
+}
+
+bool ViewportEmpty(r_viewport_s a)
+{
+	return glm::any(glm::equal(a.extent, glm::ivec2(0.f)));
+}
+
+r_viewport_s ViewportUnion(r_viewport_s a, r_viewport_s b)
+{
+	const auto newLo = glm::min(a.lo, b.lo);
+	return {
+		newLo,
+		glm::max(a.lo + a.extent, b.lo + b.extent) - newLo,
+	};
+}
 
 struct SpatialConfig
 {
@@ -464,6 +500,7 @@ struct BaseVertex
 	glm::vec2 uv;
 	glm::vec4 tint;
 	float texId, stackLayer; // vec2
+	glm::vec2 clipMin, clipMax; // vec4
 };
 
 struct NoneVertex
@@ -533,11 +570,10 @@ namespace r_scene
 						const r_aabb_s boundsB = spatial.nodeToShapeBounds[nodeB];
 
 						const std::pair<size_t, size_t> edge{idA, idB};
-						if (!deps.contains(edge)) {
-							if (AabbOverlaps(boundsA, boundsB)) {
-								if (deps.emplace(edge).second) {
-									incoming[idB] += 1;
-								}
+						const auto commonBounds = AabbIntersection(boundsA, boundsB);
+						if (!AabbEmpty(commonBounds)) {
+							if (deps.emplace(edge).second) {
+								incoming[idB] += 1;
 							}
 						}
 					}
@@ -601,7 +637,7 @@ struct LayerProcessor
 
 	SortKey MakeShapeSortKey(r_effects::tag_e effectTag, EffectUser effectUser, ViewportMemo viewportId, TexMemo texId) const noexcept
 	{
-		// [effect 8][effect-user 16][viewport 20][tex 20]
+		// [effect 8][effect-user 16][viewport 0][tex 20][unused 20]
 
 		static constexpr auto effectTagShift = 64 - sizeof(effectTag) * 8;
 		static constexpr auto effectTagMask = 0xFFui64 << effectTagShift;
@@ -609,8 +645,8 @@ struct LayerProcessor
 		static constexpr auto effectUserShift = effectTagShift - 16;
 		static constexpr auto effectUserMask = 0xFFFFui64 << effectUserShift;
 
-		static constexpr auto viewportShift = effectUserShift - 20;
-		static constexpr auto viewportMask = 0xF'FFFFui64 << viewportShift;
+		static constexpr auto viewportShift = effectUserShift - 0;
+		static constexpr auto viewportMask = 0x0ui64 << viewportShift;
 
 		static constexpr auto texShift = viewportShift - 20;
 		static constexpr auto texMask = 0xF'FFFFui64 << texShift;
@@ -618,7 +654,7 @@ struct LayerProcessor
 		return
 			(uint64_t)effectTag << effectTagShift & effectTagMask |
 			(uint64_t)effectUser << effectUserShift & effectUserMask |
-			(uint64_t)viewportId << viewportShift & viewportMask |
+			//(uint64_t)viewportId << viewportShift & viewportMask |
 			(uint64_t)texId << texShift & texMask;
 	}
 
@@ -811,10 +847,15 @@ struct LayerProcessor
 		auto& lastGroup = batchGroups.back();
 		if (lastGroup.batchCount > 0) {
 			auto& lastBatch = batches.back();
-			if (lastBatch.viewport == viewport &&
-				lastBatch.vertexCount < (1u << 16) - 4 &&
+			if (lastBatch.vertexCount < (1u << 16) - 4 &&
 				(lastBatch.texSeen.size() < effect->texLocs.size() || lastBatch.texSeen.contains(tex)))
 			{
+				if (ViewportEmpty(lastBatch.viewport)) {
+					lastBatch.viewport = viewport;
+				}
+				else {
+					lastBatch.viewport = ViewportUnion(lastBatch.viewport, viewport);
+				}
 				return false;
 			}
 		}
@@ -890,6 +931,8 @@ struct LayerProcessor
 						.tint = tint,
 						.texId = (float)texSlot,
 						.stackLayer = (float)stackLayer,
+						.clipMin = vpLo,
+						.clipMax = vp.lo + vp.extent,
 					},
 				};
 			}
@@ -929,7 +972,13 @@ struct LayerProcessor
 			std::max(1u, tex->fileWidth.load(std::memory_order_relaxed)),
 			std::max(1u, tex->fileHeight.load(std::memory_order_relaxed)));
 
-		BaseVertex commonVertex{.tint = tint, .texId = (float)texSlot, .stackLayer = (float)stackLayer,};
+		BaseVertex commonVertex{
+			.tint = tint,
+			.texId = (float)texSlot,
+			.stackLayer = (float)stackLayer,
+			.clipMin = vp.lo,
+			.clipMax = vp.lo + vp.extent,
+		};
 		const glm::vec2 tcLo = glm::vec2(cmd.coordLo) / texSize;
 		const glm::vec2 tcHi = glm::vec2(cmd.coordHi) / texSize;
 		auto GenerateBasicVertices = [&](auto& vertices) {
@@ -1114,7 +1163,7 @@ struct LayerProcessor
 			{
 				auto vp = batch.viewport;
 				if (showStats) {
-					ImGui::Text("New viewport %d,%d+%dx%d", vp.lo.x, vp.lo.y, vp.extent.x, vp.extent.y);
+					ImGui::Text("New combined viewport %d,%d+%dx%d", vp.lo.x, vp.lo.y, vp.extent.x, vp.extent.y);
 				}
 				lastViewport = vp;
 				const GLint scissorY = screenSize.y - vp.extent.y - vp.lo.y;
@@ -2465,6 +2514,7 @@ void r_renderer_c::InitEffects()
 		TryDefineVertexAttribute(*fx, "a_texcoord"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, uv), 2));
 		TryDefineVertexAttribute(*fx, "a_tint"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, tint), 4));
 		TryDefineVertexAttribute(*fx, "a_texId"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, texId), 2));
+		TryDefineVertexAttribute(*fx, "a_clipMin_clipMax"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(BaseVertex, clipMin), 4));
 		
 		// Uniforms
 		fx->uScreenSizeLoc = fx->program->GetUniformLocation("u_screenSize");
