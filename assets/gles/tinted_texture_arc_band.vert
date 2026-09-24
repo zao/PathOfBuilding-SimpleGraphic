@@ -11,7 +11,8 @@ in vec2 a_texId;
 // Specific
 in vec2 a_localCoord;
 in vec4 a_startDir_stopDir;
-in vec2 a_innerRadius_fullBand;
+in vec2 a_innerRadius_angleSpan;
+in vec4 a_texMin_texMax;
 
 out vec2 v_screenPos;
 out vec2 v_texcoord;
@@ -19,7 +20,8 @@ out vec4 v_tint;
 out vec2 v_texId;
 out vec2 v_localCoord;
 out vec4 v_startDir_stopDir;
-out vec2 v_innerRadius_fullBand;
+out vec2 v_innerRadius_angleSpan;
+out vec4 v_texMin_texMax;
 
 vec2 SceneToNdc(vec2 scenePos) {
 	vec2 unitPos = scenePos / u_screenSize;
@@ -33,8 +35,9 @@ void main(void)
 	v_texId = a_texId;
 	v_localCoord = a_localCoord;
     v_startDir_stopDir = a_startDir_stopDir;
-    v_innerRadius_fullBand = a_innerRadius_fullBand;
+    v_innerRadius_angleSpan = a_innerRadius_angleSpan;
+	v_texMin_texMax = a_texMin_texMax;
 	vec2 pos = SceneToNdc(a_vertex);
-	v_screenPos = pos;
+	v_screenPos = a_vertex;
 	gl_Position = vec4(pos, 0, 1);
 }

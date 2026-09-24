@@ -520,6 +520,7 @@ struct ArcBandVertex
 	glm::vec2 localPos;
 	glm::vec2 startDir; glm::vec2 stopDir;
 	float innerRadius, angleSpan;
+	glm::vec2 texMin, texMax;
 };
 
 struct TiledVertex
@@ -1014,27 +1015,72 @@ struct LayerProcessor
 			geometry.cpuVertices.append_range(std::as_bytes(std::span(vertices)));
 		} break;
 		case r_effects::tag_e::ArcBandMask: {
-			std::array<CircleVertex, 4> vertices{};
-			GenerateBasicVertices(vertices);
+			const float startDeg = 20.f;
+			const float stopDeg = 90.f;
+			const float angleSpan = glm::fclamp(stopDeg - startDeg, -360.0f, 360.f);
+			const float startAng = glm::radians(startDeg);
+			const float stopAng = glm::radians(stopDeg);
+			const glm::vec2 startDir = {cosf(startAng), -sinf(startAng)};
+			const glm::vec2 stopDir = {cosf(stopAng), -sinf(stopAng)};
+			const float innerRadius = 0.908f;
 
-			vertices[0].localPos = {0, 0};
-			vertices[1].localPos = {1, 0};
-			vertices[2].localPos = {1, 1};
-			vertices[3].localPos = {0, 1};
+			if (startDeg == stopDeg) {
+				break;
+			}
+
+#define FULL_BENT_UMBRELLA
+#ifdef FULL_BENT_UMBRELLA
+			// Model it as nine vertices with triangles around the centre. Centre first, then CCW northward starting from east as seen on screen.
+			std::array<int, 9> localX{+0, +1, +1, +0, -1, -1, -1, +0, +1};
+			std::array<int, 9> localY{+0, +0, +1, +1, +1, +0, -1, -1, -1};
+			const ArcBandVertex prototype{
+				.common = commonVertex,
+				.startDir = startDir,
+				.stopDir = stopDir,
+				.innerRadius = innerRadius,
+				.angleSpan = angleSpan,
+				.texMin = tcLo,
+				.texMax = tcHi,
+			};
+			std::array<ArcBandVertex, 9> vertices{};
+			for (int i = 0; i < 9; ++i) {
+				const glm::vec2 localPos(localX[i], localY[i]);
+				const glm::vec2 frac = (localPos + 1.f) / 2.f;
+				auto& v = vertices[i] = prototype;
+				v.common.xy = glm::mix(posLo, posHi, frac);
+				v.common.uv = glm::mix(tcHi, tcLo, glm::abs(localPos));
+				v.localPos = localPos;
+			}
 
 			geometry.cpuVertices.append_range(std::as_bytes(std::span(vertices)));
+
+			const auto base = batch.vertexCount;
+			std::array<uint16_t, 8 * 3> indices;
+			for (int i = 0; i < 8; ++i) {
+				indices[i * 3] = 0;
+				indices[i * 3 + 1] = 1 + i;
+				indices[i * 3 + 2] = 1 + (i + 1) % 8;
+			}
+			//{ base + 0u, base + 1u, base + 2u, base + 0u, base + 2u, base + 3u };
+			geometry.cpuIndices.append_range(indices);
+
+			batch.vertexCount += 9;
+			batch.indexCount += indices.size();
+#endif
 		} break;
 		case r_effects::tag_e::Tiled: {
 		} break;
 		}
 
-		// Expect all effects to generate a triangle pair for now.
-		const auto base = batch.vertexCount;
-		const std::array<uint16_t, 6> indices{base + 0u, base + 1u, base + 2u, base + 0u, base + 2u, base + 3u};
-		geometry.cpuIndices.append_range(indices);
+		// Expect most effects to generate a triangle pair.
+		if (cmd.effectTag != r_effects::tag_e::ArcBandMask) {
+			const auto base = batch.vertexCount;
+			const std::array<uint16_t, 6> indices{base + 0u, base + 1u, base + 2u, base + 0u, base + 2u, base + 3u};
+			geometry.cpuIndices.append_range(indices);
 
-		batch.vertexCount += 4;
-		batch.indexCount += 6;
+			batch.vertexCount += 4;
+			batch.indexCount += 6;
+		}
 	}
 
 	void EmitShape(size_t shapeId) {
@@ -2192,15 +2238,21 @@ void r_renderer_c::DrawImage(r_shaderHnd_c* hnd, glm::vec2 pos, glm::vec2 extent
 
 void r_renderer_c::DrawSprite(const r_sprite_s& sprite, glm::vec2 pos, glm::vec2 extent, r_effects::tag_e effectTag, std::shared_ptr<void> effectData)
 {
-	if (const auto* hnd = sprite.hnd) {
+	auto texelRectHi = sprite.texelRectHi;
+	if (auto* hnd = sprite.hnd) {
 		const auto stackLayer = clamp(sprite.stackLayer, 0, (int)hnd->sh->tex->stackLayers - 1);
 		curLayer->Bind(hnd->sh->tex, sprite.stackLayer);
+		if (texelRectHi == glm::vec2(0.f)) {
+			int width{}, height{};
+			GetShaderImageSize(hnd, width, height);
+			texelRectHi = glm::vec2{width, height};
+		}
 	}
 	else {
 		curLayer->Bind(hnd->sh->tex, 0);
 	}
 	curLayer->Color(drawColor);
-	curLayer->Sprite(pos, extent, sprite.texelRectLo, sprite.texelRectHi, effectTag, nullptr);
+	curLayer->Sprite(pos, extent, sprite.texelRectLo, texelRectHi, effectTag, nullptr);
 }
 
 void r_renderer_c::DrawImageQuad(r_shaderHnd_c* hnd, glm::vec2 p0, glm::vec2 p1, glm::vec2 p2, glm::vec2 p3, glm::vec2 uv0, glm::vec2 uv1, glm::vec2 uv2, glm::vec2 uv3, int stackLayer)
@@ -2508,6 +2560,27 @@ void r_renderer_c::InitEffects()
 		textureSwitch = to_string(buf);
 	}
 
+	std::string textureSwitchArcBand;
+	{
+		fmt::memory_buffer buf;
+		for (size_t i = 0; i < maxTexSlots; ++i) {
+			if (i == 0) {
+				fmt::format_to(fmt::appender(buf), "if (v_texId.x < {}.5) ", i);
+			}
+			else if (i == maxTexSlots - 1) {
+				fmt::format_to(fmt::appender(buf), "else ");
+			}
+			else {
+				fmt::format_to(fmt::appender(buf), "else if (v_texId.x < {}.5)", i);
+			}
+			fmt::format_to(fmt::appender(buf), R"( {{
+	color = textureGrad(s_tex[{}], vec3(texcoord, v_texId.y), gradX, gradY);
+}}
+)", i, i);
+		}
+		textureSwitchArcBand = to_string(buf);
+	}
+
 	std::string textureSwitchTiled;
 	{
 		fmt::memory_buffer buf;
@@ -2522,10 +2595,11 @@ void r_renderer_c::InitEffects()
 				fmt::format_to(fmt::appender(buf), "else if (v_texId.x < {}.5)", i);
 			}
 			fmt::format_to(fmt::appender(buf), R"( {{
-	color = vec3(1., 1., 1.); //texture(s_tex[{}], vec3(v_texcoord, v_texId.y));
+	color = vec4(1., 1., 1., 1.); //texture(s_tex[{}], vec3(v_texcoord, v_texId.y));
 }}
 )", i, i);
 		}
+		textureSwitchTiled = to_string(buf);
 	}
 
 	effects->noneEffect.tag = r_effects::tag_e::None;
@@ -2543,7 +2617,7 @@ void r_renderer_c::InitEffects()
 	effects->arcBandEffect.tag = r_effects::tag_e::ArcBandMask;
 	effects->arcBandEffect.program = CompileTemplatedShaders(this, "assets/gles/tinted_texture_arc_band",
 		fmt::arg("SG_TEXTURE_COUNT", maxTexSlots),
-		fmt::arg("SG_TEXTURE_SWITCH", textureSwitch));
+		fmt::arg("SG_TEXTURE_SWITCH", textureSwitchArcBand));
 	effects->arcBandEffect.vertexStride = sizeof(ArcBandVertex);
 
 	effects->tiledEffect.tag = r_effects::tag_e::Tiled;
@@ -2587,6 +2661,7 @@ void r_renderer_c::InitEffects()
 	TryDefineVertexAttribute(effects->arcBandEffect, "a_localCoord"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, localPos), 2));
 	TryDefineVertexAttribute(effects->arcBandEffect, "a_startDir_stopDir"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, startDir), 4));
 	TryDefineVertexAttribute(effects->arcBandEffect, "a_innerRadius_angleSpan"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, innerRadius), 2));
+	TryDefineVertexAttribute(effects->arcBandEffect, "a_texMin_texMax"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(ArcBandVertex, texMin), 4));
 
 	TryDefineVertexAttribute(effects->tiledEffect, "a_uvLocal"s, OpenGLVertexAttribute({}, GL_FLOAT, 0, offsetof(TiledVertex, localTexcoord), 2));
 	// TODO(zao): more attributes as the shader evolves
