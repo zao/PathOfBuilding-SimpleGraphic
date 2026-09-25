@@ -41,8 +41,12 @@ public:
 	size_t	cmdCursor{};
 	size_t	numCmd{};
 
+	uint64_t HashCommands() const noexcept;
+	bool IsDirty() const noexcept;
+
 	int		layer;
 	int		subLayer;
+	bool	showStats = false;
 
 	r_layer_c(r_renderer_c* renderer, int i_layer, int i_subLayer);
 	~r_layer_c();
@@ -65,10 +69,16 @@ public:
 
 	std::generator<CmdHandle> GetCommands() const;
 
+	struct FrameCache;
+	const FrameCache* GetLastValidFrame() const noexcept;
+
 private:
 	r_renderer_c* renderer;
 
 	struct r_layerCmd_s* NewCommand(size_t size);
+
+
+	std::shared_ptr<FrameCache> lastValidFrame;
 };
 
 // Renderer Main Class
@@ -168,10 +178,6 @@ public:
 	int		layerListSize = 0;
 	r_layer_c** layerList = nullptr;
 	r_layer_c* curLayer = nullptr;
-
-	int		layerCmdBinCount = 0;
-	int		layerCmdBinSize = 0;
-	struct r_layerCmd_s** layerCmdBin = nullptr;
 
 	struct RenderTarget {
 		int		width = -1, height = -1;
